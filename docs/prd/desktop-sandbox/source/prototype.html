@@ -242,6 +242,28 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
 
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(90px);background:var(--text);color:var(--bg);padding:10px 18px;border-radius:21px;font-size:12.5px;font-weight:500;z-index:200;transition:transform .26s;box-shadow:var(--shadow);max-width:80vw}
 .toast.show{transform:translateX(-50%) translateY(0)}
+
+/* ── 新增安全决策演示 ── */
+.mode-switch{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.mode-switch .btn.active{background:var(--accent);color:#fff;border-color:transparent}
+.secret-detail{margin-top:11px;padding:12px 13px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-sm);font-size:12px}
+.secret-detail strong{display:block;margin-bottom:4px}
+.secret-detail.warn{background:var(--r-high-bg);border-color:var(--r-high);color:var(--r-high)}
+.adapter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px}
+.adapter-status{font-size:11.5px;font-weight:600}
+.writeback-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:11px}
+.diff-pane{min-width:0;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);padding:10px}
+.diff-pane h4{font-size:11px;color:var(--text-3);margin-bottom:6px}
+.diff-pane pre{white-space:pre-wrap;word-break:break-word;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;color:var(--text-2)}
+.writeback-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:13px}
+.writeback-note{font-size:11.5px;color:var(--text-2);margin-top:9px}
+.conflict{background:var(--r-high-bg);border:1px solid var(--r-high);border-radius:var(--radius-sm);padding:10px 12px;color:var(--r-high);font-size:12px;margin-top:11px}
+.status-line{font-size:12px;font-weight:600;margin-top:10px}
+.status-line.good{color:var(--shield)}
+.status-line.blocked{color:var(--r-high)}
+button:disabled{opacity:.45;cursor:not-allowed}
+[hidden]{display:none!important}
+
 </style>
 </head>
 <body>
@@ -267,7 +289,7 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
   <div class="main">
     <header class="toolbar">
       <h1 id="pageTitle">工作台</h1>
-      <button class="btn btn-sm" onclick="startReview('claude')">▶ 运行程序</button>
+      <button class="btn btn-sm" data-testid="run-program" onclick="startReview('claude')">▶ 运行程序</button>
     </header>
     <div class="content">
 
@@ -284,10 +306,10 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           <div class="vm-iso">🔒 运行在独立沙箱中 · 关闭后自动销毁</div>
           <div class="vm-body">
             <div class="dim">它现在能碰到：</div>
-            <div class="chips">
-              <span class="chip">📁 代码/myrepo（可改）</span>
+            <div class="chips" id="activeCapabilities">
+              <span class="chip">📁 代码/myrepo（先改沙箱副本）</span>
               <span class="chip">🌐 Claude 官方服务</span>
-              <span class="chip">🔑 你的 Claude 账号（密钥未交出）</span>
+              <span class="chip">🔑 Claude 代理示例（原始密钥留在宿主）</span>
             </div>
 
             <!-- 盾牌块：零值也显示 (U8) -->
@@ -306,7 +328,8 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           </div>
           <div class="vm-foot">
             <button class="btn btn-sm">查看输出</button>
-            <button class="btn btn-sm" onclick="toast('导出前会逐项确认敏感文件（02 §5.6）')">导出改动</button>
+            <button class="btn btn-sm" data-testid="open-writeback" onclick="openWriteback()">预览回写</button>
+            <button class="btn btn-sm" onclick="openWriteback()">处理副本改动</button>
             <span class="spacer"></span>
             <button class="btn btn-sm btn-danger">停止</button>
           </div>
@@ -412,8 +435,8 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
             <div class="acct-ico">🗄</div>
             <div class="acct-main">
               <div class="acct-name">内网数据库 <span class="risk risk-mid">▲ 手动输入</span></div>
-              <div class="acct-sub">••••9d04 · <button class="btn-link">1 个程序在用 ›</button></div>
-              <div class="acct-note warn"><span>⚡</span><span>密钥会进入程序内存（这类服务无法代为转交）</span></div>
+              <div class="acct-sub">••••9d04 · 待验证适配器，暂不交付</div>
+              <div class="acct-note warn"><span>⚠️</span><span>引用明文进入指定进程；内存内容可能被复制或外传，无法保证不发生</span></div>
             </div>
             <button class="btn btn-sm">改用更安全的方式</button>
           </div>
@@ -446,7 +469,32 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           <button class="prov manual"><div class="pn">其他服务</div><div class="pm">手动</div></button>
         </div>
         <div class="card card-pad" style="margin-top:12px;background:var(--surface-2)">
-          <span class="muted" style="font-size:12.5px">ℹ️ 推荐用「一键登录」或「导入」—— 这样你的密钥不用经你的手，也不会出现在任何地方。</span>
+          <span class="muted" style="font-size:12.5px">ℹ️ 推荐用代理转交——原始密钥留在沙箱外，程序拿不到密钥本身。引用明文只在你明确确认风险后进入指定进程。</span>
+        </div>
+
+        <div class="sec-title">密钥使用方式示例（本地模拟）</div>
+        <div class="card card-pad" data-testid="secret-demo">
+          <div class="muted">同一个账号可以选择不同保护方式。下面只演示界面状态，真实适配器兼容性尚未验证。</div>
+          <div class="mode-switch" role="group" aria-label="密钥使用方式">
+            <button class="btn btn-sm active" data-testid="secret-proxy" onclick="selectSecretMode('proxy')">代理转交</button>
+            <button class="btn btn-sm" data-testid="secret-reference" onclick="selectSecretMode('reference')">引用明文</button>
+          </div>
+          <div class="adapter-row">
+            <span class="dim">适配器：</span>
+            <button class="btn btn-sm" data-testid="adapter-verified" onclick="selectAdapter('simulated')">模拟适配通过（非真实兼容验证）</button>
+            <button class="btn btn-sm" data-testid="adapter-pending" onclick="selectAdapter('pending')">fd 适配器（待验证）</button>
+            <span class="adapter-status" data-testid="adapter-status">原型模拟 · 真实兼容性未验证</span>
+          </div>
+          <div class="secret-detail" data-testid="secret-detail"></div>
+          <label class="narrow show" style="display:flex;gap:7px;align-items:flex-start;margin-top:10px;padding:0;border:0;background:none">
+            <input type="checkbox" data-testid="secret-risk-confirm" onchange="syncSecretDemo()">
+            <span>我确认向指定程序交付明文，它可能复制或外传；撤销不能收回已交付的密钥。</span>
+          </label>
+          <div class="writeback-actions">
+            <button class="btn btn-primary" data-testid="secret-confirm" onclick="confirmSecretUse()">按代理转交运行示例</button>
+            <span class="dim">仅本地模拟，不读取或传递真实密钥。</span>
+          </div>
+          <div class="status-line" data-testid="secret-result" aria-live="polite"></div>
         </div>
       </section>
 
@@ -471,7 +519,7 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           <div class="tl">
             <div class="tl-item shield">
               <div class="tl-main"><span class="tl-time">14:32</span>🛡 挡下 · Claude Code 想读取 <code>~/.ssh/id_rsa</code></div>
-              <div class="tl-sub"><span>这不在你同意的范围内，已自动拒绝</span><button class="btn btn-sm" onclick="toast('补授权会回到完整的运行前检查流程（02 §6.3）')">允许这项</button></div>
+              <div class="tl-sub"><span>这不在你同意的范围内，已自动拒绝</span><button class="btn btn-sm" onclick="toast('补授权会回到完整的运行前检查流程（02 §6.3）')">审查补授</button></div>
             </div>
             <div class="tl-item approve">
               <div class="tl-main"><span class="tl-time">14:20</span>✅ 批准 · 你同意 Claude Code 读写「代码/myrepo」</div>
@@ -508,8 +556,8 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
             <button class="btn-link" onclick="toast('「代码/myrepo」授予读写但从未写入 → 建议生产侧挂载为只读（02 §8.3）')">查看建议 ›</button>
           </div>
           <div class="row" style="gap:9px">
-            <button class="btn" onclick="toast('⚠️ 文件写时复制与 MCP 工具过滤在 OCI 轨无等价表达，产物中会显式标注（03 §A.2.2）')">编译为 OCI 产物</button>
-            <button class="btn btn-primary" onclick="toast('云主机轨支持秘密托管直通，无需 sidecar')">投递到云主机</button>
+            <button class="btn" onclick="toast('无法维持副本回写或代理保护时阻止对应投递；其它差异需明确评审（设计示例）')">编译为 OCI 产物</button>
+            <button class="btn btn-primary" onclick="toast('目标平台需验证适配与保护边界，当前仅设计示例')">投递到云主机</button>
           </div>
         </div>
         <div class="empty"><div class="ei">🚧</div>P2 阶段功能，此处仅示意信息架构</div>
@@ -522,14 +570,14 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           <div class="acct">
             <div class="acct-main">
               <div class="acct-name">🟢 低风险 · 沙箱内启动程序等</div>
-              <div class="acct-sub">静默允许并记录，不打断你</div>
+              <div class="acct-sub">未授权时静默阻断并记录；低风险不产生授权，显式拒绝优先。</div>
             </div>
           </div>
           <div class="acct">
             <div class="acct-main">
               <div class="acct-name">🟡 中风险 · 访问新网址、读新文件</div>
               <div class="acct-sub">静默<strong>阻断</strong>并记录 —— 不弹窗问你，避免训练出无脑点允许的习惯</div>
-              <div class="acct-note warn"><span>ℹ️</span><span>被挡下的会累计显示在卡片上，你可随时一键补授</span></div>
+              <div class="acct-note warn"><span>ℹ️</span><span>被挡下的会累计显示，补授须重新审查并记录。</span></div>
             </div>
           </div>
           <div class="acct">
@@ -565,10 +613,10 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
         <button class="cap-group-head"><span class="risk risk-high">🔴 高</span><span>需要你逐项确认（2 项）</span></button>
         <div class="cap-group-body">
           <div class="cap">
-            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c1" onchange="syncReview()"></div>
+            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c1" data-testid="capability-files" onchange="syncReview()"></div>
             <div class="cap-body">
-              <label class="cap-title" for="c1">能读取并修改「代码 / myrepo」文件夹里的所有内容</label>
-              <div class="cap-conseq">如果它出错或被人动过手脚，这个文件夹里的文件可能被改坏或删掉。</div>
+              <label class="cap-title" for="c1">能读取并修改「代码 / myrepo」的沙箱副本</label>
+              <div class="cap-conseq">副本可能被改坏或删掉；真实文件不会直接变化，回写前另行展示差异并请你确认。</div>
               <div class="cap-meta">
                 <button onclick="tog('ev1')">ℹ️ 为什么需要这个？</button>
                 <button onclick="tog('nr1')">⌄ 改为「只能看，不能改」</button>
@@ -576,31 +624,30 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
               <div class="evidence" id="ev1">来自 Claude Code 官方模板 · <code>template:claude-code</code><br>
                 <span class="dim">每条权限都必须说得出依据，说不出的不会出现在这里。</span></div>
               <div class="narrow" id="nr1">
-                <label><input type="radio" name="fs" checked> 能读取并修改（它要求的）</label>
-                <label><input type="radio" name="fs"> 只能看，不能改 <span class="dim">· 部分功能可能用不了</span></label>
-                <label><input type="radio" name="fs"> 能改，但改动要我确认后才生效 <span class="dim">· 推荐</span></label>
+                <label><input type="radio" name="fs" value="cow" checked> 修改沙箱副本，确认后回写 <span class="dim">· 默认</span></label>
+                <label><input type="radio" name="fs" value="ro"> 只能看，不能改 <span class="dim">· 不允许回写</span></label>
               </div>
             </div>
           </div>
 
-          <div class="cap">
-            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c2" onchange="syncReview()"></div>
+          <div class="cap" data-testid="capability-high">
+            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c2" data-testid="capability-secret" onchange="syncReview()"></div>
             <div class="cap-body">
               <label class="cap-title" for="c2">能以你的身份调用 Claude</label>
               <div class="cap-conseq">它可以用你的账号发起对话，会产生费用。</div>
-              <div class="cap-assure">✓ 你的密钥不会交给它 —— 由沙箱代为转交</div>
+              <div class="cap-assure">✓ 代理模式：原始密钥留在宿主；引用模式的独立风险审查见「账号与密钥」。</div>
               <div class="cap-meta"><span>ℹ️ 使用账号：Claude 官方服务 ••••a1b2</span></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 中风险：展开、默认已勾 -->
+      <!-- 中风险：未经批准保持未授予 -->
       <div class="cap-group">
         <button class="cap-group-head" onclick="toggleGroup(this)"><span class="risk risk-mid">🟡 中</span><span>一般权限（1 项）</span><span class="chev">⌄ 收起</span></button>
         <div class="cap-group-body">
           <div class="cap">
-            <div class="cap-check"><input type="checkbox" checked></div>
+            <div class="cap-check"><input type="checkbox" id="capNet" onchange="syncReview()"></div>
             <div class="cap-body">
               <div class="cap-title">能访问 Claude 官方服务</div>
               <div class="cap-conseq">它能和 Claude 通信。除此之外联不上任何别的地方。</div>
@@ -615,14 +662,14 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
         <button class="cap-group-head" onclick="toggleGroup(this)"><span class="risk risk-low">🟢 低</span><span>基础权限（2 项）</span><span class="chev">› 展开</span></button>
         <div class="cap-group-body">
           <div class="cap">
-            <div class="cap-check"><input type="checkbox" checked></div>
+            <div class="cap-check"><input type="checkbox" id="capSpawn" onchange="syncReview()"></div>
             <div class="cap-body">
               <div class="cap-title">能在沙箱内启动其他程序</div>
               <div class="cap-conseq">这是大多数开发工具的正常需求，不会影响沙箱外。</div>
             </div>
           </div>
           <div class="cap">
-            <div class="cap-check"><input type="checkbox" checked></div>
+            <div class="cap-check">🔒</div>
             <div class="cap-body">
               <div class="cap-title">「代码/myrepo」里的敏感文件它看不到</div>
               <div class="cap-conseq">.env、密钥文件等会被自动隐去。</div>
@@ -634,14 +681,14 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
       <!-- 否定式总结 (U3 配套) -->
       <div class="boundary">
         <div><span>✓</span><span>它不能访问你其他的文件、不能联网去别的地方、不能读你的剪贴板</span></div>
-        <div><span>✓</span><span>关闭窗口后沙箱会被销毁，不留痕迹　<span style="opacity:.75">用完即焚 ⌄</span></span></div>
+        <div><span>✓</span><span>退出销毁运行环境，未处理副本保留待确认　<span style="opacity:.75">用完即焚 ⌄</span></span></div>
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeReview()">不运行</button>
       <span class="spacer"></span>
       <button class="btn" onclick="runMinimal()">先用最少权限试试</button>
-      <button class="btn btn-primary" id="btnRun" disabled onclick="runApproved()">确认并运行 (0/2)</button>
+      <button class="btn btn-primary" id="btnRun" onclick="runApproved()">按所选权限运行 (0 项)</button>
     </div>
   </div>
 </div>
@@ -762,14 +809,14 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
           <div class="cap-conseq" style="margin-top:7px">如果你不确定这是不是它该做的，可以先拒绝 —— 拒绝后它会收到提示，通常会换个方式继续。</div>
         </div>
       </div>
-      <label style="display:flex;gap:7px;font-size:12.5px;align-items:center"><input type="checkbox"> 以后同一个地址不用再问我</label>
+      <p class="dim">原请求保持拒绝；新增权限需完整审查、签名及记录。</p>
     </div>
     <div class="modal-foot">
       <!-- 默认焦点在「拒绝」(U6) -->
       <button class="btn" id="btnDeny" onclick="arbDeny()">拒绝</button>
       <span class="spacer"></span>
       <span class="countdown">⏱ <span id="cdNum">60</span> 秒内没有回应将自动拒绝</span>
-      <button class="btn" onclick="arbAllow()">这次允许</button>
+      <button class="btn" onclick="arbAllow()">进入补授审查</button>
     </div>
   </div>
 </div>
@@ -812,6 +859,41 @@ button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;backgrou
       <span class="spacer"></span>
       <button class="btn" onclick="toast('诊断报告已复制')">看诊断</button>
       <button class="btn btn-primary" onclick="close_('ov-err')">重试</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 回写预览：本地模拟数据 ═══════════ -->
+<div class="overlay" id="ov-writeback" role="dialog" aria-modal="true" aria-labelledby="wbTitle">
+  <div class="modal">
+    <div class="attribution"><span>🛡 来自「桌面安全沙箱」</span><span class="spacer"></span><button class="x" onclick="cancelWriteback()" aria-label="取消回写">✕</button></div>
+    <div class="modal-head"><h2 id="wbTitle">检查副本改动，再决定是否回写</h2><p>仅用内存中的示例文件演示，不修改电脑上的真实文件。</p></div>
+    <div class="modal-body">
+      <label><input type="checkbox" data-testid="wb-selected" onchange="invalidateWritebackSelection()"> 选择 src/config.js · 修改</label>
+      <div class="writeback-summary">
+        <div class="diff-pane"><h4>运行基线</h4><pre data-testid="wb-base"></pre></div>
+        <div class="diff-pane"><h4>当前宿主</h4><pre data-testid="wb-host"></pre></div>
+        <div class="diff-pane"><h4>沙箱副本</h4><pre data-testid="wb-guest"></pre></div>
+      </div>
+      <div class="conflict" data-testid="wb-conflict" hidden>宿主文件已变化，正常回写已阻断。查看三方差异后，选择取消、处理冲突或明确覆盖所选文件。</div>
+      <div class="writeback-actions">
+        <button class="btn btn-sm" data-testid="wb-change-host" onclick="simulateHostChange()">模拟宿主再次修改</button>
+        <button class="btn btn-sm" data-testid="wb-preview" onclick="previewWriteback()">重新获取差异</button>
+      </div>
+      <div class="writeback-note">确认仅对本次差异与宿主版本有效；执行前仍会再次校验。</div>
+      <div data-testid="wb-resolution" hidden>
+        <label for="wbResolved">处理后的副本内容</label>
+        <textarea id="wbResolved" data-testid="wb-resolved" rows="3" style="width:100%;margin-top:6px"></textarea>
+        <button class="btn btn-sm" data-testid="wb-resolve" onclick="resolveWriteback()">使用处理结果并重新预览</button>
+        <label style="display:block;margin-top:10px"><input type="checkbox" data-testid="wb-overwrite-ack" onchange="clearWritebackApproval()"> 我确认覆盖本次差异中所选文件的宿主修改，可能丢失这些改动。</label>
+      </div>
+      <div class="status-line" data-testid="wb-status" aria-live="polite"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-testid="wb-cancel" onclick="cancelWriteback()">取消，保留副本</button><span class="spacer"></span>
+      <button class="btn" data-testid="wb-overwrite" onclick="confirmWriteback(true)" disabled>明确覆盖所选文件</button>
+      <button class="btn btn-primary" data-testid="wb-confirm" onclick="confirmWriteback(false)" disabled>确认本次差异</button>
+      <button class="btn btn-primary" data-testid="wb-apply" onclick="applyWriteback()" disabled>执行回写（再次校验）</button>
     </div>
   </div>
 </div>
@@ -877,30 +959,139 @@ const intros={
   codex:'你要运行 Codex，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。',
   dsh:'你要运行 dsh，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。'
 };
+const reviewIds=['c1','c2','capNet','capSpawn'];
+let activeGrants={files:true,secret:true,network:true,spawn:false,fs:'cow'};
 function startReview(k){
-  document.getElementById('reviewIntro').innerHTML=intros[k]||intros.claude;
-  document.querySelectorAll('.hi-chk').forEach(c=>c.checked=false);
+  document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent='能访问 Claude 官方服务';
+  document.querySelector('#capNet').closest('.cap').querySelector('.cap-meta').textContent='api.anthropic.com · 模板示例';
+  document.getElementById('reviewIntro').innerHTML=(intros[k]||intros.claude)+'<br>以下为 Claude 静态权限示例；未选项默认拒绝，风险等级不产生授权。';
+  reviewIds.forEach(id=>document.getElementById(id).checked=false);
+  document.querySelector('[name="fs"][value="cow"]').checked=true;
   syncReview(); open_('ov-review');
 }
-function closeReview(){close_('ov-review')} // 关窗=拒绝 (02 §4.5)
+function closeReview(){close_('ov-review')}
 function syncReview(){
-  const all=[...document.querySelectorAll('.hi-chk')], n=all.filter(c=>c.checked).length;
+  const n=reviewIds.filter(id=>document.getElementById(id).checked).length;
   const b=document.getElementById('btnRun');
-  b.textContent=`确认并运行 (${n}/${all.length})`;
-  b.disabled=n<all.length;            // U1/U2：必须逐项勾满，无「全部允许」
+  b.textContent=`按所选权限运行 (${n} 项)`;
+  b.disabled=false;
 }
-function runApproved(){close_('ov-review');go('dash');toast('已按你批准的权限启动 · 用完即焚')}
-function runMinimal(){close_('ov-review');go('dash');toast('已用最少权限启动 —— 不够时会在卡片上提示你补授（02 §4.3）')}
+function runApproved(){
+  activeGrants={files:document.getElementById('c1').checked,secret:document.getElementById('c2').checked,
+    network:document.getElementById('capNet').checked,spawn:document.getElementById('capSpawn').checked,
+    fs:document.querySelector('[name="fs"]:checked').value};
+  const labels=[];
+  if(activeGrants.files)labels.push(activeGrants.fs==='cow'?'📁 沙箱副本可改，确认后回写':'📁 只读，不允许回写');
+  if(activeGrants.secret)labels.push('🔑 Claude 代理已授权；联网仍须单独批准');
+  if(activeGrants.network)labels.push('🌐 '+document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent);
+  if(activeGrants.spawn)labels.push('⚙ 沙箱内进程派生');
+  const target=document.getElementById('activeCapabilities');target.replaceChildren();
+  (labels.length?labels:['🔒 无已授予能力']).forEach(text=>{const e=document.createElement('span');e.className='chip';e.textContent=text;target.append(e)});
+  close_('ov-review');go('dash');
+  toast(`模拟启动：批准 ${labels.length} 项，其余保持拒绝；真实文件未修改。`);
+}
+function runMinimal(){reviewIds.forEach(id=>document.getElementById(id).checked=false);runApproved()}
+
+/* ═══ 密钥方式：仅界面模拟，不操作真实凭据 ═══ */
+const demoEl=id=>document.querySelector(`[data-testid="${id}"]`);
+let secretMode='proxy', secretAdapter='pending';
+function resetSecretApproval(){demoEl('secret-risk-confirm').checked=false;demoEl('secret-result').textContent='';syncSecretDemo()}
+function selectSecretMode(mode){secretMode=mode;resetSecretApproval()}
+function selectAdapter(adapter){secretAdapter=adapter;resetSecretApproval()}
+function syncSecretDemo(){
+  const reference=secretMode==='reference',supported=secretAdapter==='simulated';
+  demoEl('secret-proxy').classList.toggle('active',!reference);
+  demoEl('secret-reference').classList.toggle('active',reference);
+  demoEl('adapter-status').textContent=supported?'模拟适配通过 · 不是实际兼容验证':'不支持：适配器待验证，不交付凭据';
+  demoEl('secret-detail').classList.toggle('warn',reference);
+  demoEl('secret-detail').textContent=reference
+    ?'引用模式：经验证的读取适配器通过一次性匿名 pipe/fd 向指定进程交付明文，不经环境变量、启动参数或磁盘文件。程序可以复制或外传；撤销后停止后续交付、终止相关运行并提示轮换，不能收回已交付秘密。'
+    :'代理模式：由宿主按已批准目标代为认证，原始密钥不进入 guest。网络与账号使用分别授权；程序仍可能滥用已获准业务能力。';
+  demoEl('secret-risk-confirm').closest('label').hidden=!reference;
+  demoEl('secret-confirm').disabled=!supported||(reference&&!demoEl('secret-risk-confirm').checked);
+  demoEl('secret-confirm').textContent=reference?'明确批准本次引用交付（模拟）':'批准代理使用（模拟）';
+}
+function confirmSecretUse(){
+  syncSecretDemo();if(demoEl('secret-confirm').disabled)return;
+  demoEl('secret-result').textContent=secretMode==='reference'
+    ?'模拟批准：风险确认绑定本次指定进程与适配方式；没有读取或交付真实秘密。'
+    :'模拟批准：仅代理使用，原始密钥留在宿主；没有发起真实认证。';
+}
+syncSecretDemo();
+
+/* ═══ 副本回写：仅内存状态演示，真实条件写入由宿主实现 ═══ */
+let wb=null,wbSeq=0;
+function wbMessage(text){const el=demoEl('wb-status');el.textContent=text;el.classList.toggle('blocked',/阻断|失效|HOST_CHANGED/.test(text));el.classList.toggle('good',/^已回写/.test(text))}
+function openWriteback(){
+  if(!wb)wb={base:'const count = 1;',host:'const count = 1;',guest:'const count = 2;',version:1,baselineVersion:1,resolvedVersion:null,plan:null,approval:null,done:false};
+  demoEl('wb-selected').checked=false;
+  open_('ov-writeback');previewWriteback();
+  demoEl('wb-cancel').focus();
+}
+function renderWriteback(){
+  if(!wb)return;
+  demoEl('wb-base').textContent=wb.base;
+  demoEl('wb-host').textContent=`v${wb.version}\n${wb.host}`;
+  demoEl('wb-guest').textContent=wb.guest;
+  const p=wb.plan,selected=demoEl('wb-selected').checked;
+  const current=!!p&&p.version===wb.version&&p.guest===wb.guest;
+  const allowed=activeGrants.files&&activeGrants.fs==='cow';
+  demoEl('wb-conflict').hidden=!p?.conflict;
+  demoEl('wb-resolution').hidden=!p?.conflict;
+  demoEl('wb-confirm').disabled=!allowed||!selected||!current||p.conflict||wb.done;
+  demoEl('wb-overwrite').disabled=!allowed||!selected||!current||!p.conflict||!demoEl('wb-overwrite-ack').checked||wb.done;
+  demoEl('wb-apply').disabled=!wb.approval||wb.done;
+}
+function previewWriteback(){
+  if(!wb)return;
+  wb.approval=null;
+  if(wb.done){renderWriteback();wbMessage('当前副本改动已回写，无待提交内容。');return;}
+  demoEl('wb-overwrite-ack').checked=false;
+  wb.plan={id:++wbSeq,version:wb.version,guest:wb.guest,conflict:wb.version!==wb.baselineVersion&&wb.resolvedVersion!==wb.version};
+  demoEl('wb-resolved').value=wb.guest;
+  renderWriteback();
+  wbMessage(!activeGrants.files||activeGrants.fs!=='cow'?'未获副本写入授权或当前为只读，不能回写。':wb.plan.conflict?'发现冲突：正常回写阻断，先查看三方差异。':'选择要回写的文件，确认后才可执行。');
+}
+function invalidateWritebackSelection(){wb.approval=null;demoEl('wb-overwrite-ack').checked=false;renderWriteback();wbMessage('所选范围已更新，需要重新确认。')}
+function clearWritebackApproval(){wb.approval=null;renderWriteback()}
+function simulateHostChange(){
+  if(!wb||wb.done)return;
+  wb.version++;wb.host=`const count = ${wb.version+10}; // 外部编辑`;
+  renderWriteback();wbMessage('宿主已再次变化；旧差异不能直接写入。执行时复验，或重新获取差异。');
+}
+function resolveWriteback(){
+  if(!wb?.plan||wb.plan.version!==wb.version){wbMessage('宿主又发生变化，请先重新获取差异再处理。');return}
+  wb.guest=demoEl('wb-resolved').value;wb.resolvedVersion=wb.version;
+  previewWriteback();wbMessage('已用处理结果生成新预览，仍须重新确认；宿主尚未写入。');
+}
+function confirmWriteback(overwrite){
+  renderWriteback();
+  if(demoEl(overwrite?'wb-overwrite':'wb-confirm').disabled)return;
+  wb.approval={planId:wb.plan.id,version:wb.plan.version,guest:wb.plan.guest,selected:true,overwrite};
+  renderWriteback();wbMessage('已确认本次差异与版本，等待执行前再次校验。');
+}
+function applyWriteback(){
+  if(!wb?.approval||wb.done)return;
+  const approval=wb.approval;wb.approval=null;
+  if(!activeGrants.files||activeGrants.fs!=='cow'||!demoEl('wb-selected').checked){renderWriteback();wbMessage('授权或选择已变化：回写阻断，确认失效。');return}
+  if(!wb.plan||approval.planId!==wb.plan.id||approval.version!==wb.version||approval.guest!==wb.guest){
+    demoEl('wb-overwrite-ack').checked=false;renderWriteback();wbMessage('HOST_CHANGED / 计划已变化：确认失效，已阻断回写。请重新获取差异并确认。');return;
+  }
+  if(wb.plan.conflict&&(!approval.overwrite||!demoEl('wb-overwrite-ack').checked)){renderWriteback();wbMessage('冲突未明确批准覆盖：阻断回写。');return}
+  wb.host=approval.guest;wb.version++;wb.done=true;renderWriteback();
+  wbMessage('已回写所选文件（内存模拟）；一次性确认已消耗，真实宿主文件未修改。');
+}
+function cancelWriteback(){if(wb){wb.approval=null;wb.plan=null;}close_('ov-writeback');toast('已取消回写，保留副本；没有新增写入。')}
 
 /* ═══ 指纹变更 ═══ */
 function openDrift(){document.querySelectorAll('.dr-chk').forEach(c=>c.checked=false);syncDrift();open_('ov-drift')}
 function syncDrift(){
   const all=[...document.querySelectorAll('.dr-chk')], n=all.filter(c=>c.checked).length;
   const b=document.getElementById('btnDrift');
-  b.textContent=`同意新增 (${n}/${all.length})`; b.disabled=n<all.length;
+  b.textContent=`同意所选新增 (${n}/${all.length})`; b.disabled=n===0;
 }
 function keepOld(){close_('ov-drift');go('dash');toast('已用上次的权限启动 —— 拒绝扩权不需要任何代价')}
-function acceptNew(){close_('ov-drift');go('dash');toast('已同意新增权限，变更已记入安全档案')}
+function acceptNew(){const n=[...document.querySelectorAll('.dr-chk')].filter(c=>c.checked).length;close_('ov-drift');go('dash');toast(`模拟批准所选 ${n} 项新增权限；未选项保持拒绝`)}
 
 /* ═══ MCP 工具 ═══ */
 function openTools(){syncTools();open_('ov-tools')}
@@ -927,7 +1118,7 @@ function openArb(){
 }
 function stopCd(){if(cd){clearInterval(cd);cd=null}}
 function arbDeny(){close_('ov-arb');toast('已拒绝 · 它会收到协议层提示，通常会换个方式继续（03 §C.1.2）');bumpShield()}
-function arbAllow(){close_('ov-arb');toast('本次允许 —— 补授权已记入安全档案，走的是完整审查流程')}
+function arbAllow(){close_('ov-arb');startReview('claude');document.getElementById('reviewIntro').textContent='补授审查：申请访问 raw.githubusercontent.com。请重新确认完整能力集合；原请求不会自动重放。';document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent='能访问 raw.githubusercontent.com';document.querySelector('#capNet').closest('.cap').querySelector('.cap-meta').textContent='依据：本次被拒请求；尚未批准。';toast('原请求保持拒绝；批准并记录后仅供后续重试使用。')}
 
 /* ═══ 盾牌状态 ═══ */
 function setShield(n){
@@ -978,7 +1169,7 @@ const onb=[
   {a:'🤖 → 📁🌐🔑',t:'AI 编程助手很好用，但它拿着你电脑的全部钥匙。',d:'claude code、codex 这些工具启动时，就继承了你的全部权限 —— 你的文件、你的网络、你的密钥。'},
   {a:'💻 ⟋⟍ 📦',t:'我们给它一台独立的小电脑。',d:'出了事，伤不到你的 Mac。'},
   {a:'📦 ← 🔓',t:'它启动时什么都碰不到。',d:'你给什么，它才有什么。每一项都由你在运行前决定。'},
-  {a:'🔑 ⇥ 🛡 ⇥ 📦',t:'你的密钥永远不会交给它。',d:'需要用你的账号时，由沙箱代为转交 —— 程序本身拿不到密钥。'}
+  {a:'🔑 ⇥ 🛡 ⇥ 📦',t:'两种连接方式，保护边界不同。',d:'代理模式：原始密钥留在宿主。引用模式：指定程序取得明文，可能复制或外传；须验证适配方式并单独确认风险。'}
 ];
 let oi=0;
 function onbReset(){oi=0;onbPaint()}
@@ -997,7 +1188,7 @@ function onbStep(){
 
 /* ═══ 否决条件自检 ═══ */
 const CHECKS=[
-  ['U1','高风险项需逐项勾选，不可批量','高风险勾满前「确认并运行」禁用'],
+  ['U1','能力需明确授权，允许部分批准','未选项保持拒绝；低风险不自动放行'],
   ['U2','无「全部允许」一键按钮','界面中不存在该按钮'],
   ['U3','每条能力同时有能力+后果描述','每条 .cap 均含 .cap-conseq'],
   ['U4','措辞表之外的技术术语不上屏','界面无 allow-list / 挂载 / 注入等词'],
@@ -1012,7 +1203,7 @@ const CHECKS=[
   ['U13','持久模式选择时展示安全含义','生命周期选项附「改动会一直留着」']
 ];
 document.getElementById('checklist').innerHTML=CHECKS.map(c=>
-  `<div class="chk"><span class="st pass">✓</span><span><code>${c[0]}</code> ${c[1]}<br><span class="dim">${c[2]}</span></span></div>`
+  `<div class="chk"><span class="st">待验</span><span><code>${c[0]}</code> ${c[1]}<br><span class="dim">${c[2]}</span></span></div>`
 ).join('');
 
 /* ═══ 工具 ═══ */
@@ -1023,7 +1214,11 @@ function toast(m){
   clearTimeout(tt); tt=setTimeout(()=>el.classList.remove('show'),3600);
 }
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){document.querySelectorAll('.overlay.show').forEach(o=>o.classList.remove('show'));stopCd()}
+  if(e.key==='Escape'){
+    if(document.getElementById('ov-writeback').classList.contains('show'))cancelWriteback();
+    if(document.getElementById('ov-arb').classList.contains('show'))arbDeny();
+    document.querySelectorAll('.overlay.show').forEach(o=>o.classList.remove('show'));stopCd();
+  }
 });
 /* 首次打开展示引导 */
 window.addEventListener('load',()=>{setTimeout(()=>{open_('ov-onb');onbReset()},400)});

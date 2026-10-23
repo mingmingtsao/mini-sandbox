@@ -1,19 +1,6 @@
 import Foundation
 import Security
 
-package struct ModelCompletion: Equatable, Sendable {
-    package let text: String
-    package init(text: String) { self.text = text }
-}
-
-package struct ModelStreamChunk: Equatable, Sendable {
-    package let text: String
-    package let isFinal: Bool
-    package init(text: String, isFinal: Bool) {
-        self.text = text
-        self.isFinal = isFinal
-    }
-}
 
 package enum ModelTransportError: Error, Equatable, Sendable, CustomStringConvertible {
     case invalidRequest(String)
@@ -112,15 +99,17 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             try operation.start()
             var text = ""
             var sawFinal = false
+            var completion: ModelCompletion?
             for try await chunk in operation.chunks {
                 try Task.checkCancellation()
                 if chunk.isFinal { sawFinal = true }
+                if let value = chunk.completion { completion = value }
                 if streaming { emit?(chunk) } else { text += chunk.text }
             }
             // Cancellation can terminate AsyncThrowingStream iteration without throwing.
             try Task.checkCancellation()
             guard sawFinal else { throw ModelTransportError.invalidResponse }
-            return ModelCompletion(text: text)
+            return completion ?? ModelCompletion(text: text)
         } onCancel: { operation.cancel() }
     }
 
@@ -153,9 +142,10 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             }
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body
+            let anthropicDecoder = AnthropicStreamDecoder()
             return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming,
                 decodeText: { try self.decodeText($0, protocol: request.protocol) },
-                decodeEvent: { try self.decodeSSEEvent($0, protocol: request.protocol) },
+                decodeEvent: { request.protocol == .anthropic ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI) },
                 release: { self.limiter.release() })
         } catch {
             limiter.release()
@@ -186,40 +176,33 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 let model: String
                 let messages: [FixedMessage]
                 let system: String?
+                let tools: [ModelToolDefinition]?
+                let tool_choice: ModelToolChoice?
                 let max_tokens: Int
                 let stream: Bool
                 let thinking = ["type": "disabled"]
             }
             let system = request.messages.filter { $0.role == .system }.map(\.content).joined(separator: "\n\n")
-            return try JSONEncoder().encode(Payload(model: request.model.rawValue, messages: request.messages.filter { $0.role != .system }, system: system.isEmpty ? nil : system, max_tokens: request.maxOutputTokens, stream: streaming))
+            return try JSONEncoder().encode(Payload(model: request.model.rawValue, messages: request.messages.filter { $0.role != .system }, system: system.isEmpty ? nil : system, tools: request.tools.isEmpty ? nil : request.tools, tool_choice: request.toolChoice, max_tokens: request.maxOutputTokens, stream: streaming))
         }
     }
 
 
-    private func decodeText(_ data: Data, protocol: FixedProtocol) throws -> String {
+    private func decodeText(_ data: Data, protocol: FixedProtocol) throws -> ModelCompletion {
         struct OpenAIResponse: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String? }; let message: Message; let finish_reason: String? }; let choices: [Choice] }
-        struct AnthropicResponse: Decodable {
-            struct Content: Decodable {
-                let text: String?
-                private enum CodingKeys: String, CodingKey { case type, text }
-                init(from decoder: any Decoder) throws {
-                    let container = try decoder.container(keyedBy: CodingKeys.self)
-                    let type = try container.decode(String.self, forKey: .type)
-                    // Non-text metadata is ignored; text blocks must contain a string.
-                    text = type == "text" ? try container.decode(String.self, forKey: .text) : nil
-                }
-            }
-            let content: [Content]
-        }
+
         switch `protocol` {
         case .openAI:
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any], let choices = root["choices"] as? [[String: Any]] else { throw ModelTransportError.invalidResponse }
+            for choice in choices {
+                if let message = choice["message"] as? [String: Any] { try rejectStructuredOpenAI(message) }
+            }
             let response = try JSONDecoder().decode(OpenAIResponse.self, from: data)
             for choice in response.choices { try rejectProviderFailure(choice.finish_reason) }
             guard let text = response.choices.first?.message.content else { throw ModelTransportError.invalidResponse }
-            return text
+            return ModelCompletion(text: text)
         case .anthropic:
-            let response = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-            return response.content.compactMap(\.text).joined()
+            return try AnthropicResponse.decode(data)
         }
     }
 
@@ -231,22 +214,24 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         switch kind {
         case .openAI:
             guard let choices = object["choices"] as? [[String: Any]] else { throw ModelTransportError.malformedSSE }
-            for choice in choices { try rejectProviderFailure(choice["finish_reason"] as? String) }
+            for choice in choices {
+                try rejectProviderFailure(choice["finish_reason"] as? String)
+                if let delta = choice["delta"] as? [String: Any] { try rejectStructuredOpenAI(delta) }
+            }
             if choices.isEmpty { return nil } // Optional usage-only chunk.
             guard let delta = choices.first?["delta"] as? [String: Any] else { throw ModelTransportError.malformedSSE }
             guard let text = delta["content"] as? String, !text.isEmpty else { return nil }
             return ModelStreamChunk(text: text, isFinal: false)
         case .anthropic:
-            guard let type = object["type"] as? String else { throw ModelTransportError.malformedSSE }
-            switch type {
-            case "message_stop": return ModelStreamChunk(text: "", isFinal: true)
-            case "content_block_delta":
-                guard let delta = object["delta"] as? [String: Any] else { throw ModelTransportError.malformedSSE }
-                guard let text = delta["text"] as? String, !text.isEmpty else { return nil }
-                return ModelStreamChunk(text: text, isFinal: false)
-            case "error": throw ModelTransportError.invalidResponse
-            default: return nil // Lifecycle, ping and non-text metadata are not text chunks.
-            }
+            // Anthropic always uses the per-request stateful decoder above.
+            throw ModelTransportError.malformedSSE
+        }
+    }
+
+    private func rejectStructuredOpenAI(_ object: [String: Any]) throws {
+        if let content = object["content"], !(content is NSNull), !(content is String) { throw ModelTransportError.invalidResponse }
+        for key in ["tool_calls", "function_call"] {
+            if let value = object[key], !(value is NSNull) { throw ModelTransportError.invalidResponse }
         }
     }
 
@@ -328,7 +313,7 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private var cancelled = false
 
     fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool,
-        decodeText: @escaping @Sendable (Data) throws -> String,
+        decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
         decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?,
         release: @escaping @Sendable () -> Void) {
         let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
@@ -357,7 +342,7 @@ package final class ModelPreparedOperation: @unchecked Sendable {
 private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     let continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation
     let streaming: Bool
-    let decodeText: @Sendable (Data) throws -> String
+    let decodeText: @Sendable (Data) throws -> ModelCompletion
     let decodeEvent: @Sendable (String) throws -> ModelStreamChunk?
     let release: @Sendable () -> Void
     private let lock = NSLock()
@@ -368,7 +353,7 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
     private var isEnded: Bool { lock.withLock { ended } }
 
     init(continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool,
-        decodeText: @escaping @Sendable (Data) throws -> String,
+        decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
         decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?, release: @escaping @Sendable () -> Void) {
         self.continuation = continuation; self.streaming = streaming
         self.decodeText = decodeText; self.decodeEvent = decodeEvent; self.release = release
@@ -427,8 +412,9 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
         }
         do {
             guard !streaming, !data.isEmpty else { throw ModelTransportError.invalidResponse }
-            continuation.yield(ModelStreamChunk(text: try decodeText(data), isFinal: false))
-            continuation.yield(ModelStreamChunk(text: "", isFinal: true))
+            let result = try decodeText(data)
+            continuation.yield(ModelStreamChunk(text: result.text, isFinal: false))
+            continuation.yield(ModelStreamChunk(event: .messageStop(result), completion: result))
             finish()
         } catch { finish(error as? ModelTransportError ?? ModelTransportError.invalidResponse) }
     }

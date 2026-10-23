@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_archive_name": "sandbox.zip",
+  "source_archive_sha256": "43afcc17d3c0a827a5951e5d36bd1d080e7f597619e12eb475daee8a29a172aa",
+  "submitted_by": "郭佳 / Jessie-shsh（按项目群说明）",
+  "document_status": "原始产品设计草案；入库不代表评审通过或范围冻结",
+  "source_preservation": "五个 included_files 均从上传压缩包逐字节复制，未修改内容；评审意见单独保存。",
+  "included_files": [
+    {"archive_path": "sandbox/01-产品定位与设计锚点.md", "repository_path": "source/01-产品定位与设计锚点.md", "bytes": 25881, "sha256": "05b63d110973291a6ce542f99601fb8c3ca8d6db5bfe9d84114b48edcb6e4538"},
+    {"archive_path": "sandbox/02-模块设计.md", "repository_path": "source/02-模块设计.md", "bytes": 37549, "sha256": "d3b5341c9c83ba42e2fed34a18922a7c1376ba784d4eef9256b039ae5d218e80"},
+    {"archive_path": "sandbox/03-接口契约.md", "repository_path": "source/03-接口契约.md", "bytes": 27092, "sha256": "a4ff66d8e9b3c18a2dd0fe9a6263b9da39386c227f34aaaeb5bb03393521457a"},
+    {"archive_path": "sandbox/04-界面设计.md", "repository_path": "source/04-界面设计.md", "bytes": 47267, "sha256": "28c1a0126fa0149162144f0741c9be6215b6a320173000bf99d9fd1d21c1f6c0"},
+    {"archive_path": "sandbox/prototype.html", "repository_path": "source/prototype.html", "bytes": 63549, "sha256": "2c70cd2e4900512b709678da1e9b4e76a46be5aa5c20f11f48ce211180e7c05d"}
+  ],
+  "excluded_files": [
+    {"archive_path": "sandbox/CLAUDE.md", "reason": "郭佳在项目群明确要求不提交；不作为仓库代理指令。"},
+    {"archive_path": "sandbox/.claude/settings.local.json", "reason": "作者本地工具权限配置，不属于产品资料，不传播到仓库。"}
+  ],
+  "original_archive_committed": false,
+  "original_archive_exclusion_reason": "原始 zip 含被明确排除的 CLAUDE.md 和本地配置，故不整体提交。",
+  "review_scope": "基于所提供设计文档与 HTML 源码的一致性、风险与可验收性评审；不代表已验证虚拟化、安全隔离、兼容性或性能指标。",
+  "missing_referenced_deliverable": "原文提及的 05 计量计费与评审验收未在上传包中提供。"
+}

@@ -8,12 +8,14 @@ let package = Package(
         .library(name: "SandboxContracts", targets: ["SandboxContracts"]),
         .library(name: "SandboxHost", targets: ["SandboxHost"]),
         .executable(name: "MiniSandbox", targets: ["MiniSandboxApp"]),
-        .executable(name: "ContractChecks", targets: ["ContractChecks"])
+        .executable(name: "ContractChecks", targets: ["ContractChecks"]),
+        .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"])
     ],
     targets: [
         .target(name: "SandboxContracts"),
         .target(name: "SandboxHost", dependencies: ["SandboxContracts"], linkerSettings: [.linkedFramework("Virtualization")]),
         .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts"]),
-        .executableTarget(name: "ContractChecks", dependencies: ["SandboxContracts"], path: "Tests/SandboxContractsTests")
+        .executableTarget(name: "ContractChecks", dependencies: ["SandboxContracts"], path: "Tests/SandboxContractsTests"),
+        .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks")
     ]
 )

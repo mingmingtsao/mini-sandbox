@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "MiniSandbox", targets: ["MiniSandboxApp"]),
         .executable(name: "ContractChecks", targets: ["ContractChecks"]),
         .executable(name: "AuthorizationChecks", targets: ["AuthorizationChecks"]),
-        .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"])
+        .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"]),
+        .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"])
     ],
     targets: [
         .target(name: "SandboxContracts"),
@@ -18,6 +19,7 @@ let package = Package(
         .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts"]),
         .executableTarget(name: "ContractChecks", dependencies: ["SandboxContracts"], path: "Tests/SandboxContractsTests"),
         .executableTarget(name: "AuthorizationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/AuthorizationChecks"),
-        .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks")
+        .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
+        .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks")
     ]
 )

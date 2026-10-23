@@ -452,6 +452,80 @@ private func testConcurrencyBoundAndReuse() async throws {
     }
 }
 
+private func testDirectCompletionCancellationResult() async throws {
+    let transport = makeTransport { _ in FixtureResponse(finish: false) }
+    var cancelled = 0; var successes = 0; var other = 0
+    for iteration in 0..<50 {
+        let task = Task { try await transport.complete(baseRequest()) }
+        for _ in 0..<1000 {
+            if FixtureURLProtocol.snapshotRequests().count > iteration { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        guard FixtureURLProtocol.snapshotRequests().count == iteration + 1 else {
+            task.cancel(); _ = await task.result
+            throw CheckFailure.failed("hanging completion never dispatched")
+        }
+        try await Task.sleep(nanoseconds: 1_000_000)
+        task.cancel()
+        switch await task.result {
+        case .success: successes += 1
+        case .failure(let error):
+            if error as? ModelTransportError == .cancelled { cancelled += 1 } else { other += 1 }
+        }
+    }
+    print("DIRECT_COMPLETE_CANCELLATION cancelled=\(cancelled) success=\(successes) other=\(other) total=50")
+    try check(cancelled == 50 && successes == 0 && other == 0, "Task.result must be cancelled, not empty success")
+}
+private func testValidEmptyFinishedText() async throws {
+    for kind in [FixedProtocol.openAI, .anthropic] {
+        let payload = kind == .openAI ? "{\"choices\":[{\"message\":{\"content\":\"\"}}]}" : "{\"content\":[{\"type\":\"text\",\"text\":\"\"}]}"
+        let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
+        let result = try await transport.complete(baseRequest(protocol: kind))
+        try check(result.text.isEmpty, "genuinely completed empty text remains valid")
+        let terminal = kind == .openAI ? "data: [DONE]\n\n" : "data: {\"type\":\"message_stop\"}\n\n"
+        let stream = makeTransport { _ in FixtureResponse(bodyChunks: [Data(terminal.utf8)]) }
+        var chunks: [ModelStreamChunk] = []
+        for try await chunk in stream.stream(try baseRequest(protocol: kind)) { chunks.append(chunk) }
+        try check(chunks.count == 1 && chunks[0].isFinal && chunks[0].text.isEmpty, "empty finished stream preserves genuine terminal")
+    }
+}
+private func checkPreparedCapacity(_ transport: ModelTransport) throws {
+    var held: [ModelPreparedOperation] = []
+    defer { held.forEach { $0.cancel(); $0.cancel() } }
+    for _ in 0..<4 { held.append(try transport.prepare(baseRequest(), streaming: false)) }
+    do { _ = try transport.prepare(baseRequest(), streaming: false); throw CheckFailure.failed("fifth held reservation accepted") }
+    catch ModelTransportError.busy {}
+}
+private func testPreparedCancellationBeforeStart() async throws {
+    let transport = makeTransport { _ in FixtureResponse(finish: false) }
+    for _ in 0..<20 {
+        let operation = try transport.prepare(baseRequest(), streaming: false)
+        operation.cancel()
+        do { try operation.start(); throw CheckFailure.failed("cancelled prepared task started") }
+        catch ModelTransportError.cancelled {}
+        do { for try await _ in operation.chunks {} ; throw CheckFailure.failed("cancelled operation finished successfully") }
+        catch ModelTransportError.cancelled {}
+    }
+    try checkPreparedCapacity(transport)
+    try check(FixtureURLProtocol.snapshotRequests().isEmpty, "cancel before start has zero dispatch")
+}
+private func testPreparedDeinitBeforeStart() async throws {
+    let transport = makeTransport { _ in FixtureResponse(finish: false) }
+    for _ in 0..<20 { _ = try transport.prepare(baseRequest(), streaming: false) }
+    try checkPreparedCapacity(transport)
+    try check(FixtureURLProtocol.snapshotRequests().isEmpty, "deinit before start releases capacity without dispatch")
+}
+private func testPreparedRepeatedCancellationExactOnce() async throws {
+    let transport = makeTransport { _ in FixtureResponse(finish: false) }
+    for _ in 0..<20 {
+        let operation = try transport.prepare(baseRequest(), streaming: false)
+        operation.cancel(); operation.cancel(); operation.cancel()
+    }
+    // Each cycle also exercises repeated cancellation followed by deinit of all four.
+    for _ in 0..<8 { try checkPreparedCapacity(transport) }
+    try check(FixtureURLProtocol.snapshotRequests().isEmpty, "repeated cancel/deinit never dispatches or over-releases limiter")
+}
+
 private func testKeychainCRUDIsolated() throws {
     let service = "dev.mini-sandbox.test." + UUID().uuidString
     let account = "account." + UUID().uuidString
@@ -476,6 +550,11 @@ private struct NamedCheck: Sendable {
 }
 
 private let checks: [NamedCheck] = [
+    NamedCheck(name: "direct completion cancellation result", run: testDirectCompletionCancellationResult),
+    NamedCheck(name: "valid empty finished text", run: testValidEmptyFinishedText),
+    NamedCheck(name: "prepared cancel before start", run: testPreparedCancellationBeforeStart),
+    NamedCheck(name: "prepared deinit before start", run: testPreparedDeinitBeforeStart),
+    NamedCheck(name: "prepared repeated cancel exact once", run: testPreparedRepeatedCancellationExactOnce),
     NamedCheck(name: "Anthropic invalid text blocks", run: testAnthropicInvalidTextBlocks),
     NamedCheck(name: "Anthropic mixed blocks", run: testAnthropicMixedBlocks),
     NamedCheck(name: "decoding errors are invalid response", run: testDecodingErrorsAreInvalidResponse),

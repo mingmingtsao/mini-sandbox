@@ -58,7 +58,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     package static let resourceTimeout: TimeInterval = 120
 
     private let credentialProvider: any ModelCredentialProvider
-    private let session: URLSession
+    private let configuration: URLSessionConfiguration
     private let limiter: RequestLimiter
 
     package init(credentialProvider: any ModelCredentialProvider, configuration: URLSessionConfiguration? = nil) {
@@ -70,7 +70,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         configuration.httpCookieAcceptPolicy = .never
         configuration.timeoutIntervalForRequest = Self.requestTimeout
         configuration.timeoutIntervalForResource = Self.resourceTimeout
-        self.session = URLSession(configuration: configuration, delegate: RedirectRejectingDelegate(), delegateQueue: nil)
+        self.configuration = configuration.copy() as! URLSessionConfiguration
         self.limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
         super.init()
     }
@@ -81,7 +81,6 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         return configuration
     }
 
-    deinit { session.invalidateAndCancel() }
 
     package func complete(_ request: FixedModelRequest) async throws -> ModelCompletion {
         do { return try await perform(request, streaming: false) }
@@ -107,57 +106,60 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     private func perform(_ request: FixedModelRequest, streaming: Bool,
         emit: (@Sendable (ModelStreamChunk) -> Void)? = nil) async throws -> ModelCompletion {
         guard !Task.isCancelled else { throw ModelTransportError.cancelled }
+        let operation = try prepare(request, streaming: streaming)
+        defer { operation.cancel() }
+        return try await withTaskCancellationHandler {
+            try operation.start()
+            var text = ""
+            var sawFinal = false
+            for try await chunk in operation.chunks {
+                try Task.checkCancellation()
+                if chunk.isFinal { sawFinal = true }
+                if streaming { emit?(chunk) } else { text += chunk.text }
+            }
+            // Cancellation can terminate AsyncThrowingStream iteration without throwing.
+            try Task.checkCancellation()
+            guard sawFinal else { throw ModelTransportError.invalidResponse }
+            return ModelCompletion(text: text)
+        } onCancel: { operation.cancel() }
+    }
+
+    /// Synchronous preparation only; the URLSession task remains suspended.
+    /// The owner must authorize/audit before calling this (credential access occurs here).
+    package func prepare(_ request: FixedModelRequest, streaming: Bool) throws -> ModelPreparedOperation {
         try limiter.acquire()
-        defer { limiter.release() }
-
-        let credential: String
-        do { credential = try credentialProvider.credential(for: request.model) }
-        catch let error as CredentialProviderError { throw ModelTransportError.credential(error) }
-        catch { throw ModelTransportError.credential(.unavailable) }
-        guard !credential.isEmpty, credential.utf8.count <= 16 * 1024,
-              !credential.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            throw ModelTransportError.credential(.invalid)
-        }
-
-        let endpoint = endpoint(for: request)
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = Self.requestTimeout
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        switch request.protocol {
-        case .openAI: urlRequest.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
-        case .anthropic:
-            urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
-            urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        }
-        urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        let body = try encode(request, streaming: streaming)
-        guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
-        urlRequest.httpBody = body
-
         do {
-            let (bytes, response) = try await session.bytes(for: urlRequest)
-            defer { bytes.task.cancel() }
-            return try await withTaskCancellationHandler {
-                guard let http = response as? HTTPURLResponse else { throw ModelTransportError.invalidResponse }
-                guard !(300..<400).contains(http.statusCode) else { throw ModelTransportError.redirectRejected }
-                guard (200..<300).contains(http.statusCode) else { throw ModelTransportError.httpStatus(http.statusCode) }
-                if streaming {
-                    try await parseSSE(bytes: bytes, protocol: request.protocol, emit: emit!)
-                    return ModelCompletion(text: "")
-                }
-                let data = try await collect(bytes: bytes)
-                return ModelCompletion(text: try decodeText(data, protocol: request.protocol))
-            } onCancel: { bytes.task.cancel() }
-        } catch is CancellationError {
-            throw ModelTransportError.cancelled
-        } catch let error as ModelTransportError {
-            throw error
-        } catch is DecodingError {
-            throw ModelTransportError.invalidResponse
+            let body = try encode(request, streaming: streaming)
+            guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
+            let credential: String
+            do { credential = try credentialProvider.credential(for: request.model) }
+            catch let error as CredentialProviderError { throw ModelTransportError.credential(error) }
+            catch { throw ModelTransportError.credential(.unavailable) }
+            guard !credential.isEmpty, credential.utf8.count <= 16 * 1024,
+                  !credential.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw ModelTransportError.credential(.invalid)
+            }
+
+            let endpoint = endpoint(for: request)
+            var urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = Self.requestTimeout
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            switch request.protocol {
+            case .openAI: urlRequest.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+            case .anthropic:
+                urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
+                urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            }
+            urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            urlRequest.httpBody = body
+            return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming,
+                decodeText: { try self.decodeText($0, protocol: request.protocol) },
+                decodeEvent: { try self.decodeSSEEvent($0, protocol: request.protocol) },
+                release: { self.limiter.release() })
         } catch {
-            if Task.isCancelled { throw ModelTransportError.cancelled }
-            throw ModelTransportError.network
+            limiter.release()
+            throw Self.sanitize(error)
         }
     }
 
@@ -193,15 +195,6 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         }
     }
 
-    private func collect(bytes: URLSession.AsyncBytes) async throws -> Data {
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < Self.maxResponseBytes else { throw ModelTransportError.responseTooLarge }
-            data.append(byte)
-        }
-        guard !data.isEmpty else { throw ModelTransportError.invalidResponse }
-        return data
-    }
 
     private func decodeText(_ data: Data, protocol: FixedProtocol) throws -> String {
         struct OpenAIResponse: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String? }; let message: Message; let finish_reason: String? }; let choices: [Choice] }
@@ -230,25 +223,6 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         }
     }
 
-    private func parseSSE(bytes: URLSession.AsyncBytes, protocol kind: FixedProtocol,
-        emit: @Sendable (ModelStreamChunk) -> Void) async throws {
-        var parser = SSEParser()
-        var totalBytes = 0
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            totalBytes += 1
-            guard totalBytes <= Self.maxResponseBytes else { throw ModelTransportError.responseTooLarge }
-            for event in try parser.consume(byte: byte) {
-                let chunk = try decodeSSEEvent(event, protocol: kind)
-                if let chunk {
-                    emit(chunk)
-                    if chunk.isFinal { return }
-                }
-            }
-        }
-        // EOF is never completion: require a fully framed provider terminal event.
-        throw ModelTransportError.invalidResponse
-    }
 
     private func decodeSSEEvent(_ event: String, protocol kind: FixedProtocol) throws -> ModelStreamChunk? {
         if kind == .openAI && event == "[DONE]" { return ModelStreamChunk(text: "", isFinal: true) }
@@ -342,8 +316,120 @@ private final class RequestLimiter: @unchecked Sendable {
     }
 }
 
-private final class RedirectRejectingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// Owns a real suspended task. start() calls resume() before returning, never via a Task.
+/// Cancellation cannot prove an upstream side effect did not occur after start.
+package final class ModelPreparedOperation: @unchecked Sendable {
+    package let chunks: AsyncThrowingStream<ModelStreamChunk, Error>
+    private let session: URLSession
+    private let task: URLSessionDataTask
+    private let delegate: ModelOperationDelegate
+    private let lock = NSLock()
+    private var started = false
+    private var cancelled = false
+
+    fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool,
+        decodeText: @escaping @Sendable (Data) throws -> String,
+        decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?,
+        release: @escaping @Sendable () -> Void) {
+        let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
+        chunks = pair.stream
+        delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming,
+            decodeText: decodeText, decodeEvent: decodeEvent, release: release)
+        session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        task = session.dataTask(with: request)
+    }
+    package func start() throws {
+        try lock.withLock {
+            guard !started, !cancelled else { throw ModelTransportError.cancelled }
+            started = true
+            task.resume()
+        }
+    }
+    package func cancel() {
+        lock.withLock { cancelled = true; task.cancel() }
+        delegate.finish(ModelTransportError.cancelled)
+        session.invalidateAndCancel()
+    }
+    deinit { cancel() }
+}
+
+/// URLSession serializes these delegate callbacks. Only terminal state is shared with cancel().
+private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    let continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation
+    let streaming: Bool
+    let decodeText: @Sendable (Data) throws -> String
+    let decodeEvent: @Sendable (String) throws -> ModelStreamChunk?
+    let release: @Sendable () -> Void
+    private let lock = NSLock()
+    private var ended = false
+    private var parser = SSEParser()
+    private var data = Data()
+    private var total = 0
+    private var isEnded: Bool { lock.withLock { ended } }
+
+    init(continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool,
+        decodeText: @escaping @Sendable (Data) throws -> String,
+        decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?, release: @escaping @Sendable () -> Void) {
+        self.continuation = continuation; self.streaming = streaming
+        self.decodeText = decodeText; self.decodeEvent = decodeEvent; self.release = release
+    }
+    func finish(_ error: Error? = nil) {
+        let first = lock.withLock { if ended { return false }; ended = true; return true }
+        guard first else { return }
+        release()
+        if let error { continuation.finish(throwing: error) } else { continuation.finish() }
+    }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+        finish(ModelTransportError.redirectRejected)
+        session.invalidateAndCancel()
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse else {
+            finish(ModelTransportError.invalidResponse); completionHandler(.cancel); return
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            finish((300..<400).contains(http.statusCode) ? ModelTransportError.redirectRejected : .httpStatus(http.statusCode))
+            completionHandler(.cancel); return
+        }
+        completionHandler(isEnded ? .cancel : .allow)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive incoming: Data) {
+        guard !isEnded else { return }
+        do {
+            if streaming {
+                for byte in incoming {
+                    guard !isEnded else { return }
+                    total += 1
+                    guard total <= ModelTransport.maxResponseBytes else { throw ModelTransportError.responseTooLarge }
+                    for event in try parser.consume(byte: byte) {
+                        if let chunk = try decodeEvent(event) {
+                            continuation.yield(chunk)
+                            if chunk.isFinal { finish(); session.invalidateAndCancel(); return }
+                        }
+                    }
+                }
+            } else {
+                guard incoming.count <= ModelTransport.maxResponseBytes - data.count else { throw ModelTransportError.responseTooLarge }
+                data.append(incoming)
+            }
+        } catch {
+            finish(error as? ModelTransportError ?? ModelTransportError.invalidResponse)
+            session.invalidateAndCancel()
+        }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        defer { session.finishTasksAndInvalidate() }
+        guard !isEnded else { return }
+        if let error {
+            finish((error as NSError).code == NSURLErrorCancelled ? ModelTransportError.cancelled : .network)
+            return
+        }
+        do {
+            guard !streaming, !data.isEmpty else { throw ModelTransportError.invalidResponse }
+            continuation.yield(ModelStreamChunk(text: try decodeText(data), isFinal: false))
+            continuation.yield(ModelStreamChunk(text: "", isFinal: true))
+            finish()
+        } catch { finish(error as? ModelTransportError ?? ModelTransportError.invalidResponse) }
     }
 }

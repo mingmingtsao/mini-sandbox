@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import SandboxHost
+import SandboxWorkbench
 
 @main
 struct MiniSandboxEntry {
@@ -24,18 +25,51 @@ struct MiniSandboxEntry {
 struct MiniSandboxApplication: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var delegate
     var body: some Scene {
-        WindowGroup("Mini Sandbox") { EnvironmentView() }
-            .defaultSize(width: 720, height: 480)
+        Window("Mini Sandbox", id: "workbench") {
+            TabView {
+                WorkbenchView(model: delegate.model).tabItem { Label("Workbench", systemImage: "checkmark.shield") }
+                EnvironmentView().tabItem { Label("Environment", systemImage: "desktopcomputer") }
+            }
+            .background(WindowCloseGuard())
+        }
+            .defaultSize(width: 940, height: 720)
     }
 }
 
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+    let model = WorkbenchModel.applicationModel()
+    private var terminationPending = false
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if model.isClosed { return .terminateNow }
+        if !terminationPending {
+            terminationPending = true
+            Task { @MainActor in
+                let revoked = await model.close()
+                terminationPending = false
+                sender.reply(toApplicationShouldTerminate: revoked)
+            }
+        }
+        return .terminateLater
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
+/// Route the red close button through the same awaited termination handshake.
+private struct WindowCloseGuard: NSViewRepresentable {
+    func makeNSView(context: Context) -> GuardView { GuardView() }
+    func updateNSView(_ nsView: GuardView, context: Context) {}
+    final class GuardView: NSView, NSWindowDelegate {
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.delegate = self }
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            NSApplication.shared.terminate(nil)
+            return false
+        }
+    }
 }
 
 struct EnvironmentView: View {

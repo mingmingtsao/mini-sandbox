@@ -80,7 +80,7 @@ package actor HostModelGateway {
     private let now: @Sendable () -> Date
     private var registry: [UUID: Entry] = [:]
     private var runs: [UUID: Run] = [:]
-    private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v1".utf8)).map { String(format: "%02x", $0) }.joined()
+    private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v2".utf8)).map { String(format: "%02x", $0) }.joined()
 
     package init(connections: [HostModelConnection], auditSink: any SynchronousAuditSink,
         now: @escaping @Sendable () -> Date = { Date() }) throws {
@@ -115,7 +115,7 @@ package actor HostModelGateway {
             guard run.grant.decision(for: scope, connectionID: connectionID, at: scopeTime) == .allowed else {
                 throw HostModelGatewayError.denied
             }
-            let envelope = Envelope(schemaVersion: 1, runID: run.grant.runID, epoch: run.grant.epoch,
+            let envelope = Envelope(schemaVersion: 2, runID: run.grant.runID, epoch: run.grant.epoch,
                 connectionID: connectionID, accountID: entry.connection.accountID,
                 accountBindingVersion: entry.connection.accountBindingVersion, routeVersion: entry.connection.routeVersion,
                 streaming: streaming, request: request)
@@ -152,8 +152,9 @@ package actor HostModelGateway {
         } catch { throw await handleError(error, run: run) }
     }
 
-    /// Returns a completion, never a dispatch ticket. emit gets ordered provisional text and
-    /// exactly one success final ONLY after durable F03 completion succeeds. No automatic retry.
+    /// Returns structured data, never tool-execution authority or a dispatch ticket.
+    /// Provisional events are not approval. All message_delta metadata and the
+    /// success final wait for durable F03 completion. No automatic retry.
     package func execute(handle: HostModelRunHandle, approval: HostModelApproval,
         emit: @escaping @Sendable (ModelStreamChunk) -> Void = { _ in }) async throws -> ModelCompletion {
         let run = try get(handle)
@@ -176,7 +177,7 @@ package actor HostModelGateway {
             // The actual request is reconstructed ONLY from the immutable F03 approved bytes.
             let envelope = try JSONDecoder().decode(Envelope.self, from: ticket.approvedRequest)
             let entry = try live(run, connectionID: envelope.connectionID)
-            guard envelope.schemaVersion == 1, envelope.runID == run.grant.runID, envelope.epoch == run.grant.epoch,
+            guard envelope.schemaVersion == 2, envelope.runID == run.grant.runID, envelope.epoch == run.grant.epoch,
                   envelope.accountID == entry.connection.accountID,
                   envelope.accountBindingVersion == entry.connection.accountBindingVersion,
                   envelope.routeVersion == entry.connection.routeVersion,
@@ -194,11 +195,15 @@ package actor HostModelGateway {
             started = true
             var text = ""
             var sawFinal = false
+            var completion: ModelCompletion?
+            var terminal: [ModelStreamChunk] = []
             try await withTaskCancellationHandler {
                 for try await chunk in operation.chunks {
                     try validate(run, proposal: proposal)
                     try Task.checkCancellation()
-                    if chunk.isFinal { sawFinal = true } else {
+                    if let value = chunk.completion { completion = value }
+                    if chunk.isFinal { sawFinal = true }
+                    if chunk.isTerminal { terminal.append(chunk) } else {
                         text += chunk.text
                         if envelope.streaming { emit(chunk) }
                     }
@@ -211,8 +216,14 @@ package actor HostModelGateway {
             try await authority.complete(handle: run.authorityHandle, ticket: ticket, outcome: .completed)
             try validate(run, proposal: proposal)
             try Task.checkCancellation()
-            if envelope.streaming { emit(ModelStreamChunk(text: "", isFinal: true)) }
-            return ModelCompletion(text: text)
+            if envelope.streaming {
+                for chunk in terminal {
+                    try validate(run, proposal: proposal)
+                    try Task.checkCancellation()
+                    emit(chunk)
+                }
+            }
+            return completion ?? ModelCompletion(text: text)
         } catch {
             run.operations[operationID]?.1.cancel()
             let sanitized = await handleError(error, run: run)

@@ -247,10 +247,24 @@ private func testAnthropicInvalidTextBlocks() async throws {
 }
 
 private func testAnthropicMixedBlocks() async throws {
-    let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"thinking\",\"thinking\":\"metadata\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
+    let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
     let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
     let result = try await transport.complete(baseRequest(protocol: .anthropic))
-    try check(result.text == "hello world", "only valid text blocks are joined in order")
+    try check(result.text == "hello world", "valid text blocks are joined in order")
+    try check(result.blocks == [.text("hello"), .text(""), .text(" world")], "empty and ordered text blocks are preserved")
+    try await testAnthropicUnsupportedThinkingRejected()
+}
+
+private func testAnthropicUnsupportedThinkingRejected() async throws {
+    // Preserve the exact pre-v2 mixed-block payload as a rejection regression.
+    let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"thinking\",\"thinking\":\"metadata\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
+    for rejected in [payload,
+        "{\"content\":[{\"type\":\"thinking\",\"thinking\":\"metadata\"}]}",
+        "{\"content\":[{\"type\":\"text\",\"text\":\"valid prefix\"},{\"type\":\"redacted_thinking\",\"data\":\"metadata\"}]}"] {
+        let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(rejected.utf8)]) }
+        try await expectTransportError({ _ = try await transport.complete(baseRequest(protocol: .anthropic)) },
+            { $0 == .invalidResponse }, "unsupported thinking must not be silently dropped")
+    }
 }
 
 private func testDecodingErrorsAreInvalidResponse() async throws {
@@ -365,13 +379,58 @@ private func testIncrementalBeforeEOF() async throws {
 }
 
 private func testAnthropicSSELifecycle() async throws {
-    let payload = ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\"}\r\n\r\n" +
-        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n" +
-        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    let payload = anthropicMessageStart +
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+        "event: content_block_delta\r\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\r\n\r\n" +
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" 世界\"}}\n\n" +
+        "event: content_block_stop\r\ndata: {\"type\":\"content_block_stop\",\"index\":0}\r\n\r\n" + anthropicMessageEnd
     let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) }) }
     var chunks: [ModelStreamChunk] = []
     for try await chunk in transport.stream(try baseRequest(protocol: .anthropic)) { chunks.append(chunk) }
-    try check(chunks.map(\.text).joined() == "hi" && chunks.filter(\.isFinal).count == 1, "Anthropic lifecycle and terminal event")
+    try check(chunks.filter { !$0.text.isEmpty }.map(\.text) == ["hi", " 世界"], "fragmented text deltas retain order and UTF8")
+    try check(chunks.filter(\.isFinal).count == 1 && chunks.last?.isFinal == true, "exactly one terminal final")
+    try check(chunks.last?.completion?.blocks == [.text("hi 世界")], "final assembled text block")
+    try checkAnthropicMetadata(chunks)
+}
+
+private let anthropicMessageStart = ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-flash\",\"content\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":0},\"stop_reason\":null,\"stop_sequence\":null}}\r\n\r\n"
+private let anthropicMessageEnd = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
+    "event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
+
+private func checkAnthropicMetadata(_ chunks: [ModelStreamChunk]) throws {
+    guard case .messageStart(let start) = chunks.first?.event,
+          let completion = chunks.last?.completion else { throw CheckFailure.failed("missing lifecycle metadata") }
+    try check(start.messageID == "msg_fixture" && start.model == "deepseek-flash", "message start identity")
+    try check(start.usage?.inputTokens == 7 && start.usage?.outputTokens == 0 && start.stopReason == nil, "initial usage and no premature stop")
+    let final = completion.metadata
+    try check(final.messageID == start.messageID && final.model == start.model, "final identity preserved")
+    try check(final.stopReason == "end_turn" && final.stopSequence == nil, "final stop metadata")
+    try check(final.usage?.inputTokens == 7 && final.usage?.outputTokens == 2, "merged terminal usage")
+    let deltas = chunks.compactMap { chunk -> ModelMetadata? in
+        if case .messageDelta(let metadata) = chunk.event { return metadata }; return nil
+    }
+    try check(deltas == [final], "message delta metadata retained before final")
+}
+
+private func expectRejectedAnthropicStream(_ payload: String) async throws {
+    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) }) }
+    var chunks: [ModelStreamChunk] = []
+    try await expectTransportError({
+        for try await chunk in transport.stream(try baseRequest(protocol: .anthropic)) { chunks.append(chunk) }
+    }, { $0 == .malformedSSE }, "incomplete lifecycle rejected")
+    try check(!chunks.contains(where: \.isFinal), "malformed stream must never emit success final")
+}
+
+private func testAnthropicIncompleteLegacyLifecycleRejected() async throws {
+    // Exact former success payload, now an explicit negative fixture.
+    let payload = ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\"}\r\n\r\n" +
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n" +
+        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    try await expectRejectedAnthropicStream(payload)
+}
+
+private func testAnthropicBareLegacyStopRejected() async throws {
+    try await expectRejectedAnthropicStream("data: {\"type\":\"message_stop\"}\n\n")
 }
 
 private func testSSELoneCRAndInvalidUTF8() async throws {
@@ -482,11 +541,18 @@ private func testValidEmptyFinishedText() async throws {
         let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
         let result = try await transport.complete(baseRequest(protocol: kind))
         try check(result.text.isEmpty, "genuinely completed empty text remains valid")
-        let terminal = kind == .openAI ? "data: [DONE]\n\n" : "data: {\"type\":\"message_stop\"}\n\n"
+        let terminal = kind == .openAI ? "data: [DONE]\n\n" : anthropicMessageStart + anthropicMessageEnd
         let stream = makeTransport { _ in FixtureResponse(bodyChunks: [Data(terminal.utf8)]) }
         var chunks: [ModelStreamChunk] = []
         for try await chunk in stream.stream(try baseRequest(protocol: kind)) { chunks.append(chunk) }
-        try check(chunks.count == 1 && chunks[0].isFinal && chunks[0].text.isEmpty, "empty finished stream preserves genuine terminal")
+        if kind == .openAI {
+            try check(chunks.count == 1 && chunks[0].isFinal && chunks[0].text.isEmpty, "empty finished stream preserves genuine terminal")
+        } else {
+            try check(chunks.count == 3 && chunks.allSatisfy { $0.text.isEmpty }, "empty lifecycle includes start, delta, stop metadata")
+            try check(chunks.filter(\.isFinal).count == 1 && chunks.last?.isFinal == true, "empty lifecycle has exactly one final")
+            try check(chunks.last?.completion?.blocks == [], "no-block empty completion preserved")
+            try checkAnthropicMetadata(chunks)
+        }
     }
 }
 private func checkPreparedCapacity(_ transport: ModelTransport) throws {
@@ -550,6 +616,9 @@ private struct NamedCheck: Sendable {
 }
 
 private let checks: [NamedCheck] = [
+    NamedCheck(name: "Anthropic unsupported thinking rejected", run: testAnthropicUnsupportedThinkingRejected),
+    NamedCheck(name: "Anthropic incomplete legacy lifecycle rejected", run: testAnthropicIncompleteLegacyLifecycleRejected),
+    NamedCheck(name: "Anthropic bare legacy stop rejected", run: testAnthropicBareLegacyStopRejected),
     NamedCheck(name: "direct completion cancellation result", run: testDirectCompletionCancellationResult),
     NamedCheck(name: "valid empty finished text", run: testValidEmptyFinishedText),
     NamedCheck(name: "prepared cancel before start", run: testPreparedCancellationBeforeStart),

@@ -30,7 +30,9 @@ not guest input.
    deny wins; unknown connections, services, operations and resources fail closed.
 3. The canonical sorted-JSON envelope binds schema version, run ID/epoch,
    connection/account IDs and versions, full validated request, and streaming
-   mode. F03 binds those bytes and the grant/schema digests into its pending
+   mode. The structured candidate uses envelope version 2 and digest domain
+   `host-model-envelope-v2`, including tools, choice, IDs, arguments and results.
+   F03 binds those bytes and the grant/schema digests into its pending
    action. The gateway admits no caller-supplied raw canonical JSON.
 4. Only `hostApprove` creates the one-use approval. There is no low-risk
    auto-approval path. `hostDeny` delegates to F03's audited denial lifecycle.
@@ -46,7 +48,9 @@ not guest input.
    credential provider, and start the actual transport operation. It does not
    accept replacement request data or a replacement streaming mode at execution.
 7. F03 completion is attempted exactly once per issued ticket. Nonstream success
-   and the streaming success-final marker are withheld until that append succeeds.
+   and every streaming message-delta metadata event plus the success-final marker
+   are withheld until that append succeeds. Liveness and cancellation are checked
+   again before each terminal emission; provisional data is never tool approval.
 
 Canonical proposals are bounded by the smaller of the grant's `messageBytes` and
 F03's 65,536-byte action-binding cap. This is an ingress/canonical-envelope limit;
@@ -63,7 +67,9 @@ not be used before authorization/intent persistence, since it accesses credentia
 `ModelPreparedOperation.start()` is one-shot and calls `URLSessionDataTask.resume()`
 synchronously before returning. It does not enqueue a Swift `Task` to start later.
 The transport's existing async completion and stream methods also use this real
-operation API; their old checks are retained unchanged.
+operation API; all old named checks are retained. Three malformed success fixtures
+were reconciled to the v2 stricter contract with their exact old payloads kept as
+additive rejection tests; production behavior was not relaxed.
 
 The gateway rechecks run/generation and registry state on return from authorization
 and stream/completion awaits before taking a success-affecting action. Its final
@@ -131,7 +137,8 @@ second hidden sample. Failure cleanup introduces no new dispatch or success path
 ## Outcome semantics
 
 - `execute` returns `ModelCompletion`, not a ticket. Streaming uses its ordered
-  callback for provisional text and exactly one audited success final.
+  callback for provisional text/structured events and exactly one audited success
+  final, with all success-terminal metadata audited before delivery.
 - An issued ticket blocked before resume is completed as F03 `.failed` and the
   gateway reports `.notStarted`. F03 does not allow `.notDispatched` as a completion
   outcome; its intent already records `.notDispatched`.
@@ -149,6 +156,49 @@ second hidden sample. Failure cleanup introduces no new dispatch or success path
   response body, or raw network error. Fixed resource/operation labels are used.
 
 ## Verification
+
+The metadata-merge revision passed **29/29 structured groups**, **38/38 host**,
+**17/17 authorization**, **7/7 contracts**, **32/32 distinct non-Keychain model
+groups**, and the all-products Debug build. This revision also passed the
+explicit Release `MiniSandbox` application build and strict signature verification.
+Model coverage retains
+all **29 old names** plus **3 explicit rejection groups** for the exact former
+thinking/incomplete-lifecycle/bare-stop payloads. Ordered text and legitimate empty
+responses still pass, and direct cancellation remains **50/50**. Three RED fixture
+failures were captured before reconciliation; no production code was changed.
+API **4/4** and packaging **7/7** were rerun on the metadata-merge revision and
+passed.
+Those results and independent approval belong to the earlier metadata-merge
+revision, not the new response-usage correction. The latter passes **37/37
+structured groups** (29 retained plus 8 usage groups), **38/38 host**, **32/32
+distinct non-Keychain model**, **17/17 authorization**, **7/7 contracts**, **2/2
+permanent CLI tests**, and all-products Debug compilation. Isolated Keychain CRUD
+was excluded, not passed. This correction also passed fresh **4/4 API boundary**,
+**7/7 packaging**, and explicit Release application build/strict signature verification.
+
+The first credential-present structured attempt on **2026-10-24 failed** on the
+first nonstream request with `outcomeUnknown`. Its
+actual JSONL audit recorded one intent and one unknown completion, and STOP
+succeeded. The stream case was **NOT_RUN**. Separate diagnostic attempts observed
+underlying `invalidResponse` on the same request path. The decoder incorrectly assumed every
+response usage value was an integer; diagnostics instead observed four integer
+token/cache counters and string `service_tier`, without retaining its value.
+The response-only correction preserves a nullable bounded tier separately from
+integer counters through both gateway completion and audited streaming delivery.
+Synthetic shape fixtures are not captured provider bodies. Unknown heterogeneous
+or nested usage remains unsupported; no request-tier selection or billing feature
+was added. See `structured-model-tools.md` for exact cases and merge rules.
+
+The correction passed independent review and a normal real-provider rerun on
+**2026-10-24**. Both nonstream and streaming completed `tool_use` → matching
+synthetic fixture result → final text with `end_turn`: four model task starts,
+four credential reads, eight actual JSONL records forming four completed
+intent/completion pairs, and two stopped runs. Every streamed terminal callback
+verified its completed audit record was already readable. This is a bounded host
+protocol result, not actual Agent/MCP/tool execution or guest/VM/UI/Keychain
+integration. The earlier failure remains recorded. See `structured-model-tools.md`
+for the structured command and limits; the following live smoke is the older
+text-only command.
 
 Default checks are offline transport fixtures. The opt-in real host smoke is:
 
@@ -180,7 +230,10 @@ success. VM/Agent/F10 integration is not claimed. The existing controller retain
 installed run state for its lifetime; long-lived host run retirement/recovery and
 crash reconciliation are not added here.
 
-Review regression evidence (all prior checks retained):
+### Historical pre-v2 regression evidence
+
+The following results belong to the earlier text-only revision, not the current
+structured codec. Current results are listed above; all prior named checks remain.
 
 - GATEWAY-01 RED: **23 PASS, 3 FAIL, total 26**, exit **1** (both delayed
   start paths and capacity-reuse regression). GREEN: **26 PASS, 0 FAIL**, exit **0**.

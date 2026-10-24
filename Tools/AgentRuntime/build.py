@@ -9,6 +9,10 @@ from inspect_runtime import inventory
 def main():
     root=pathlib.Path(sys.argv[1]);base=pathlib.Path(sys.argv[2]);out=pathlib.Path(sys.argv[3])
     restricted='--claude-broker-restricted-v1' in sys.argv[4:]
+    coding='--claude-broker-coding-v1' in sys.argv[4:]
+    if restricted and coding:raise ValueError('profiles are mutually exclusive')
+    if coding and not {'--agent-probe','--structural-metrics'}.issubset(sys.argv[4:]):
+        raise ValueError('coding profile requires agent probe and structural metrics')
     if restricted and not {'--agent-probe','--structural-metrics'}.issubset(sys.argv[4:]):
         raise ValueError('restricted profile requires agent probe and structural metrics')
     if '--structural-metrics' in sys.argv[4:] and '--agent-probe' not in sys.argv[4:]:
@@ -67,6 +71,8 @@ hold
             entries['runtime/'+n]=(stat.S_IFREG|0o644,image.read_regular(here.parent/'AgentProtocolProbe'/n,65536),0,0)
         if restricted:
             entries['runtime/guest-launch.json']=(stat.S_IFREG|0o644,image.read_regular(here.parent/'AgentProtocolProbe'/'claude-broker-restricted-v1.json',65536),0,0)
+        if coding:
+            entries['runtime/guest-launch.json']=(stat.S_IFREG|0o644,image.read_regular(here.parent/'AgentProtocolProbe'/'claude-broker-coding-v1.json',65536),0,0)
         loader='lib/ld-musl-aarch64.so.1'
         assert stat.S_ISREG(entries[loader][0])
         closure={'/'+loader:hashlib.sha256(entries[loader][1]).hexdigest()}
@@ -76,6 +82,8 @@ hold
         entries['runtime/profile.json']=(stat.S_IFREG|0o644,b'{"profile":"pinned-cli-local-capture-v1"}',0,0)
         if restricted:
             entries['runtime/profile.json']=(stat.S_IFREG|0o644,b'{"profile":"claude-broker-restricted-v1"}',0,0)
+        if coding:
+            entries['runtime/profile.json']=(stat.S_IFREG|0o644,b'{"profile":"claude-broker-coding-v1"}',0,0)
         if '--structural-metrics' in sys.argv[4:]:
             entries['runtime/structural-metrics-v1']=(stat.S_IFREG|0o444,b'1',0,0)
         init=init.replace('/usr/bin/python3 -B /runtime/guest.py','''/bin/busybox mkdir -p /opt/agent-probe /run/agent-probe
@@ -102,6 +110,9 @@ hold
     if restricted:
         # The native harness profile/budgets stay fixed; client config is distinct.
         manifest['agentProbeProfile']['clientProfile']='claude-broker-restricted-v1'
+        manifest['agentProbeProfile']['launchSHA256']=hashlib.sha256(entries['runtime/guest-launch.json'][1]).hexdigest()
+    if coding:
+        manifest['agentProbeProfile']['clientProfile']='claude-broker-coding-v1'
         manifest['agentProbeProfile']['launchSHA256']=hashlib.sha256(entries['runtime/guest-launch.json'][1]).hexdigest()
     image.legacy.exclusive_write(out/'runtime.json',(json.dumps(manifest,indent=2)+'\n').encode())
     print(json.dumps({k:v for k,v in manifest.items() if k not in ('dependencies','entries')}))

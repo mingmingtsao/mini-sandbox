@@ -23,9 +23,14 @@ class CaptureServer(socketserver.TCPServer):
     allow_reuse_address = False
     request_queue_size = 4
 
-    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False, restricted_profile=False):
+    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False, restricted_profile=False, coding_profile=False):
         if address[0] != '127.0.0.1':
             raise ValueError('loopback_only')
+        if coding_profile and restricted_profile:
+            raise ValueError('profiles_are_mutually_exclusive')
+        if coding_profile and not structural_metrics_enabled:
+            raise ValueError('coding_profile_requires_metrics')
+        self.coding_profile = coding_profile
         if restricted_profile and not structural_metrics_enabled:
             raise ValueError('restricted_profile_requires_metrics')
         self.restricted_profile = restricted_profile
@@ -126,7 +131,9 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             # JSON CPU work cannot be preempted here. Expiry is checked again
             # after parsing; this is not a hard end-to-end execution timeout.
             metrics = None
-            if self.server.restricted_profile:
+            if self.server.coding_profile:
+                metrics = structural_metrics(body, expected_model='deepseek-flash', coding_tools=True)
+            elif self.server.restricted_profile:
                 metrics = structural_metrics(body, expected_model='deepseek-flash')
             elif self.server.structural_metrics_enabled:
                 metrics = structural_metrics(body)
@@ -140,7 +147,7 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                       'sse_accept': headers.get(b'accept') == b'text/event-stream'}
             if metrics is not None:
                 record['metrics'] = metrics
-            if self.server.restricted_profile:
+            if self.server.restricted_profile or self.server.coding_profile:
                 record['anthropic_beta_present'] = b'anthropic-beta' in headers
         except Rejected as e:
             status = e.status
@@ -303,7 +310,7 @@ def _metric_load(body):
         raise ValueError('invalid_json') from None
 
 
-def structural_metrics(body, *, expected_model=None):
+def structural_metrics(body, *, expected_model=None, coding_tools=False):
     """Opt-in fixed-label metrics. No names, text, IDs or arbitrary keys escape."""
     if expected_model not in (None, 'deepseek-flash'):
         raise ValueError('unsupported_profile')
@@ -398,6 +405,19 @@ def structural_metrics(body, *, expected_model=None):
     result['mismatches'] = [key for key, mismatch in checks.items() if mismatch]
     if expected_model is not None:
         result['model_matches_profile'] = type(value.get('model')) is str and value['model'] == expected_model
+    if coding_tools:
+        # Only these fixed labels escape; never serialize request-supplied names.
+        labels = {'Bash': 'bash_count', 'Read': 'read_count', 'Edit': 'edit_count',
+                  'Write': 'write_count', 'Glob': 'glob_count', 'Grep': 'grep_count',
+                  'EndConversation': 'end_conversation_count'}
+        counts = dict.fromkeys((*labels.values(), 'other_count'), 0)
+        for tool in tools:
+            name = tool.get('name') if isinstance(tool, dict) else None
+            label = labels.get(name, 'other_count') if type(name) is str else 'other_count'
+            counts[label] += 1
+        counts['within_selected_set'] = counts['other_count'] == 0
+        counts['all_six_present'] = all(counts[k] > 0 for k in ('bash_count', 'read_count', 'edit_count', 'write_count', 'glob_count', 'grep_count'))
+        result['coding_toolset'] = counts
     return result
 
 
@@ -406,11 +426,14 @@ def main():
     parser = argparse.ArgumentParser(description='Local-only metadata capture, never a model emulator')
     parser.add_argument('--duration', type=int, choices=range(1, 36), default=35)
     parser.add_argument('--structural-metrics', action='store_true', help='bounded fixed-label measurements only')
-    parser.add_argument('--restricted-profile', choices=('claude-broker-restricted-v1',))
+    profiles = parser.add_mutually_exclusive_group()
+    profiles.add_argument('--restricted-profile', choices=('claude-broker-restricted-v1',))
+    profiles.add_argument('--coding-profile', choices=('claude-broker-coding-v1',))
     options = parser.parse_args()
     try:
         with CaptureServer(lifetime=options.duration, structural_metrics_enabled=options.structural_metrics,
-                           restricted_profile=options.restricted_profile is not None) as server:
+                           restricted_profile=options.restricted_profile is not None,
+                           coding_profile=options.coding_profile is not None) as server:
             while server.connections < server.max_connections and server.wire_bytes < server.max_wire:
                 remaining = server.lifetime_deadline - server.clock()
                 if remaining <= 0:

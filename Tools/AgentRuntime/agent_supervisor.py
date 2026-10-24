@@ -138,7 +138,7 @@ def main():
     return 0
 
 def capture_worker():
-    # Reuse the reviewed entrypoint unchanged; only report completed bind.
+    # Same entrypoint/lifetime; image marker explicitly opts into metrics.
     import capture
     original=capture.CaptureServer
     def ready(*args,**kwargs):
@@ -147,6 +147,8 @@ def capture_worker():
         return server
     capture.CaptureServer=ready
     __import__('sys').argv=['capture']
+    if pathlib.Path('/runtime/structural-metrics-v1').is_file():
+        __import__('sys').argv.append('--structural-metrics')
     return capture.main()
 
 def mem_available():

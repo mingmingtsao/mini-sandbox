@@ -12,7 +12,8 @@ let package = Package(
         .executable(name: "AuthorizationChecks", targets: ["AuthorizationChecks"]),
         .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"]),
         .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"]),
-        .executable(name: "StructuredModelChecks", targets: ["StructuredModelChecks"])
+        .executable(name: "StructuredModelChecks", targets: ["StructuredModelChecks"]),
+        .executable(name: "MCPGatewayChecks", targets: ["MCPGatewayChecks"])
     ],
     targets: [
         .target(name: "SandboxContracts"),
@@ -22,6 +23,7 @@ let package = Package(
         .executableTarget(name: "AuthorizationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/AuthorizationChecks"),
         .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
         .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks"),
-        .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks")
+        .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks"),
+        .executableTarget(name: "MCPGatewayChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/MCPGatewayChecks")
     ]
 )

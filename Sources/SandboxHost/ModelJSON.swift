@@ -16,7 +16,8 @@ package indirect enum ModelJSON: Equatable, Sendable, Codable {
         return result
     }
     package func validated() throws -> ModelJSON {
-        let bytes = try JSONEncoder().encode(self)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes]
+        let bytes = try encoder.encode(self)
         return try Self.parse(bytes)
     }
     package var object: [String: ModelJSON]? { if case .object(let value) = self { value } else { nil } }

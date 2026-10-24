@@ -326,7 +326,7 @@ def run(binary, *, overall_timeout=90, inactivity_timeout=10, scope="default"):
                     print(line, flush=True)
                     print(json.dumps({"partial": True, "completed_phases": len(results), "gateway_hits": sum(row["hits"] for row in results.values()), "credential_reads": credential_total, "failed_phase": active_phase, "failed_phase_hits": fixture.control.resource_hit_count, "results": results}, sort_keys=True), flush=True)
                     raise DriverFailure("grant-expiry pulse regression")
-                elif line in ("PASS MCP loopback checks", "PASS MCP independent scope; full suite known RED pulse-deny-2") or re.fullmatch(r"REFLECTION reflection-(plain|authorization|escaped|split) completion_blocked=(true|false) handoff_blocked=(true|false) unknown=(true|false) audit_unknown=(true|false)", line):
+                elif line in ("PASS MCP loopback checks", "PASS MCP independent scope; default suite not run here") or re.fullmatch(r"REFLECTION reflection-(plain|authorization|escaped|split) completion_blocked=(true|false) handoff_blocked=(true|false) unknown=(true|false) audit_unknown=(true|false)", line):
                     print(line, flush=True)
                 else:
                     raise DriverFailure("unexpected child output or failed check")
@@ -336,7 +336,7 @@ def run(binary, *, overall_timeout=90, inactivity_timeout=10, scope="default"):
             if scope == "independent":
                 assert set(model_results) == {"negative-model-" + name for name in ("B", "write", "denied", "unapproved", "non-tool", "truncated", "provisional", "failure", "drop-write")}
             assert sum(row["credential_reads"] for row in results.values()) == credential_total
-            print(json.dumps({"scope": scope, "full_suite": "KNOWN_RED_pulse-deny-2", "deduplicated_checks": len(results), "gateway_hits": sum(row["hits"] for row in results.values()), "credential_reads": credential_total, "offline_model_results": model_results, "results": results}, sort_keys=True))
+            print(json.dumps({"scope": scope, "full_suite": "PASS" if scope == "default" else "NOT_RUN_IN_THIS_INVOCATION", "deduplicated_checks": len(results), "gateway_hits": sum(row["hits"] for row in results.values()), "credential_reads": credential_total, "offline_model_results": model_results, "results": results}, sort_keys=True))
         finally:
             if process.poll() is None:
                 process.kill(); process.wait(timeout=2)

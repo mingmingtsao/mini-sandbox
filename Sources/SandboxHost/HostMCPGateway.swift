@@ -10,12 +10,19 @@ package struct HostMCPProposal: Sendable {
     fileprivate let handle: HostMCPRunHandle
     fileprivate let pending: PendingAction
     fileprivate let generation: UInt64
+    fileprivate let effectScope: RunEffectScope
 }
 package struct HostMCPApproval: Sendable { fileprivate let proposal: HostMCPProposal; fileprivate let approved: ApprovedAction }
 package struct MCPCompletion: Sendable {
     package let text: String
     package let sourceToolUseID: String?
     fileprivate init(text: String, sourceToolUseID: String?) { self.text = text; self.sourceToolUseID = sourceToolUseID }
+#if DEBUG
+    // Synthetic receiver-defense fixture; not an authenticated transport result.
+    static func testOnlyUnvalidated(text: String, sourceToolUseID: String?) -> MCPCompletion {
+        MCPCompletion(text: text, sourceToolUseID: sourceToolUseID)
+    }
+#endif
 }
 /// Host-only gateway using injected F03 authority. No guest/model object conveys approval.
 package actor HostMCPGateway {
@@ -34,6 +41,7 @@ package actor HostMCPGateway {
         let grant: RunGrant
         var revoked: Bool { authorityHandle.lifecycle.currentStatus != .active }
         var reserved = 0
+        var resumeCalls = 0
         var operations: [UUID: (UUID, MCPPreparedOperation)] = [:]
         init(_ h: HostMCPRunHandle, _ a: HostRunHandle, _ g: RunGrant) { handle = h; authorityHandle = a; grant = g }
     }
@@ -84,7 +92,7 @@ package actor HostMCPGateway {
         do {
             let entry = try live(run, connectionID)
             let request = try MCPProtocol.ingress(raw, maxBytes: min(run.grant.resourceLimits.messageBytes, 65536))
-            if let sourceToolUseID { guard !sourceToolUseID.isEmpty, sourceToolUseID.utf8.count <= 128, request.method == "tools/call" else { throw HostMCPGatewayError.denied } }
+            if let sourceToolUseID { guard ModelBlock.validID(sourceToolUseID), request.method == "tools/call" else { throw HostMCPGatewayError.denied } }
             switch request.method {
             case "initialize": guard !entry.initialized else { throw HostMCPGatewayError.denied }
             case "notifications/initialized": guard entry.initialized, !entry.notified else { throw HostMCPGatewayError.denied }
@@ -100,9 +108,10 @@ package actor HostMCPGateway {
             let bytes = try MCPProtocol.canonical(envelope)
             guard bytes.count <= min(run.grant.resourceLimits.messageBytes, 65536) else { throw HostMCPGatewayError.denied }
             let binding = try ActionBinding(runID: run.grant.runID, epoch: run.grant.epoch, grantDigest: envelope.grantDigest, connectionID: connectionID, operation: request.operation, schemaDigest: entry.schemaDigest, resolvedResource: request.resource, canonicalRequest: bytes)
+            let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
             let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "MCP \(request.operation): \(request.resource)")
             try validate(run, connectionID, entry.generation)
-            return HostMCPProposal(handle: handle, pending: pending, generation: entry.generation)
+            return HostMCPProposal(handle: handle, pending: pending, generation: entry.generation, effectScope: effectScope)
         } catch { throw await reconcile(error, run) }
     }
     package func hostApprove(handle: HostMCPRunHandle, proposal: HostMCPProposal) async throws -> HostMCPApproval {
@@ -122,12 +131,26 @@ package actor HostMCPGateway {
             try validate(run, proposal)
         } catch { throw await reconcile(error, run) }
     }
+    /// Legacy raw DTO surface; downstream acceptance is not fenced by this overload.
     package func execute(handle: HostMCPRunHandle, approval: HostMCPApproval) async throws -> MCPCompletion {
+        try await executeImpl(handle: handle, approval: approval, output: nil)
+    }
+    package func makeOutput(handle: HostMCPRunHandle, approval: HostMCPApproval) throws -> ControlledRunOutput {
+        let run = try get(handle); try validate(run, approval.proposal)
+        // Discovery is still the legacy registry-mutation surface, not this consumer.
+        guard approval.proposal.pending.binding.resolvedResource == "A" else { throw HostMCPGatewayError.denied }
+        return ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: approval.proposal.effectScope, actionID: approval.proposal.pending.actionID)
+    }
+    package func execute(handle: HostMCPRunHandle, approval: HostMCPApproval, output: ControlledRunOutput) async throws {
+        _ = try await executeImpl(handle: handle, approval: approval, output: output)
+    }
+    private func executeImpl(handle: HostMCPRunHandle, approval: HostMCPApproval, output: ControlledRunOutput?) async throws -> MCPCompletion {
         let run = try get(handle); let proposal = approval.proposal
+        if let output, !output.matches(run.authorityHandle.lifecycle, proposal.effectScope, actionID: proposal.pending.actionID) { throw HostMCPGatewayError.invalidApproval }
         do { try validate(run, proposal) } catch { throw await reconcile(error, run) }
         guard run.reserved < min(run.grant.resourceLimits.concurrentRequests, 2) else { throw HostMCPGatewayError.busy }
         run.reserved += 1; let operationID = UUID()
-        defer { run.reserved -= 1; run.operations.removeValue(forKey: operationID)?.1.cancel() }
+        defer { run.reserved -= 1; run.authorityHandle.lifecycle.finishEffect(operationID); run.operations.removeValue(forKey: operationID)?.1.cancel() }
         var ticket: DispatchTicket?; var started = false; var completionAttempted = false
         do {
             ticket = try await authority.consume(handle: run.authorityHandle, approved: approval.approved)
@@ -143,7 +166,10 @@ package actor HostMCPGateway {
             let op = try MCPPreparedOperation(connection: c, payload: e.payload, limit: run.grant.resourceLimits.messageBytes)
             run.operations[operationID] = (e.connectionID, op)
             try validate(run, proposal); try Task.checkCancellation(); try time(run, deadline: proposal.pending.expiresAt)
-            try op.start(); started = true // no await from final clock through resume
+            try run.authorityHandle.lifecycle.start(.mcp(op), id: operationID, scope: proposal.effectScope,
+                notBefore: run.grant.createdAt, startDeadline: proposal.pending.expiresAt)
+            started = true
+            run.resumeCalls += op.resumeCalls
             var body: Data?
             try await withTaskCancellationHandler {
                 for try await bytes in op.chunks { try validate(run, proposal); try Task.checkCancellation(); body = bytes }
@@ -171,10 +197,16 @@ package actor HostMCPGateway {
                 if method == "initialize" { updated.initialized = true }
                 if method == "notifications/initialized" { updated.notified = true }
                 if let catalog { updated.discovery = catalog.0; updated.schemaDigest = catalog.1 }
+                for affected in runs.values where affected.grant.connections.contains(where: { $0.connectionID == e.connectionID }) {
+                    affected.authorityHandle.lifecycle.advanceConnection(e.connectionID)
+                }
                 registry[e.connectionID] = updated; cancelConnection(e.connectionID)
             }
-            return MCPCompletion(text: text, sourceToolUseID: e.sourceToolUseID)
+            let completion = MCPCompletion(text: text, sourceToolUseID: e.sourceToolUseID)
+            if let output { try output.enqueue(.mcpCompletion(completion)) }
+            return completion
         } catch {
+            output?.cancel()
             run.operations[operationID]?.1.cancel()
             // A failed refresh cannot preserve authority derived from an old catalog.
             // Invalidate synchronously before audit reconciliation can suspend.
@@ -193,6 +225,7 @@ package actor HostMCPGateway {
         }
     }
     package func isRevoked(handle: HostMCPRunHandle) throws -> Bool { try get(handle).revoked }
+    package func resumedTaskCount(handle: HostMCPRunHandle) throws -> Int { try get(handle).resumeCalls }
     package func lifecycle(handle: HostMCPRunHandle) throws -> RunLifecycle { try get(handle).authorityHandle.lifecycle }
     package func stop(handle: HostMCPRunHandle) async throws {
         let run = try get(handle); run.authorityHandle.lifecycle.terminate(.stopped); revoke(run); try await authority.stop(handle: run.authorityHandle)
@@ -209,6 +242,9 @@ package actor HostMCPGateway {
     package func invalidateCatalog(connectionID: UUID) throws {
         guard var entry = registry[connectionID], !entry.revoked else { throw HostMCPGatewayError.invalidConnection }
         entry.generation &+= 1; entry.discovery = .unknown; entry.schemaDigest = MCPProtocol.digest(Data("unknown".utf8))
+        for run in runs.values where run.grant.connections.contains(where: { $0.connectionID == connectionID }) {
+            run.authorityHandle.lifecycle.advanceConnection(connectionID)
+        }
         registry[connectionID] = entry; cancelConnection(connectionID)
     }
     package func updateConnection(_ c: HostMCPConnection) async throws {

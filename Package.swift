@@ -13,17 +13,20 @@ let package = Package(
         .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"]),
         .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"]),
         .executable(name: "StructuredModelChecks", targets: ["StructuredModelChecks"]),
-        .executable(name: "MCPGatewayChecks", targets: ["MCPGatewayChecks"])
+        .executable(name: "MCPGatewayChecks", targets: ["MCPGatewayChecks"]),
+        .executable(name: "WorkbenchChecks", targets: ["WorkbenchChecks"])
     ],
     targets: [
         .target(name: "SandboxContracts"),
         .target(name: "SandboxHost", dependencies: ["SandboxContracts"], linkerSettings: [.linkedFramework("Virtualization")]),
-        .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts"]),
+        .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts", "SandboxWorkbench"]),
         .executableTarget(name: "ContractChecks", dependencies: ["SandboxContracts"], path: "Tests/SandboxContractsTests"),
         .executableTarget(name: "AuthorizationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/AuthorizationChecks"),
         .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
         .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks"),
         .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks"),
-        .executableTarget(name: "MCPGatewayChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/MCPGatewayChecks")
+        .executableTarget(name: "MCPGatewayChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/MCPGatewayChecks"),
+        .target(name: "SandboxWorkbench", dependencies: ["SandboxHost", "SandboxContracts"]),
+        .executableTarget(name: "WorkbenchChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts"], path: "Tests/WorkbenchChecks")
     ]
 )

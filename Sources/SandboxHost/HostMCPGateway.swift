@@ -17,7 +17,7 @@ package struct MCPCompletion: Sendable {
     package let sourceToolUseID: String?
     fileprivate init(text: String, sourceToolUseID: String?) { self.text = text; self.sourceToolUseID = sourceToolUseID }
 }
-/// Independent, host-only controller. No guest/model object conveys host approval.
+/// Host-only gateway using injected F03 authority. No guest/model object conveys approval.
 package actor HostMCPGateway {
     private struct Entry {
         let connection: HostMCPConnection
@@ -32,7 +32,7 @@ package actor HostMCPGateway {
         let handle: HostMCPRunHandle
         let authorityHandle: HostRunHandle
         let grant: RunGrant
-        var revoked = false
+        var revoked: Bool { authorityHandle.lifecycle.currentStatus != .active }
         var reserved = 0
         var operations: [UUID: (UUID, MCPPreparedOperation)] = [:]
         init(_ h: HostMCPRunHandle, _ a: HostRunHandle, _ g: RunGrant) { handle = h; authorityHandle = a; grant = g }
@@ -57,20 +57,21 @@ package actor HostMCPGateway {
         let sourceToolUseID: String?
         let payload: ModelJSON
     }
-    private let authority: RunAuthorizationController
-    private let now: @Sendable () -> Date
+    package let authority: RunAuthorizationController
     private var registry: [UUID: Entry]
     private var runs: [UUID: Run] = [:]
     private var installing = 0
-    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }) throws {
+    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
         guard connections.count <= 32, Set(connections.map(\.connectionID)).count == connections.count else { throw HostMCPGatewayError.invalidConnection }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.now = now; authority = RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
     }
-    package func install(grant: RunGrant) async throws -> HostMCPRunHandle {
+    package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostMCPRunHandle {
         guard runs.count + installing < 32 else { throw HostMCPGatewayError.busy }
         installing += 1; defer { installing -= 1 }
-        let a = try await authority.install(grant: grant)
+        let a: HostRunHandle
+        if let existing { try await authority.validateAttachment(handle: existing, grant: grant); a = existing }
+        else { a = try await authority.install(grant: grant) }
         let h = HostMCPRunHandle(); let run = Run(h, a, grant); runs[h.token] = run
         do { try time(run); return h } catch { throw await reconcile(error, run) }
     }
@@ -192,13 +193,17 @@ package actor HostMCPGateway {
         }
     }
     package func isRevoked(handle: HostMCPRunHandle) throws -> Bool { try get(handle).revoked }
+    package func lifecycle(handle: HostMCPRunHandle) throws -> RunLifecycle { try get(handle).authorityHandle.lifecycle }
     package func stop(handle: HostMCPRunHandle) async throws {
-        let run = try get(handle); revoke(run); try await authority.stop(handle: run.authorityHandle)
+        let run = try get(handle); run.authorityHandle.lifecycle.terminate(.stopped); revoke(run); try await authority.stop(handle: run.authorityHandle)
     }
     package func revokeConnection(_ id: UUID) async throws {
         guard var entry = registry[id] else { throw HostMCPGatewayError.invalidConnection }
-        entry.revoked = true; entry.generation &+= 1; registry[id] = entry; cancelConnection(id)
-        for run in runs.values { try? await authority.revokeConnection(handle: run.authorityHandle, connectionID: id) }
+        entry.revoked = true; entry.generation &+= 1; registry[id] = entry
+        let affected = runs.values.filter { $0.grant.connections.contains { $0.connectionID == id } }
+        for run in affected { run.authorityHandle.lifecycle.invalidateConnection(id) }
+        cancelConnection(id)
+        for run in affected { try? await authority.revokeConnection(handle: run.authorityHandle, connectionID: id) }
     }
     /// Host-side catalog invalidation; every outstanding approval is stale before return.
     package func invalidateCatalog(connectionID: UUID) throws {
@@ -211,22 +216,26 @@ package actor HostMCPGateway {
               c.accountBindingVersion > old.connection.accountBindingVersion || c.routeVersion > old.connection.routeVersion,
               c.accountID == old.connection.accountID || c.accountBindingVersion > old.connection.accountBindingVersion,
               c.audience == old.connection.audience || c.routeVersion > old.connection.routeVersion else { throw HostMCPGatewayError.invalidConnection }
-        registry[c.connectionID] = Entry(connection: c, generation: old.generation &+ 1); cancelConnection(c.connectionID)
-        for run in runs.values { try? await authority.updateConnection(handle: run.authorityHandle, connectionID: c.connectionID, accountBindingVersion: c.accountBindingVersion, routeVersion: c.routeVersion) }
+        registry[c.connectionID] = Entry(connection: c, generation: old.generation &+ 1)
+        let affected = runs.values.filter { $0.grant.connections.contains { $0.connectionID == c.connectionID } }
+        for run in affected { run.authorityHandle.lifecycle.invalidateConnection(c.connectionID) }
+        cancelConnection(c.connectionID)
+        for run in affected { try? await authority.updateConnection(handle: run.authorityHandle, connectionID: c.connectionID, accountBindingVersion: c.accountBindingVersion, routeVersion: c.routeVersion) }
     }
     private func get(_ h: HostMCPRunHandle) throws -> Run {
         guard let run = runs[h.token], run.handle === h else { throw HostMCPGatewayError.invalidHandle }; return run
     }
     @discardableResult private func time(_ run: Run, deadline: Date? = nil) throws -> Date {
         guard !run.revoked else { throw HostMCPGatewayError.revoked }
-        let current = now()
-        if current >= run.grant.expiresAt { revoke(run); throw HostMCPGatewayError.revoked }
-        guard current >= run.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
+        let observation = run.authorityHandle.lifecycle.observeAndReduce(reason: "mcp")
+        let current = observation.effectiveTime
+        if observation.status != .active { revoke(run); throw HostMCPGatewayError.revoked }
+        guard observation.wallTime >= run.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
         if let deadline, current >= deadline { throw AuthorizationError.actionExpired }; return current
     }
     private func live(_ run: Run, _ id: UUID) throws -> Entry {
         try time(run)
-        guard let entry = registry[id], !entry.revoked, let c = run.grant.connections.first(where: { $0.connectionID == id }), c.accountBindingVersion == entry.connection.accountBindingVersion, c.routeVersion == entry.connection.routeVersion else { throw HostMCPGatewayError.invalidConnection }; return entry
+        guard run.authorityHandle.lifecycle.permitsConnection(id), let entry = registry[id], !entry.revoked, let c = run.grant.connections.first(where: { $0.connectionID == id }), c.accountBindingVersion == entry.connection.accountBindingVersion, c.routeVersion == entry.connection.routeVersion else { throw HostMCPGatewayError.invalidConnection }; return entry
     }
     private func validate(_ run: Run, _ id: UUID, _ generation: UInt64) throws {
         let entry = try live(run, id); guard entry.generation == generation else { throw HostMCPGatewayError.revoked }
@@ -235,7 +244,7 @@ package actor HostMCPGateway {
         guard p.handle === run.handle else { throw HostMCPGatewayError.invalidHandle }; try validate(run, p.pending.binding.connectionID, p.generation)
     }
     private func cancelConnection(_ id: UUID) { for run in runs.values { for (_, pair) in run.operations where pair.0 == id { pair.1.cancel() } } }
-    private func revoke(_ run: Run) { run.revoked = true; for (_, pair) in run.operations { pair.1.cancel() } }
+    private func revoke(_ run: Run) { run.authorityHandle.lifecycle.terminate(.revoked); for (_, pair) in run.operations { pair.1.cancel() } }
     private func reconcile(_ error: Error, _ run: Run) async -> Error {
         if let a = error as? AuthorizationError, [.auditFailed, .grantExpired, .runRevoked].contains(a) { revoke(run) }
         if run.revoked { try? await authority.stop(handle: run.authorityHandle) }

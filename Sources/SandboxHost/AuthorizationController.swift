@@ -32,8 +32,12 @@ public enum AuthorizationError: Error, Equatable, Sendable {
 public final class HostRunHandle: @unchecked Sendable {
     fileprivate let token: UUID
 
-    fileprivate init(token: UUID) {
-        self.token = token
+    public let lifecycle: RunLifecycle
+    public let runID: UUID
+    let grantDigest: String
+    fileprivate init(token: UUID, lifecycle: RunLifecycle, grant: RunGrant) {
+        self.token = token; self.lifecycle = lifecycle
+        self.runID = grant.runID; self.grantDigest = RunAuthorizationController.grantDigest(for: grant)
     }
 }
 
@@ -125,8 +129,8 @@ public actor RunAuthorizationController {
         let grant: RunGrant
         let grantDigest: String
         let handle: HostRunHandle
-        var epoch: UInt64
-        var revoked = false
+        var epoch: UInt64 { handle.lifecycle.currentGeneration }
+        var revoked: Bool { handle.lifecycle.currentStatus != .active }
         var pending: [UUID: PendingRecord] = [:]
         var tickets: [UUID: DispatchRecord] = [:]
         // Tombstones preserve recent error detail, not permission. Unknown IDs fail closed.
@@ -139,7 +143,6 @@ public actor RunAuthorizationController {
             self.grant = grant
             self.grantDigest = grantDigest
             self.handle = handle
-            self.epoch = grant.epoch
             self.connections = Dictionary(uniqueKeysWithValues: grant.connections.map {
                 ($0.connectionID, LiveConnection(accountBindingVersion: $0.accountBindingVersion, routeVersion: $0.routeVersion))
             })
@@ -177,11 +180,15 @@ public actor RunAuthorizationController {
 
     private let auditSink: any SynchronousAuditSink
     private let now: @Sendable () -> Date
+    private let monotonic: @Sendable () -> Duration
     private var runs: [UUID: RunState] = [:]
 
-    public init(auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() },
+                monotonic: (@Sendable () -> Duration)? = nil) {
         self.auditSink = auditSink
         self.now = now
+        let clock = ContinuousClock(); let origin = clock.now
+        self.monotonic = monotonic ?? { origin.duration(to: clock.now) }
     }
 
     // Do not hash RunGrant's Codable Set representations: their array order is unspecified.
@@ -247,17 +254,24 @@ public actor RunAuthorizationController {
         guard current < grant.expiresAt else { throw AuthorizationError.grantExpired }
         guard runs[grant.runID] == nil else { throw AuthorizationError.duplicateRun }
 
-        let handle = HostRunHandle(token: UUID())
+        let handle = HostRunHandle(token: UUID(), lifecycle: RunLifecycle(expiresAt: grant.expiresAt, epoch: grant.epoch, installedAt: current, wall: now, monotonic: monotonic), grant: grant)
         let state = RunState(grant: grant, grantDigest: Self.grantDigest(for: grant), handle: handle)
         runs[grant.runID] = state
         return handle
     }
 
+    public func validateAttachment(handle: HostRunHandle, grant: RunGrant) throws {
+        let state = try state(for: handle)
+        guard state.grantDigest == Self.grantDigest(for: grant) else { throw AuthorizationError.grantBindingMismatch }
+        try ensureLive(state)
+    }
+
     public func propose(handle: HostRunHandle, binding: ActionBinding, display: String) throws -> PendingAction {
         let state = try state(for: handle)
         try ensureLive(state)
-        let current = now()
-        try ensureGrantTime(state, at: current)
+        let observation = state.handle.lifecycle.observeAndReduce(reason: "authorization")
+        let current = observation.effectiveTime
+        try ensureGrantTime(state, observation: observation)
         cleanupExpired(state, at: current)
         guard state.pending.count < Self.activeLimit else { throw AuthorizationError.pendingLimit }
 
@@ -300,8 +314,9 @@ public actor RunAuthorizationController {
     public func hostApprove(handle: HostRunHandle, actionID: UUID, nonce: UUID) throws -> ApprovedAction {
         let state = try state(for: handle)
         try ensureLive(state)
-        let current = now()
-        try ensureGrantTime(state, at: current)
+        let observation = state.handle.lifecycle.observeAndReduce(reason: "authorization")
+        let current = observation.effectiveTime
+        try ensureGrantTime(state, observation: observation)
         cleanupExpired(state, at: current)
         guard let record = state.pending[actionID] else {
             let error = state.terminalActions[actionID] ?? .actionNotPending
@@ -326,6 +341,7 @@ public actor RunAuthorizationController {
         do {
             try append(event: try hostEvent(state: state, actionID: actionID, operation: record.action.binding.operation, resourceSummary: record.action.binding.resolvedResource, decision: .deny, reason: "explicit-deny", outcome: .notDispatched))
         } catch {
+            state.handle.lifecycle.terminate(.faulted)
             revoke(state)
             throw AuthorizationError.auditFailed
         }
@@ -335,8 +351,9 @@ public actor RunAuthorizationController {
         let state = try state(for: handle)
         try ensureLive(state)
         guard approved.handleToken == handle.token else { throw AuthorizationError.invalidHandle }
-        let current = now()
-        try ensureGrantTime(state, at: current)
+        let observation = state.handle.lifecycle.observeAndReduce(reason: "authorization")
+        let current = observation.effectiveTime
+        try ensureGrantTime(state, observation: observation)
         cleanupExpired(state, at: current)
         guard let record = state.pending[approved.actionID] else {
             throw state.terminalActions[approved.actionID] ?? AuthorizationError.ticketInvalid
@@ -364,9 +381,11 @@ public actor RunAuthorizationController {
         do {
             try append(event: try hostEvent(state: state, actionID: approved.actionID, operation: approved.binding.operation, resourceSummary: approved.binding.resolvedResource, decision: .allow, reason: "dispatch-intent", outcome: .notDispatched))
         } catch {
+            state.handle.lifecycle.terminate(.faulted)
             revoke(state)
             throw AuthorizationError.auditFailed
         }
+        // A ticket is result-bookkeeping, not permission at the effect entrance.
         state.tickets[ticket.ticketID] = DispatchRecord(actionID: approved.actionID, operation: approved.binding.operation, resourceSummary: approved.binding.resolvedResource)
         return ticket
     }
@@ -385,6 +404,7 @@ public actor RunAuthorizationController {
         do {
             try append(event: try hostEvent(state: state, actionID: record.actionID, operation: record.operation, resourceSummary: record.resourceSummary, decision: .allow, reason: "dispatch-completion", outcome: outcome))
         } catch {
+            state.handle.lifecycle.terminate(.faulted)
             revoke(state)
             throw AuthorizationError.auditFailed
         }
@@ -392,6 +412,7 @@ public actor RunAuthorizationController {
 
     public func stop(handle: HostRunHandle) throws {
         let state = try state(for: handle)
+        state.handle.lifecycle.terminate(.stopped)
         revoke(state)
     }
 
@@ -403,6 +424,7 @@ public actor RunAuthorizationController {
         let state = try state(for: handle)
         try ensureLive(state)
         guard var connection = state.connections[connectionID] else { throw AuthorizationError.connectionNotGranted }
+        state.handle.lifecycle.invalidateConnection(connectionID)
         connection.revoked = true
         state.connections[connectionID] = connection
         invalidateActions(state, connectionID: connectionID, reason: .connectionRevoked)
@@ -416,6 +438,7 @@ public actor RunAuthorizationController {
         guard accountBindingVersion >= connection.accountBindingVersion,
               routeVersion >= connection.routeVersion else { throw AuthorizationError.connectionVersionMismatch }
         if accountBindingVersion != connection.accountBindingVersion || routeVersion != connection.routeVersion {
+            state.handle.lifecycle.invalidateConnection(connectionID)
             invalidateActions(state, connectionID: connectionID, reason: .connectionVersionMismatch)
         }
         state.connections[connectionID] = LiveConnection(accountBindingVersion: accountBindingVersion, routeVersion: routeVersion)
@@ -424,11 +447,12 @@ public actor RunAuthorizationController {
     /// Guest ingress has no origin parameter and cannot authenticate a control handle.
     public func recordGuestDiagnostic(runID: UUID, operation: String, resourceSummary: String, message: String) throws {
         let digest = runs[runID]?.grantDigest ?? String(repeating: "0", count: 64)
-        let event = try SecurityEvent(eventID: UUID(), hostSequence: nextSequence(), runID: runID, actionID: nil, time: now(), origin: .guestDiagnostic, operation: operation, resourceSummary: resourceSummary, decision: .observe, reason: message, grantDigest: digest, outcome: .notDispatched)
+        let observation = runs[runID]?.handle.lifecycle.observeAndReduce(reason: "guest-diagnostic")
+        let event = try SecurityEvent(eventID: UUID(), hostSequence: observation?.sequence ?? nextSequence(), runID: runID, actionID: nil, time: observation?.effectiveTime ?? now(), origin: .guestDiagnostic, operation: operation, resourceSummary: resourceSummary, decision: .observe, reason: message, grantDigest: digest, outcome: .notDispatched)
         do {
             try append(event: event)
         } catch {
-            if let state = runs[runID] { revoke(state) }
+            if let state = runs[runID] { state.handle.lifecycle.terminate(.faulted); revoke(state) }
             throw AuthorizationError.auditFailed
         }
     }
@@ -455,12 +479,12 @@ public actor RunAuthorizationController {
         guard !state.revoked else { throw AuthorizationError.runRevoked }
     }
 
-    private func ensureGrantTime(_ state: RunState, at current: Date) throws {
-        guard current >= state.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
-        guard current < state.grant.expiresAt else {
+    private func ensureGrantTime(_ state: RunState, observation: RunObservation) throws {
+        guard observation.status == .active else {
             revoke(state)
-            throw AuthorizationError.grantExpired
+            throw observation.status == .expired ? AuthorizationError.grantExpired : .runRevoked
         }
+        guard observation.wallTime >= state.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
     }
 
     private func ensureConnection(_ state: RunState, connection: ConnectionGrant) throws {
@@ -490,9 +514,7 @@ public actor RunAuthorizationController {
     }
 
     private func revoke(_ state: RunState) {
-        guard !state.revoked else { return }
-        state.revoked = true
-        state.epoch &+= 1
+        state.handle.lifecycle.terminate(.revoked)
         for actionID in Array(state.pending.keys) {
             retireAction(state, actionID: actionID, reason: .runRevoked)
         }
@@ -507,13 +529,16 @@ public actor RunAuthorizationController {
     }
 
     private func hostEvent(state: RunState, actionID: UUID, operation: String, resourceSummary: String, decision: EventDecision, reason: String, outcome: DispatchOutcome) throws -> SecurityEvent {
-        try SecurityEvent(eventID: UUID(), hostSequence: nextSequence(), runID: state.grant.runID, actionID: actionID, time: now(), origin: .hostEnforcement, operation: operation, resourceSummary: resourceSummary, decision: decision, reason: reason, grantDigest: state.grantDigest, outcome: outcome)
+        let observation = state.handle.lifecycle.observeAndReduce(reason: reason)
+        return try SecurityEvent(eventID: UUID(), hostSequence: observation.sequence, runID: state.grant.runID, actionID: actionID, time: observation.effectiveTime, origin: .hostEnforcement, operation: operation, resourceSummary: resourceSummary, decision: decision, reason: reason, grantDigest: state.grantDigest, outcome: outcome)
     }
 
     private func reject(_ state: RunState, binding: ActionBinding, reason: String) throws {
+        let observation = state.handle.lifecycle.observeAndReduce(reason: reason)
         do {
-            try append(event: try SecurityEvent(eventID: UUID(), hostSequence: nextSequence(), runID: state.grant.runID, actionID: nil, time: now(), origin: .hostEnforcement, operation: binding.operation, resourceSummary: binding.resolvedResource, decision: .deny, reason: reason, grantDigest: state.grantDigest, outcome: .notDispatched))
+            try append(event: try SecurityEvent(eventID: UUID(), hostSequence: observation.sequence, runID: state.grant.runID, actionID: nil, time: observation.effectiveTime, origin: .hostEnforcement, operation: binding.operation, resourceSummary: binding.resolvedResource, decision: .deny, reason: reason, grantDigest: state.grantDigest, outcome: .notDispatched))
         } catch {
+            state.handle.lifecycle.terminate(.faulted)
             revoke(state)
             throw AuthorizationError.auditFailed
         }

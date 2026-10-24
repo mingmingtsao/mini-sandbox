@@ -1,4 +1,5 @@
 import Foundation
+import SharedClockSupport
 import SandboxContracts
 import SandboxHost
 
@@ -473,22 +474,7 @@ final class TestClock: @unchecked Sendable {
 }
 
 /// Host-owned clock: one expiry observation followed immediately by rollback.
-final class AuthorityPulseClock: @unchecked Sendable {
-    let base = Date(timeIntervalSince1970: 1_900_000_000)
-    private let lock = NSLock()
-    private var target = 0
-    private var reads = 0
-    private var fired = false
-    func arm(_ position: Int) { lock.withLock { target = position; reads = 0; fired = false } }
-    func now() -> Date {
-        lock.withLock {
-            reads += 1
-            if reads == target { fired = true; return base.addingTimeInterval(900) }
-            return base
-        }
-    }
-    var observed: Bool { lock.withLock { fired } }
-}
+typealias AuthorityPulseClock = SharedHostClock
 
 extension AuthorizationChecks {
     static let sharedExpiryPaths: [(String, Int)] = [

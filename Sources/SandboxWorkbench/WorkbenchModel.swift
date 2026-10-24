@@ -43,6 +43,49 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     }
 }
 
+/// Presentation state only; permission and terminal state remain in the model's authority.
+@MainActor public final class WorkbenchApprovalController: ObservableObject {
+    public struct Presentation: Identifiable {
+        public let action: PendingAction
+        public var id: UUID { action.actionID }
+    }
+    @Published public var presentation: Presentation?
+    private var lastPresented: PendingAction?
+    private let model: WorkbenchModel
+    public init(model: WorkbenchModel) { self.model = model }
+    public var ordinaryControlsDisabled: Bool { model.isBusy || model.isClosing || !model.authorityAvailable }
+    public func present(_ action: PendingAction) {
+        guard lastPresented == nil, !ordinaryControlsDisabled, model.pending.contains(where: { $0.actionID == action.actionID }) else { return }
+        lastPresented = action
+        presentation = Presentation(action: action)
+    }
+    private func clear(_ action: PendingAction) {
+        if presentation?.id == action.actionID { presentation = nil }
+    }
+    public func reconcile() {
+        if let action = presentation?.action, !model.pending.contains(where: { $0.actionID == action.actionID }) { clear(action) }
+    }
+    public func dismiss(_ action: PendingAction) async {
+        await model.dismiss(action)
+        clear(action)
+    }
+    public func didDismiss() async {
+        let action = lastPresented
+        lastPresented = nil
+        if let action { await model.dismiss(action) }
+    }
+    public func approve(_ action: PendingAction) async throws {
+        defer { clear(action) }
+        _ = try await model.approveOnce(action)
+    }
+    public func stop(runID: UUID) async throws {
+        // Remove the modal immediately; model.stop establishes the shared terminal
+        // before waiting for the in-flight denial's audit. Dismissal remains deny-only.
+        if let action = presentation?.action, action.binding.runID == runID { clear(action) }
+        try await model.stop(runID: runID)
+    }
+}
+
 @MainActor public final class WorkbenchModel: ObservableObject {
     @Published public private(set) var grants: [RunGrant] = []
     @Published public private(set) var pending: [PendingAction] = []
@@ -54,7 +97,6 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     private var controller: RunAuthorizationController?
     private var handles: [UUID: HostRunHandle] = [:]
     private var approvedSnapshots: [UUID: PendingAction] = [:]
-    private let now: @Sendable () -> Date
     @Published public private(set) var activity: [SecurityEvent] = []
     @Published public private(set) var runStatus: [UUID: String] = [:]
     @Published public private(set) var isBusy = false
@@ -108,6 +150,7 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         errorMessage = String(describing: error)
         if error as? AuthorizationError == .auditFailed {
             authorityAvailable = false
+            for handle in handles.values { handle.lifecycle.terminate(.faulted) }
             for (id, handle) in handles {
                 try? await controller?.stop(handle: handle)
                 clearRun(id, status: "Revoked — audit unavailable")
@@ -119,10 +162,12 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     }
 
     /// Trusted in-process ingress only. Never expose this as a guest JSON handler.
-    public func installTrustedGrant(_ grant: RunGrant) async throws {
+    public func installTrustedGrant(_ grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws {
         let controller = try begin(); defer { finish() }
         do {
-            let handle = try await controller.install(grant: grant)
+            let handle: HostRunHandle
+            if let existing { try await controller.validateAttachment(handle: existing, grant: grant); handle = existing }
+            else { handle = try await controller.install(grant: grant) }
             handles[grant.runID] = handle; grants.append(grant)
             runStatus[grant.runID] = "Authorized — runtime not connected"
         } catch { await failed(error, runID: grant.runID); throw error }
@@ -196,7 +241,16 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         do { try await controller.recordGuestDiagnostic(runID: runID, operation: operation, resourceSummary: resource, message: message) }
         catch { await failed(error, runID: runID); throw error }
     }
+    /// Stop is an interrupt, not ordinary approval work: busy must not hide it.
+    /// Terminal/closing runs need no further UI intent; cleanup remains idempotent.
+    public func canStop(runID: UUID) -> Bool {
+        guard authorityAvailable, !isClosing, !isClosed, let handle = handles[runID] else { return false }
+        return handle.lifecycle.currentStatus == .active
+    }
     public func stop(runID: UUID) async throws {
+        // Synchronous shared terminal before waiting for UI work or F03 audit.
+        try handle(runID).lifecycle.terminate(.stopped)
+        clearRun(runID, status: "Stopped — authorization revoked")
         await waitForIdle()
         guard let controller else { throw AuthorizationError.auditFailed }
         isBusy = true; defer { finish() }
@@ -217,23 +271,29 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         } catch { await failed(error, runID: runID); throw error }
     }
     public func expirePending() async {
-        guard !isBusy, !isClosing else { return }
-        for grant in grants where now() >= grant.expiresAt {
-            if runStatus[grant.runID] != "Expired — authorization revoked" {
-                do { try await stop(runID: grant.runID); runStatus[grant.runID] = "Expired — authorization revoked" }
-                catch { errorMessage = String(describing: error) }
+        guard !isClosing else { return }
+        for grant in grants {
+            guard let handle = handles[grant.runID] else { continue }
+            let observation = handle.lifecycle.observeAndReduce(reason: "ui-projection")
+            if observation.status != .active {
+                clearRun(grant.runID, status: observation.status == .expired ? "Expired — authorization revoked" : "Revoked / expired")
+                continue
             }
-        }
-        for action in pending where now() >= action.expiresAt { await dismiss(action) }
-        // Approved capabilities expire in F03 as well; do not present them as live.
-        for (id, action) in approvedSnapshots where now() >= action.expiresAt {
-            approvedActions.removeValue(forKey: id); approvedSnapshots.removeValue(forKey: id)
+            if isBusy { continue }
+            for action in pending where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt { await dismiss(action) }
+            for (id, action) in approvedSnapshots where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt {
+                approvedActions.removeValue(forKey: id); approvedSnapshots.removeValue(forKey: id)
+            }
         }
     }
     /// No termination reply is sent until every installed handle is revoked.
     public func close() async -> Bool {
         if let closeTask { return await closeTask.value }
         isClosing = true
+        for (id, handle) in handles {
+            handle.lifecycle.terminate(.stopped)
+            clearRun(id, status: "Stopped — authorization revoked")
+        }
         let task = Task { @MainActor in
             await self.waitForIdle()
             for id in self.handles.keys {
@@ -253,13 +313,23 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     }
     public enum WorkbenchError: Error { case busy }
 
-    public init(newAuditFileAt url: URL, now: @escaping @Sendable () -> Date = { Date() }) {
+    public func lifecycle(runID: UUID) throws -> RunLifecycle { try handle(runID).lifecycle }
+    public init(unavailable error: String) {
+        auditURL = URL(fileURLWithPath: "/dev/null")
+        errorMessage = error
+    }
+    public init(audit: WorkbenchAuditSink, authority: RunAuthorizationController) {
+        self.auditURL = audit.url; self.audit = audit; self.controller = authority
+        self.authorityAvailable = true
+    }
+
+    public init(newAuditFileAt url: URL, now: @escaping @Sendable () -> Date = { Date() },
+                authority: RunAuthorizationController? = nil) {
         auditURL = url
-        self.now = now
         do {
             let sink = try WorkbenchAuditSink(newFileAt: url)
             audit = sink
-            controller = RunAuthorizationController(auditSink: sink, now: now)
+            controller = authority ?? RunAuthorizationController(auditSink: sink, now: now)
             authorityAvailable = true
         } catch { errorMessage = "Audit unavailable; authority disabled: \(error)" }
     }

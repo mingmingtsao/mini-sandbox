@@ -23,10 +23,19 @@ class CaptureServer(socketserver.TCPServer):
     allow_reuse_address = False
     request_queue_size = 4
 
-    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None):
+    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False, restricted_profile=False, coding_profile=False):
         if address[0] != '127.0.0.1':
             raise ValueError('loopback_only')
+        if coding_profile and restricted_profile:
+            raise ValueError('profiles_are_mutually_exclusive')
+        if coding_profile and not structural_metrics_enabled:
+            raise ValueError('coding_profile_requires_metrics')
+        self.coding_profile = coding_profile
+        if restricted_profile and not structural_metrics_enabled:
+            raise ValueError('restricted_profile_requires_metrics')
+        self.restricted_profile = restricted_profile
         self.records = []
+        self.structural_metrics_enabled = structural_metrics_enabled
         self.wire_bytes = 0
         self.connections = 0
         self.max_wire = 4194304
@@ -121,6 +130,13 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             self.remaining_ingress()
             # JSON CPU work cannot be preempted here. Expiry is checked again
             # after parsing; this is not a hard end-to-end execution timeout.
+            metrics = None
+            if self.server.coding_profile:
+                metrics = structural_metrics(body, expected_model='deepseek-flash', coding_tools=True)
+            elif self.server.restricted_profile:
+                metrics = structural_metrics(body, expected_model='deepseek-flash')
+            elif self.server.structural_metrics_enabled:
+                metrics = structural_metrics(body)
             shape = inspect_json(body)
             self.remaining_ingress()
             status = 503
@@ -129,6 +145,10 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                       'header_bytes': len(header), 'shape': shape,
                       'authentication_present': any(k in headers for k in (b'authorization', b'x-api-key')),
                       'sse_accept': headers.get(b'accept') == b'text/event-stream'}
+            if metrics is not None:
+                record['metrics'] = metrics
+            if self.server.restricted_profile or self.server.coding_profile:
+                record['anthropic_beta_present'] = b'anthropic-beta' in headers
         except Rejected as e:
             status = e.status
             record = {'status': status}
@@ -149,7 +169,11 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             self.request.sendall(response)
         except OSError:
             pass
-        # Recheck at retention, including time spent sending the static reply.
+        # Opt-in output stays within the existing supervisor's 16 KiB pipe cap.
+        # Reserve room for all remaining fixed omission records and the wrapper.
+        if self.server.structural_metrics_enabled and len(json.dumps(self.server.records + [record], separators=(',', ':')).encode()) > 15000:
+            record = {'status': record['status'], 'metrics_omitted': True}
+        # Recheck at retention, including time spent sending/serializing.
         if status == 503 and self.server.clock() >= min(self.deadline, self.server.lifetime_deadline):
             record = {'status': 408}
         if len(self.server.records) < self.server.max_connections:
@@ -189,13 +213,227 @@ def inspect_json(body):
             'tool_count': len(value.get('tools', []))}
 
 
+METRICS_NODE_CAP = 32768
+METRICS_DEPTH_CAP = 64
+SAFE_INTEGER = 9007199254740991
+
+
+class _NumericToken(str):
+    """Transient spelling only, never returned by the metrics serializer."""
+
+
+def _metric_integer(token):
+    if token == '-0' or len(token.lstrip('-')) > 16:
+        return _NumericToken(token)
+    value = int(token)
+    return value if abs(value) <= SAFE_INTEGER else _NumericToken(token)
+
+
+def _string_bytes(value):
+    # Compact UTF-8 JSON string bytes without constructing serialized text.
+    size = 2
+    for char in value:
+        n = ord(char)
+        if 0xD800 <= n <= 0xDFFF:
+            raise ValueError('invalid_json')
+        size += 2 if char in '"\\\b\f\n\r\t' else 6 if n < 32 else 1 if n < 128 else 2 if n < 2048 else 3 if n < 65536 else 4
+    return size
+
+
+def _metric_stats(value):
+    # Root is depth zero; keys are bytes, not value nodes (ModelJSON).
+    stack = [(value, 0)]
+    nodes = depth = size = noninteger = unsafe = 0
+    while stack:
+        item, level = stack.pop()
+        nodes += 1
+        if nodes > METRICS_NODE_CAP or level > METRICS_DEPTH_CAP:
+            raise ValueError('metrics_limit')
+        depth = max(depth, level)
+        if isinstance(item, (dict, list)):
+            children = item.values() if isinstance(item, dict) else item
+            if nodes + len(stack) + len(item) > METRICS_NODE_CAP:
+                raise ValueError('metrics_limit')
+            size += 2 + max(0, len(item) - 1)
+            if isinstance(item, dict):
+                size += sum(_string_bytes(k) + 1 for k in item)
+            stack.extend((child, level + 1) for child in children)
+        elif isinstance(item, _NumericToken):
+            size += len(item)
+            if item == '-0' or any(c in item for c in '.eE'):
+                noninteger += 1
+            else:
+                unsafe += 1
+        elif isinstance(item, str):
+            size += _string_bytes(item)
+        else:
+            size += len(json.dumps(item))
+        if size > BODY_CAP:
+            raise ValueError('metrics_limit')
+    return size, depth, nodes, noninteger, unsafe
+
+
+def _metric_load(body):
+    if len(body) > BODY_CAP:
+        raise ValueError('body_limit')
+    # Bound JSON decoder recursion before parsing; delimiters in strings don't count.
+    level = 0
+    quoted = escaped = False
+    for byte in body:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):
+            level += 1
+            if level > METRICS_DEPTH_CAP + 1:
+                raise ValueError('metrics_limit')
+        elif byte in (93, 125):
+            level -= 1
+    try:
+        value = json.loads(body, object_pairs_hook=_pairs, parse_constant=_constant,
+                           parse_int=_metric_integer, parse_float=_NumericToken)
+        if not isinstance(value, dict) or any(k in value and not isinstance(value[k], list) for k in ('messages', 'tools')):
+            raise ValueError('invalid_json')
+        _metric_stats(value)
+        return value
+    except (UnicodeError, RecursionError):
+        raise ValueError('invalid_json') from None
+    except ValueError as error:
+        if str(error) == 'metrics_limit':
+            raise
+        raise ValueError('invalid_json') from None
+
+
+def structural_metrics(body, *, expected_model=None, coding_tools=False):
+    """Opt-in fixed-label metrics. No names, text, IDs or arbitrary keys escape."""
+    if expected_model not in (None, 'deepseek-flash'):
+        raise ValueError('unsupported_profile')
+    value = _metric_load(body)
+    def integer(v):
+        return v if type(v) is int and 0 <= v <= SAFE_INTEGER else 'invalid'
+    def enum(v, allowed):
+        return v if type(v) is str and v in allowed else 'unknown'
+    def typename(v):
+        return {dict: 'object', list: 'array', str: 'string', bool: 'boolean',
+                int: 'number', _NumericToken: 'number', type(None): 'null'}[type(v)]
+    thinking = value.get('thinking', {})
+    output = value.get('output_config', {})
+    system = value.get('system', [])
+    items = system if isinstance(system, list) else [system]
+    sysmetrics = {'type': typename(system) if 'system' in value else 'absent', 'count': len(items),
+                  'text_count': 0, 'text_bytes': 0, 'text_bytes_max': 0,
+                  'cache_control_present': 0, 'unknown_type_count': 0, 'unknown_field_count': 0}
+    for item in items:
+        if isinstance(item, dict):
+            sysmetrics['unknown_field_count'] += sum(k not in ('type', 'text', 'cache_control') for k in item)
+            sysmetrics['cache_control_present'] += 'cache_control' in item
+            sysmetrics['unknown_type_count'] += item.get('type') != 'text'
+            text = item.get('text')
+        else:
+            text = item
+            sysmetrics['unknown_type_count'] += type(item) is not str
+        if type(text) is str:
+            n = len(text.encode('utf-8'))
+            sysmetrics['text_count'] += 1
+            sysmetrics['text_bytes'] += n
+            sysmetrics['text_bytes_max'] = max(sysmetrics['text_bytes_max'], n)
+    tools = value.get('tools', [])
+    fields = ('name', 'description', 'input_schema', 'type', 'cache_control')
+    metrics: dict[str, int] = dict.fromkeys(('count', 'name_max', 'name_invalid_count', 'duplicate_name_count',
+                            'description_max', 'schema_bytes_max', 'schema_depth_max', 'schema_nodes_max',
+                            'schema_noninteger_count', 'schema_unsafe_integer_count', 'schema_nonobject_count',
+                            'unknown_field_count', 'nonobject_count'), 0)
+    metrics.update({k + '_present': 0 for k in fields})
+    metrics['count'] = len(tools)
+    names = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            metrics['nonobject_count'] += 1
+            continue
+        metrics['unknown_field_count'] += sum(k not in fields for k in tool)
+        for key in fields:
+            metrics[key + '_present'] += key in tool
+        name = tool.get('name')
+        if type(name) is str:
+            metrics['name_max'] = max(metrics['name_max'], len(name.encode('utf-8')))
+            metrics['duplicate_name_count'] += name in names
+            names.add(name)
+        metrics['name_invalid_count'] += type(name) is not str or re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name) is None
+        description = tool.get('description')
+        if type(description) is str:
+            metrics['description_max'] = max(metrics['description_max'], len(description.encode('utf-8')))
+        if 'input_schema' in tool:
+            schema = tool['input_schema']
+            size, depth, nodes, noninteger, unsafe = _metric_stats(schema)
+            for key, n in (('schema_bytes_max', size), ('schema_depth_max', depth), ('schema_nodes_max', nodes)):
+                metrics[key] = max(metrics[key], n)
+            metrics['schema_noninteger_count'] += noninteger
+            metrics['schema_unsafe_integer_count'] += unsafe
+            metrics['schema_nonobject_count'] += type(schema) is not dict
+    result = {'stream': value.get('stream') if type(value.get('stream')) is bool else 'invalid',
+              'max_tokens': integer(value.get('max_tokens')),
+              'thinking': enum(thinking.get('type'), ('enabled', 'disabled', 'adaptive')) if isinstance(thinking, dict) else 'invalid',
+              'thinking_budget': integer(thinking.get('budget_tokens')) if isinstance(thinking, dict) else 'invalid',
+              'effort': enum(output.get('effort'), ('low', 'medium', 'high', 'max')) if isinstance(output, dict) else 'invalid',
+              'system': sysmetrics, 'tools': metrics, 'mismatches': []}
+    if 'thinking' not in value:
+        result['thinking'] = 'absent'
+    if isinstance(thinking, dict) and 'budget_tokens' not in thinking:
+        result['thinking_budget'] = 'absent'
+    if isinstance(output, dict) and 'effort' not in output:
+        result['effort'] = 'absent'
+    result['thinking_unknown_field_count'] = sum(k not in ('type', 'budget_tokens') for k in thinking) if isinstance(thinking, dict) else 0
+    result['output_unknown_field_count'] = sum(k != 'effort' for k in output) if isinstance(output, dict) else 0
+    checks = {'max_tokens': type(result['max_tokens']) is not int or not 1 <= result['max_tokens'] <= 8192,
+              'tool_description_bytes': metrics['description_max'] > 4096,
+              'thinking': 'thinking' in value and result['thinking'] != 'disabled',
+              'messages': len(value.get('messages', [])) > 128, 'tools': len(tools) > 64,
+              'tool_name': metrics['name_invalid_count'] > 0 or metrics['duplicate_name_count'] > 0,
+              'schema_bytes': metrics['schema_bytes_max'] > 65536,
+              'schema_depth': metrics['schema_depth_max'] > 32,
+              'schema_nodes': metrics['schema_nodes_max'] > 8192,
+              'schema_numeric_domain': metrics['schema_noninteger_count'] > 0 or metrics['schema_unsafe_integer_count'] > 0,
+              'schema_root': metrics['schema_nonobject_count'] > 0,
+              'system_blocks': isinstance(system, list) and len(system) > 0}
+    checks.update({key: key in value for key in ('metadata', 'context_management', 'output_config')})
+    result['mismatches'] = [key for key, mismatch in checks.items() if mismatch]
+    if expected_model is not None:
+        result['model_matches_profile'] = type(value.get('model')) is str and value['model'] == expected_model
+    if coding_tools:
+        # Only these fixed labels escape; never serialize request-supplied names.
+        labels = {'Bash': 'bash_count', 'Read': 'read_count', 'Edit': 'edit_count',
+                  'Write': 'write_count', 'Glob': 'glob_count', 'Grep': 'grep_count',
+                  'EndConversation': 'end_conversation_count'}
+        counts = dict.fromkeys((*labels.values(), 'other_count'), 0)
+        for tool in tools:
+            name = tool.get('name') if isinstance(tool, dict) else None
+            label = labels.get(name, 'other_count') if type(name) is str else 'other_count'
+            counts[label] += 1
+        counts['within_selected_set'] = counts['other_count'] == 0
+        counts['all_six_present'] = all(counts[k] > 0 for k in ('bash_count', 'read_count', 'edit_count', 'write_count', 'glob_count', 'grep_count'))
+        result['coding_toolset'] = counts
+    return result
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Local-only metadata capture, never a model emulator')
     parser.add_argument('--duration', type=int, choices=range(1, 36), default=35)
+    parser.add_argument('--structural-metrics', action='store_true', help='bounded fixed-label measurements only')
+    profiles = parser.add_mutually_exclusive_group()
+    profiles.add_argument('--restricted-profile', choices=('claude-broker-restricted-v1',))
+    profiles.add_argument('--coding-profile', choices=('claude-broker-coding-v1',))
     options = parser.parse_args()
     try:
-        with CaptureServer(lifetime=options.duration) as server:
+        with CaptureServer(lifetime=options.duration, structural_metrics_enabled=options.structural_metrics,
+                           restricted_profile=options.restricted_profile is not None,
+                           coding_profile=options.coding_profile is not None) as server:
             while server.connections < server.max_connections and server.wire_bytes < server.max_wire:
                 remaining = server.lifetime_deadline - server.clock()
                 if remaining <= 0:

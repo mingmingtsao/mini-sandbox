@@ -6,7 +6,9 @@ FLAGS=('--print','--no-session-persistence','--setting-sources','--strict-mcp-co
 SIZE=285493120
 SHA='028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332'
 
-def help_flags(data):return {f:re.search(rb'(?<![A-Za-z0-9_-])'+re.escape(f.encode())+rb'(?![A-Za-z0-9_-])',data) is not None for f in FLAGS}
+def help_flags(data, *, coding=False):return {f:re.search(rb'(?<![A-Za-z0-9_-])'+re.escape(f.encode())+rb'(?![A-Za-z0-9_-])',data) is not None for f in FLAGS+(('--tools',) if coding else ())}
+def coding_argv_matches(argv):
+    return argv==['/opt/agent-probe/claude','--print','--no-session-persistence','--setting-sources','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--model','deepseek-flash','--tools','Bash,Read,Edit,Write,Glob,Grep']
 def version_match(data):return data.strip()==b'2.1.309 (Claude Code)'
 def emit(value):print(json.dumps(value,separators=(',',':')),flush=True)
 def hashed(path):
@@ -75,6 +77,13 @@ def materialize():
 def main():
     if ctypes.CDLL(None).prctl(36,1,0,0,0)!=0:raise RuntimeError('subreaper')
     plan=json.loads(pathlib.Path('/runtime/guest-launch.json').read_text())
+    profile=json.loads(pathlib.Path('/runtime/profile.json').read_text())['profile']
+    assert profile in (PROFILE,'claude-broker-restricted-v1','claude-broker-coding-v1')
+    coding=profile=='claude-broker-coding-v1'
+    if profile in ('claude-broker-restricted-v1','claude-broker-coding-v1'):
+        assert plan['profile']==profile
+        emit({'phase':'clientProfile','profile':profile})
+    if coding:assert coding_argv_matches(plan['argv'])
     closure=json.loads(pathlib.Path('/runtime/loader.json').read_text())
     assert all(hashed(p)==h for p,h in closure.items())
     assert hashed(plan['binary'])==SHA
@@ -90,7 +99,7 @@ def main():
     emit({'phase':'version','exit':version_code,'versionMatch':version_match(version)})
     if version_code or not version_match(version):return 1
     help_code,help_data=bounded_output([binary,'--help'],check_env,check_cwd)
-    flags=help_flags(help_data);emit({'phase':'help','exit':help_code,'flags':flags})
+    flags=help_flags(help_data,coding=coding);emit({'phase':'help','exit':help_code,'flags':flags})
     if help_code or not all(flags.values()):return 1
     for name in ('home','tmp','work'):os.mkdir('/run/agent-probe/'+name,0o700)
     # Independent capture process: JSON/ingress cannot delay the CLI timer.
@@ -119,7 +128,9 @@ def main():
         pathlib.Path('/work/vendor-group').write_text(str(p.pid))
         pathlib.Path('/work/capture-group').write_text(str(cap.pid))
         p.stdin.write(plan['stdin_fixed_utf8'].encode());p.stdin.close()
-        emit({'phase':'vendorStarted','freshLaunchDirectories':True})
+        started={'phase':'vendorStarted','freshLaunchDirectories':True}
+        if coding:started['codingArgvMatches']=coding_argv_matches(plan['argv'])
+        emit(started)
         end=time.monotonic()+30;minimum=mem_available()
         while time.monotonic()<end and p.poll() is None and cap.poll() is None:
             pump(min(.05,max(0,end-time.monotonic())))
@@ -138,7 +149,7 @@ def main():
     return 0
 
 def capture_worker():
-    # Reuse the reviewed entrypoint unchanged; only report completed bind.
+    # Same entrypoint/lifetime; image marker explicitly opts into metrics.
     import capture
     original=capture.CaptureServer
     def ready(*args,**kwargs):
@@ -147,6 +158,12 @@ def capture_worker():
         return server
     capture.CaptureServer=ready
     __import__('sys').argv=['capture']
+    if pathlib.Path('/runtime/structural-metrics-v1').is_file():
+        __import__('sys').argv.append('--structural-metrics')
+    if json.loads(pathlib.Path('/runtime/profile.json').read_text())['profile']=='claude-broker-restricted-v1':
+        __import__('sys').argv.extend(['--restricted-profile','claude-broker-restricted-v1'])
+    if json.loads(pathlib.Path('/runtime/profile.json').read_text())['profile']=='claude-broker-coding-v1':
+        __import__('sys').argv.extend(['--coding-profile','claude-broker-coding-v1'])
     return capture.main()
 
 def mem_available():

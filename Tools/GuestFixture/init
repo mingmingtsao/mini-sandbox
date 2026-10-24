@@ -1,0 +1,12 @@
+#!/bin/sh
+# PID 1: deliberately no distribution bootstrap, DHCP, package manager or shell login.
+export PATH=/bin
+hold() { while :; do /bin/busybox sleep 3600; done; }
+/bin/busybox mount -t proc -o nosuid,nodev,noexec proc /proc || hold
+/bin/busybox mount -t sysfs -o nosuid,nodev,noexec sysfs /sys || hold
+/bin/busybox mount -t devtmpfs -o nosuid devtmpfs /dev || hold
+@MODULE_LOADS@
+/bin/busybox env -i PATH=/bin /bin/diagnostic-probe
+status=$?
+printf '{"event":"probeExited","exitCode":%s}\n' "$status"
+hold

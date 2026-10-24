@@ -116,12 +116,19 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     /// Synchronous preparation only; the URLSession task remains suspended.
     /// The owner must authorize/audit before calling this (credential access occurs here).
     package func prepare(_ request: FixedModelRequest, streaming: Bool) throws -> ModelPreparedOperation {
+        try prepareEncoded(encode(request, streaming: streaming), model: request.model, protocol: request.protocol, streaming: streaming)
+    }
+
+    package func prepareNative(_ request: AnthropicNativeRequest) throws -> ModelPreparedOperation {
+        try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
+    }
+
+    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool) throws -> ModelPreparedOperation {
         try limiter.acquire()
         do {
-            let body = try encode(request, streaming: streaming)
             guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
             let credential: String
-            do { credential = try credentialProvider.credential(for: request.model) }
+            do { credential = try credentialProvider.credential(for: model) }
             catch let error as CredentialProviderError { throw ModelTransportError.credential(error) }
             catch { throw ModelTransportError.credential(.unavailable) }
             guard !credential.isEmpty, credential.utf8.count <= 16 * 1024,
@@ -129,12 +136,12 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 throw ModelTransportError.credential(.invalid)
             }
 
-            let endpoint = endpoint(for: request)
+            let endpoint = endpoint(for: kind)
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = Self.requestTimeout
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            switch request.protocol {
+            switch kind {
             case .openAI: urlRequest.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
             case .anthropic:
                 urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
@@ -144,8 +151,8 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             urlRequest.httpBody = body
             let anthropicDecoder = AnthropicStreamDecoder()
             return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming,
-                decodeText: { try self.decodeText($0, protocol: request.protocol) },
-                decodeEvent: { request.protocol == .anthropic ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI) },
+                decodeText: { try self.decodeText($0, protocol: kind) },
+                decodeEvent: { kind == .anthropic ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI) },
                 release: { self.limiter.release() })
         } catch {
             limiter.release()
@@ -153,8 +160,8 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         }
     }
 
-    private func endpoint(for request: FixedModelRequest) -> URL {
-        switch request.protocol {
+    private func endpoint(for kind: FixedProtocol) -> URL {
+        switch kind {
         case .openAI: return URL(string: "https://api.deepseek.com/chat/completions")!
         case .anthropic: return URL(string: "https://api.deepseek.com/anthropic/v1/messages")!
         }

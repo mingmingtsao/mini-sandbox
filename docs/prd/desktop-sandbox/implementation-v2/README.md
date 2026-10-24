@@ -1,8 +1,8 @@
 # mini-sandbox 产品实施方案 v2
 
-**状态：候选产品实施规格，待 Review；所有产品测试均尚未执行。**
+**状态：产品实施基线；规格确认不代表功能或安全验收通过。验收清单保留本规格提出时的初始状态，实际结果以对应代码与制品的验证记录为准。**
 
-本文档承接 [#1 已合并设计](https://github.com/mingmingtsao/mini-sandbox/pull/1)。保留原 `source/`、`REVIEW.md`、`ACCEPTANCE.md` 和原型，不修改历史设计。
+本文档承接 [#1 已合并设计](https://github.com/mingmingtsao/mini-sandbox/pull/1)。保留原 `source/`、`REVIEW.md`、`ACCEPTANCE.md` 和原型，不修改历史设计；与当前规格冲突时，以本目录的 `FINAL_SPEC.md` 为准。
 
 - [FINAL_SPEC.md](FINAL_SPEC.md)：macOS 产品范围、技术架构、凭据与权限、模型/MCP、文件、安全审计和生命周期。
 - [PR1_REVIEW.md](PR1_REVIEW.md)：基于 #1 早期快照的静态评审及对抗性比较。

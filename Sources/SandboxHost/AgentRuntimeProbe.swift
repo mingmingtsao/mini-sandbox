@@ -16,7 +16,8 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
     var end = 0.0, stopEnd = 0.0; var didCancel = false
     var exitCode: Int32 = 1
     var now: Double { ProcessInfo.processInfo.systemUptime }
-    let commands: [[String]] = [
+    var vendorDisk: URL? = nil
+    var commands: [[String]] = [
         ["/usr/bin/node", "-e", "console.log(process.version);console.error('synthetic-stderr-channel')"], ["/usr/bin/python3", "--version"], ["/usr/bin/git", "--version"],
         ["/usr/bin/python3", "-B", "task.py"],
         ["/usr/bin/python3", "-c", "import time; print('cancel-ready',flush=True); time.sleep(30)"],
@@ -31,17 +32,18 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
     }
     func run(kernel: URL, ramdisk: URL, disk: URL) -> Int32 {
         queue.async { self.start(kernel:kernel,ramdisk:ramdisk,disk:disk) }
-        if completion.wait(timeout:.now()+82) != .success { event("outerTimeout",["stopped":"UNKNOWN"]); return 1 }
+        if completion.wait(timeout:.now()+(vendorDisk == nil ? 82:112)) != .success { event("outerTimeout",["stopped":"UNKNOWN"]); return 1 }
         return queue.sync { exitCode }
     }
     func start(kernel: URL, ramdisk: URL, disk: URL) {
-        end=now+65
+        end=now+(vendorDisk == nil ? 65:95)
         do {
             let c=VZVirtualMachineConfiguration(); c.platform=VZGenericPlatformConfiguration()
             let boot=VZLinuxBootLoader(kernelURL:kernel);boot.initialRamdiskURL=ramdisk;boot.commandLine="console=hvc0 rdinit=/init"
             c.bootLoader=boot;c.cpuCount=2;c.memorySize=1073741824
             c.networkDevices=[];c.directorySharingDevices=[]
             c.storageDevices=[VZVirtioBlockDeviceConfiguration(attachment:try VZDiskImageStorageDeviceAttachment(url:disk,readOnly:false,cachingMode:.uncached,synchronizationMode:.full))]
+            if let vendorDisk { c.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment:try VZDiskImageStorageDeviceAttachment(url:vendorDisk,readOnly:true,cachingMode:.uncached,synchronizationMode:.full))) }
             c.socketDevices=[VZVirtioSocketDeviceConfiguration()]
             let p=Pipe();console=p
             guard fcntl(p.fileHandleForReading.fileDescriptor,F_SETFL,O_NONBLOCK) != -1 else { throw Failure.io }
@@ -117,7 +119,7 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
         do {
             if let p=console {
                 var b=[UInt8](repeating:0,count:4096);let n=Darwin.read(p.fileHandleForReading.fileDescriptor,&b,b.count)
-                if n>0 && consoleBytes<65536 {consoleBytes+=n;event("console",["base64":Data(b.prefix(n)).base64EncodedString()])}
+                if n>0 && consoleBytes<65536 {consoleBytes+=n;if vendorDisk == nil {event("console",["base64":Data(b.prefix(n)).base64EncodedString()])}}
             }
             guard let c=connection else{return}
             if !output.isEmpty {

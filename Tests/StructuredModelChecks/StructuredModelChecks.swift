@@ -125,6 +125,20 @@ func malformedStreamRegression() async throws {
             Foundation.exit(64)
         }
         let checks: [(String, () async throws -> Void)] = [
+            ("native slash user string projection", { try await nativeProjectionAccepted("string") }),
+            ("native slash user text block projection", { try await nativeProjectionAccepted("blocks") }),
+            ("native slash tool schema projection", { try await nativeProjectionAccepted("schema") }),
+            ("native slash paired tool input projection", { try await nativeProjectionAccepted("input") }),
+            ("native projection positive controls", nativeProjectionControls),
+            ("native projection independent rejections", nativeProjectionRejections),
+            ("native immutable transport vertical", nativeVertical),
+            ("native fail-closed matrix", nativeNegativeMatrix),
+            ("native exact wrapped boundary", nativeExactBoundary),
+            ("native structured SSE controlled receiver", nativeStreamVertical),
+            ("native identity mismatch gates", nativeIdentityRejections),
+            ("native shape controls", nativeShapeControls),
+            ("native effort preserved under disabled policy", nativeEffortControls),
+            ("native canonical reconstruction boundary", nativeCanonicalReconstruction),
             ("tool-only regression", toolOnlyRegression),
             ("gateway tool preservation", gatewayToolRegression),
             ("structured request", structuredRequestRegression),

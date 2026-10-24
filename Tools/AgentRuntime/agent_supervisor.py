@@ -75,6 +75,11 @@ def materialize():
 def main():
     if ctypes.CDLL(None).prctl(36,1,0,0,0)!=0:raise RuntimeError('subreaper')
     plan=json.loads(pathlib.Path('/runtime/guest-launch.json').read_text())
+    profile=json.loads(pathlib.Path('/runtime/profile.json').read_text())['profile']
+    assert profile in (PROFILE,'claude-broker-restricted-v1')
+    if profile=='claude-broker-restricted-v1':
+        assert plan['profile']==profile
+        emit({'phase':'clientProfile','profile':profile})
     closure=json.loads(pathlib.Path('/runtime/loader.json').read_text())
     assert all(hashed(p)==h for p,h in closure.items())
     assert hashed(plan['binary'])==SHA
@@ -149,6 +154,8 @@ def capture_worker():
     __import__('sys').argv=['capture']
     if pathlib.Path('/runtime/structural-metrics-v1').is_file():
         __import__('sys').argv.append('--structural-metrics')
+    if json.loads(pathlib.Path('/runtime/profile.json').read_text())['profile']=='claude-broker-restricted-v1':
+        __import__('sys').argv.extend(['--restricted-profile','claude-broker-restricted-v1'])
     return capture.main()
 
 def mem_available():

@@ -23,9 +23,12 @@ class CaptureServer(socketserver.TCPServer):
     allow_reuse_address = False
     request_queue_size = 4
 
-    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False):
+    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False, restricted_profile=False):
         if address[0] != '127.0.0.1':
             raise ValueError('loopback_only')
+        if restricted_profile and not structural_metrics_enabled:
+            raise ValueError('restricted_profile_requires_metrics')
+        self.restricted_profile = restricted_profile
         self.records = []
         self.structural_metrics_enabled = structural_metrics_enabled
         self.wire_bytes = 0
@@ -122,7 +125,11 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             self.remaining_ingress()
             # JSON CPU work cannot be preempted here. Expiry is checked again
             # after parsing; this is not a hard end-to-end execution timeout.
-            metrics = structural_metrics(body) if self.server.structural_metrics_enabled else None
+            metrics = None
+            if self.server.restricted_profile:
+                metrics = structural_metrics(body, expected_model='deepseek-flash')
+            elif self.server.structural_metrics_enabled:
+                metrics = structural_metrics(body)
             shape = inspect_json(body)
             self.remaining_ingress()
             status = 503
@@ -133,6 +140,8 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                       'sse_accept': headers.get(b'accept') == b'text/event-stream'}
             if metrics is not None:
                 record['metrics'] = metrics
+            if self.server.restricted_profile:
+                record['anthropic_beta_present'] = b'anthropic-beta' in headers
         except Rejected as e:
             status = e.status
             record = {'status': status}
@@ -294,8 +303,10 @@ def _metric_load(body):
         raise ValueError('invalid_json') from None
 
 
-def structural_metrics(body):
+def structural_metrics(body, *, expected_model=None):
     """Opt-in fixed-label metrics. No names, text, IDs or arbitrary keys escape."""
+    if expected_model not in (None, 'deepseek-flash'):
+        raise ValueError('unsupported_profile')
     value = _metric_load(body)
     def integer(v):
         return v if type(v) is int and 0 <= v <= SAFE_INTEGER else 'invalid'
@@ -385,6 +396,8 @@ def structural_metrics(body):
               'system_blocks': isinstance(system, list) and len(system) > 0}
     checks.update({key: key in value for key in ('metadata', 'context_management', 'output_config')})
     result['mismatches'] = [key for key, mismatch in checks.items() if mismatch]
+    if expected_model is not None:
+        result['model_matches_profile'] = type(value.get('model')) is str and value['model'] == expected_model
     return result
 
 
@@ -393,9 +406,11 @@ def main():
     parser = argparse.ArgumentParser(description='Local-only metadata capture, never a model emulator')
     parser.add_argument('--duration', type=int, choices=range(1, 36), default=35)
     parser.add_argument('--structural-metrics', action='store_true', help='bounded fixed-label measurements only')
+    parser.add_argument('--restricted-profile', choices=('claude-broker-restricted-v1',))
     options = parser.parse_args()
     try:
-        with CaptureServer(lifetime=options.duration, structural_metrics_enabled=options.structural_metrics) as server:
+        with CaptureServer(lifetime=options.duration, structural_metrics_enabled=options.structural_metrics,
+                           restricted_profile=options.restricted_profile is not None) as server:
             while server.connections < server.max_connections and server.wire_bytes < server.max_wire:
                 remaining = server.lifetime_deadline - server.clock()
                 if remaining <= 0:

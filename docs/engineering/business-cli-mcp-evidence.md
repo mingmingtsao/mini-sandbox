@@ -80,3 +80,32 @@ actual VM stopping, and workspace evidence separately. A local smoke verified
 both listeners, the fixed fake bearer, discovery, and signal-triggered shutdown
 without starting an App or VM.
 
+## Actual VM physical-stop boundaries
+
+The additional standalone modes `mcp-retired-start` and `mcp-retired-send`
+use `business-fixture-host-v16` and the unchanged business image v5. They are
+intentionally unavailable in `--serve` mode because their stop/barrier driver
+is part of the standalone probe. Both preserve the run's active grant while
+stopping the concrete VM, isolating the VM-owner fence from run revocation.
+
+* `cli-mcp-retired-start-v1`: the real CLI requested repository-A write and its
+  normal SDK permission and exact MCP action were approved. A fixture-only
+  credential-provider barrier held execution after approval consumption and
+  before transport construction completed. After actual VM stop, settled
+  callbacks, and disk removal, the barrier was released. The final start
+  returned `notStarted`; additional HTTP resumes, upstream tool calls, writes,
+  native send calls, and native bytes were all zero. The only upstream hits
+  were the earlier discover/list pair. The grant was still active throughout.
+* `cli-mcp-retired-send-v1`: the real CLI requested repository-A read. The
+  approved upstream request completed and the concrete response was queued,
+  without accepting any of its bytes. After actual VM stop and callback/disk
+  cleanup, `acceptNext` rejected the retired owner. Native send calls, native
+  bytes, and accepted final responses stayed zero. The upstream recorded one
+  read in addition to discover/list, and zero writes. The grant remained active.
+
+Each evidence directory contains `host.log`, `fixture.json`, and exact input
+captures. Both modes retain unchanged original project/test bytes and perform
+no workspace adoption after this intentional early stop. These are real VM
+and CLI boundary checks against local scripted services, not external-provider
+or App acceptance evidence.
+

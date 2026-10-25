@@ -10,6 +10,7 @@ private actor FixtureState {
     var reflectedMetadataRejected = false
     var mcpReplies = 0, mcpDenials = 0, mcpCalls = 0
     var permissionResourceRejected = false
+    var retiringMCP = false, retiredMCPChecked = false
     func finished(_ sha: String) { finishedSHA = sha }
     func transfer() { transferred = true }
     func model() { models += 1 }
@@ -24,18 +25,35 @@ private actor FixtureState {
     func mcpProgress() -> (Int, Int) { (mcpReplies, mcpDenials) }
     func rejectedPermissionResource() { permissionResourceRejected = true }
     func resourceRejectionComplete() -> Bool { permissionResourceRejected }
+    func beginMCPRetirement() { retiringMCP = true }
+    func isRetiringMCP() -> Bool { retiringMCP }
+    func checkedMCPRetirement() { retiredMCPChecked = true }
+    func retirementComplete() -> Bool { retiredMCPChecked }
 }
 
 private final class FixtureMCPCredentials: MCPCredentialProvider, @unchecked Sendable {
     private let token: String
     private let lock = NSLock()
     private var count = 0
+    private var pauseNext = false, paused = false
+    private let pauseGate = DispatchSemaphore(value: 0)
     init(_ token: String) { self.token = token }
     func credential(for binding: MCPCredentialBinding) throws -> MCPCredential {
-        lock.withLock { count += 1 }
+        let shouldPause = lock.withLock { () -> Bool in
+            count += 1
+            if pauseNext { pauseNext = false; paused = true; return true }
+            return false
+        }
+        if shouldPause {
+            guard pauseGate.wait(timeout: .now() + 15) == .success else { throw BusinessVMError.closed }
+            lock.withLock { paused = false }
+        }
         return MCPCredential(binding: binding, bearer: token)
     }
     var reads: Int { lock.withLock { count } }
+    func pauseNextRead() { lock.withLock { pauseNext = true } }
+    var isPaused: Bool { lock.withLock { paused } }
+    func releaseRead() { pauseGate.signal() }
 }
 private struct FixtureMCPContext: Sendable {
     let gateway: HostMCPGateway
@@ -119,7 +137,7 @@ private struct FixtureMCPContext: Sendable {
             guard (5...6).contains(args.count), let port = UInt16(args[4]), port != 0 else { throw BusinessVMError.invalidResource }
             let mode = args.count == 6 ? args[5] : "tools"
             let reflection = mode == "reflection", mcpMode = mode.hasPrefix("mcp-")
-            guard ["tools", "reflection", "mcp-read", "mcp-write", "mcp-denied-resource", "mcp-denied-write"].contains(mode) else { throw BusinessVMError.invalidProfile }
+            guard ["tools", "reflection", "mcp-read", "mcp-write", "mcp-denied-resource", "mcp-denied-write", "mcp-retired-start", "mcp-retired-send"].contains(mode) else { throw BusinessVMError.invalidProfile }
             let root = URL(fileURLWithPath: args[3], isDirectory: true)
             evidenceRoot = root
             let bundle = try BusinessRuntimeBundle(directory: URL(fileURLWithPath: args[1], isDirectory: true), vendorDisk: URL(fileURLWithPath: args[2]))
@@ -290,6 +308,41 @@ private struct FixtureMCPContext: Sendable {
                                     }
                                     let approval = try await mcpContext.gateway.hostApprove(handle: mcpContext.handle, proposal: proposal)
                                     let output = try await mcpContext.gateway.makeVMNativeOutput(handle: mcpContext.handle, approval: approval, connection: connection)
+                                    if ingress.selectors.method == "tools/call", mode.hasPrefix("mcp-retired-") {
+                                        let before = try await mcpContext.gateway.resumedTaskCount(handle: mcpContext.handle)
+                                        if mode == "mcp-retired-start" {
+                                            // Hold only the fixture credential provider. The gateway has
+                                            // consumed this actual-VM approval but has not resumed HTTP.
+                                            mcpContext.credentials.pauseNextRead()
+                                            let execution = Task { try await mcpContext.gateway.execute(handle: mcpContext.handle, approval: approval, output: output) }
+                                            while !mcpContext.credentials.isPaused { try await Task.sleep(for: .milliseconds(2)) }
+                                            await state.beginMCPRetirement(); session.stopForResult()
+                                            let stopped = await session.waitUntilStopped()
+                                            guard stopped.actualStopped, stopped.callbacksSettled, stopped.diskRemoved,
+                                                  handle.lifecycle.currentStatus == .active else { mcpContext.credentials.releaseRead(); throw BusinessVMError.invalidOwner }
+                                            mcpContext.credentials.releaseRead()
+                                            var rejected = false
+                                            do { try await execution.value }
+                                            catch { rejected = error as? HostMCPGatewayError == .notStarted; report(["event": "mcp.retired-start-rejection", "error": errorLabel(error)]) }
+                                            guard rejected, try await mcpContext.gateway.resumedTaskCount(handle: mcpContext.handle) == before else { throw BusinessVMError.invalidOwner }
+                                        } else {
+                                            try await mcpContext.gateway.execute(handle: mcpContext.handle, approval: approval, output: output)
+                                            guard try await mcpContext.gateway.resumedTaskCount(handle: mcpContext.handle) == before + 1 else { throw BusinessVMError.invalidOwner }
+                                            await state.beginMCPRetirement(); session.stopForResult()
+                                            let stopped = await session.waitUntilStopped()
+                                            guard stopped.actualStopped, stopped.callbacksSettled, stopped.diskRemoved,
+                                                  handle.lifecycle.currentStatus == .active else { throw BusinessVMError.invalidOwner }
+                                        }
+                                        var sendRejected = false
+                                        do { _ = try output.acceptNext() }
+                                        catch { sendRejected = true; report(["event": "mcp.retired-send-rejection", "error": errorLabel(error)]) }
+                                        guard sendRejected, let progress = output.nativeProgress,
+                                              progress.committedBytes == 0, progress.writeCalls == 0, progress.acceptedFinals == 0 else { throw BusinessVMError.invalidOwner }
+                                        await state.checkedMCPRetirement()
+                                        report(["event": "mcp.retirement-checked", "mode": mode, "nativeBytes": 0, "nativeWriteCalls": 0,
+                                                "upstreamResumes": mode == "mcp-retired-start" ? 0 : 1, "grantStillActive": true])
+                                        return
+                                    }
                                     try await mcpContext.gateway.execute(handle: mcpContext.handle, approval: approval, output: output)
                                     while output.nativeProgress?.closed == false {
                                         if try !output.acceptNext() { try await Task.sleep(for: .milliseconds(5)) }
@@ -298,6 +351,10 @@ private struct FixtureMCPContext: Sendable {
                                     await state.mcpReply(); report(["event": "mcp.native-response", "method": ingress.selectors.method, "bytes": progress.committedBytes])
                                 }
                             } catch {
+                                if mode.hasPrefix("mcp-retired-"), await state.isRetiringMCP(),
+                                   [.control, .workspace].contains(connection.service), error as? BusinessVMError == .closed {
+                                    report(["event": "channel.expected-stop", "service": connection.service.rawValue]); return
+                                }
                                 report(["event": "channel.failed", "service": connection.service.rawValue, "error": errorLabel(error)])
                                 await state.fail(error); connection.retire(); session.cancel()
                             }
@@ -307,6 +364,23 @@ private struct FixtureMCPContext: Sendable {
                 }
             }
             try await session.start()
+            if mode.hasPrefix("mcp-retired-") {
+                while !(await state.retirementComplete()) {
+                    guard await state.progress().4.isEmpty else { throw BusinessVMError.closed }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                let stopped = await session.waitUntilStopped(); await incoming.value
+                let counts = await state.mcpProgress(), progress = await state.progress()
+                guard stopped.actualStopped, stopped.callbacksSettled, stopped.diskRemoved, handle.lifecycle.currentStatus == .active,
+                      counts.0 == 2, progress.2 == 1, progress.3 == 1, progress.4.isEmpty,
+                      try Data(contentsOf: source.appendingPathComponent("logic.py")) == original,
+                      try Data(contentsOf: source.appendingPathComponent("test_logic.py")) == test else { throw BusinessVMError.invalidOwner }
+                report(["event": "PASS", "scope": mode, "nativeBytes": 0, "nativeWriteCalls": 0,
+                        "upstreamToolDispatches": mode == "mcp-retired-start" ? 0 : 1,
+                        "actualStopped": true, "callbacksSettled": true, "diskRemoved": true, "grantStillActive": true,
+                        "originalUnchanged": true, "realProvider": "NOT_RUN"])
+                handle.lifecycle.terminate(.stopped); _ = await events.value; return
+            }
             if mode == "mcp-denied-resource" {
                 while !(await state.resourceRejectionComplete()) {
                     if !(await state.progress().4.isEmpty), !(await state.resourceRejectionComplete()) { throw BusinessVMError.closed }

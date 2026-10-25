@@ -20,8 +20,8 @@ from business_fixture import wire_event
 
 def main():
     serve_only = len(sys.argv) == 4 and sys.argv[1] == '--serve'
-    modes = ('mcp-read', 'mcp-write', 'mcp-denied-resource', 'mcp-denied-write')
-    if (not serve_only and len(sys.argv) != 6) or sys.argv[-1] not in modes:
+    modes = ('mcp-read', 'mcp-write', 'mcp-denied-resource', 'mcp-denied-write', 'mcp-retired-start', 'mcp-retired-send')
+    if (not serve_only and len(sys.argv) != 6) or sys.argv[-1] not in modes or (serve_only and sys.argv[-1].startswith('mcp-retired-')):
         raise SystemExit('usage: business_mcp_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE MODE | --serve NEW_EVIDENCE MODE')
     if not serve_only:
         host, image, vendor = map(lambda value: str(Path(value).absolute()), sys.argv[1:4])
@@ -60,7 +60,7 @@ def main():
     repository = mcp.Server(('127.0.0.1', 0), RepositoryHandler); repository.state = state
     repo_thread = threading.Thread(target=repository.serve_forever, daemon=True); repo_thread.start()
     model_state = {'requests': 0, 'results': [], 'errors': []}
-    write = mode in ('mcp-write', 'mcp-denied-write')
+    write = mode in ('mcp-write', 'mcp-denied-write', 'mcp-retired-start')
     name = 'mcp__sandbox__repo_write' if write else 'mcp__sandbox__repo_read'
     arguments = {'repo': 'B' if mode == 'mcp-denied-resource' else 'A'}
     if write: arguments['content'] = 'vm-approved-once'
@@ -137,9 +137,10 @@ def main():
         with state['lock']:
             calls = list(state['calls']); writes = state['writes']; repos = dict(state['repos']); hits = state['hits']
         call_count = len([call for call in calls if call['method'] == 'tools/call'])
-        early_denied = mode == 'mcp-denied-resource'
-        valid = (run.returncode == 0 and model_state['requests'] == (1 if early_denied else 2) and len(model_state['results']) == (0 if early_denied else 1) and not model_state['errors']
-                 and all(call['repo'] != 'B' for call in calls) and call_count == (0 if denied else 1)
+        early_stop = mode == 'mcp-denied-resource' or mode.startswith('mcp-retired-')
+        no_dispatch = denied or mode == 'mcp-retired-start'
+        valid = (run.returncode == 0 and model_state['requests'] == (1 if early_stop else 2) and len(model_state['results']) == (0 if early_stop else 1) and not model_state['errors']
+                 and all(call['repo'] != 'B' for call in calls) and call_count == (0 if no_dispatch else 1)
                  and writes == (1 if mode == 'mcp-write' else 0) and repos['B'] == 'repo-B-initial')
         result = {'status': 'PASS' if valid else 'FAIL', 'mode': mode, 'host_exit': run.returncode, 'upstream_hits': hits,
                   'upstream_calls': calls, 'upstream_writes': writes, 'resource_B_unchanged': repos['B'] == 'repo-B-initial', 'model': model_state}

@@ -1,4 +1,5 @@
 import Foundation
+import SharedClockSupport
 import SandboxHost
 import SandboxContracts
 
@@ -7,20 +8,7 @@ import SandboxContracts
 /// propose = gateway live, eligibility, authority propose, gateway post-await;
 /// approve = gateway pre-await, authority approve, gateway post-await;
 /// deny = gateway pre-await, authority explicit-deny event, gateway post-await.
-final class PulseClock: @unchecked Sendable {
-    let base = Date(timeIntervalSince1970: 1_900_000_000)
-    private let lock = NSLock()
-    private var target = 0; private var count = 0; private var fired = false
-    func now() -> Date {
-        lock.withLock {
-            count += 1
-            if target == count { fired = true; return base.addingTimeInterval(900) }
-            return base
-        }
-    }
-    func arm(_ position: Int) { lock.withLock { target = position; count = 0; fired = false } }
-    var observation: (Int, Bool) { lock.withLock { (count, fired) } }
-}
+typealias PulseClock = SharedHostClock
 func clockPulseChecks(_ port: UInt16, _ token: String) async throws {
     for (operation, positions) in [("propose", 4), ("approve", 3), ("deny", 3)] {
         for position in 1...positions {

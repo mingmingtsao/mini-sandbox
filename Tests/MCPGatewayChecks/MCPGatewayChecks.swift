@@ -149,7 +149,7 @@ func discover(_ c: Context, name: String) async throws {
             guard let line = readLine(), let config = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let port = config["port"] as? Int, let token = config["token"] as? String, let p = UInt16(exactly: port) else { throw Failure(message: "loopback driver input required") }
             if selector == ["--independent"] {
                 try await independentChecks(p, token)
-                output("PASS MCP independent scope; full suite known RED pulse-deny-2"); exit(0)
+                output("PASS MCP independent scope; default suite not run here"); exit(0)
             }
             let c = try await make(p, token)
             try await discover(c, name: "discovery")

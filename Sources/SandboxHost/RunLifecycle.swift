@@ -219,4 +219,24 @@ public final class RunLifecycle: @unchecked Sendable {
         }
     }
 
+    func acceptBusinessDisplay(_ output: BusinessDisplayOutput) throws -> Bool {
+        var cancelled: [RunPreparedEffect] = []
+        let owned = output.acquireForAcceptance()
+        defer {
+            if owned { output.releaseForAcceptance() }
+            cancelled.forEach { $0.cancel() }
+        }
+        if owned { try output.prepareAcceptanceLocked() }
+        return try lock.withLock {
+            let sample = clock.sample()
+            _ = reduce(sample.wall, sample.elapsed)
+            cancelled = drainTerminal()
+            guard output.lifecycle === self, output.scope.connectionID == nil else { throw AuthorizationError.wrongRun }
+            try validate(output.scope)
+            try Task.checkCancellation()
+            guard owned else { return false }
+            return try output.acceptLocked()
+        }
+    }
+
 }

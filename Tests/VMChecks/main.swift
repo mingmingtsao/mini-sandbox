@@ -1,5 +1,5 @@
 import Foundation
-import SandboxHost
+@testable import SandboxHost
 
 var passed = 0
 @MainActor func check(_ name: String, _ body: () throws -> Bool) {
@@ -85,6 +85,44 @@ check("pending start cannot release initial stopped resources") {
 check("probe run admission is one-shot") {
     let probe = HeadlessVMProbe()
     return probe.claimRun() && !probe.claimRun()
+}
+check("business resources reject ambiguous profile and unsafe filesystem inputs") {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("business-bundle-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let image = root.appendingPathComponent("image"), vendor = root.appendingPathComponent("vendor")
+    for directory in [image, vendor] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+    let manifest = image.appendingPathComponent("business.json")
+    for data in [Data("{\"schema\":1,\"schema\":1}".utf8), Data("{\"schema\":1,\"profile\":\"workspace-fixture-v1\"}".utf8), Data(repeating: 32, count: 16_385)] {
+        try data.write(to: manifest)
+        do { _ = try BusinessRuntimeBundle(directory: image, vendorDisk: vendor.appendingPathComponent("claude.raw")); return false }
+        catch {}
+    }
+    let link = root.appendingPathComponent("image-link")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: image)
+    do { try BusinessRuntimeBundle.checkDirectory(link); return false } catch {}
+    try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: image.path)
+    do { try BusinessRuntimeBundle.checkDirectory(image); return false } catch {}
+    return true
+}
+check("business resource bounded reads reject symlinks hardlinks and oversized inputs") {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("business-input-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("source"), link = root.appendingPathComponent("link"), alias = root.appendingPathComponent("hardlink")
+    let bytes = Data([1, 2, 3, 4]); try bytes.write(to: file)
+    guard try BusinessRuntimeBundle.read(file, maximum: 4) == bytes else { return false }
+    do { _ = try BusinessRuntimeBundle.read(file, maximum: 3); return false } catch {}
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+    do { _ = try BusinessRuntimeBundle.read(link, maximum: 4); return false } catch {}
+    try FileManager.default.linkItem(at: file, to: alias)
+    do { _ = try BusinessRuntimeBundle.read(file, maximum: 4); return false } catch {}
+    try FileManager.default.removeItem(at: alias)
+    do { _ = try BusinessRuntimeBundle.fileDigest(file, maximum: 4, exact: 3); return false } catch {}
+    do { _ = try BusinessRuntimeBundle.fileDigest(file, maximum: 4, immutable: true); return false } catch {}
+    return true
 }
 verifiedBundleChecks()
 print("VMChecks: \(passed) passed")

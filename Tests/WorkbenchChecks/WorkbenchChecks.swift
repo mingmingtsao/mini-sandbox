@@ -154,6 +154,11 @@ import SandboxWorkbench
             try await CompositionBoundsChecks.run()
             try await CompositionDiagnosticChecks.run()
             try await CompositionNativeCloseChecks.run()
+            try await CompositionBusinessChecks.run()
+            try await MCPSettingsChecks.run()
+#if SANDBOX_TEST_FIXTURES
+            try await CompositionLocalFixtureChecks.run()
+#endif
         } catch { print("FAIL: \(error)"); exit(1) }
     }
     @MainActor static func withWritesBlocked(_ operation: @MainActor () async throws -> Void) async throws {

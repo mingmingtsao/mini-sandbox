@@ -6,11 +6,11 @@ copy, produces an add/change/delete review, and exports an explicitly reviewed
 version to a new directory. It never overwrites the original tree and never
 executes imported or edited content.
 
-This is a filesystem/data-model slice, not a completed end-to-end product feature.
-There is no selection UI, VM transfer, guest protocol endpoint, Agent integration,
-CoW implementation, or full S20/S21 acceptance claim. Future VM transfer and guest
-protocol wiring require their own boundary validation; these module checks do not
-establish safety of those integrations.
+This module owns filesystem data, review and export. Selection UI, VM transfer
+and guest protocol handling belong to their respective callers. Copies use
+ordinary bounded file operations rather than CoW. The installed-run session and
+concrete file-effect boundaries are described in
+[Workspace final effects](workspace-final-effects.md).
 
 ## API and data ownership
 

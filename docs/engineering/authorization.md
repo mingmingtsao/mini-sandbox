@@ -55,4 +55,4 @@ There are no separate events for installation, accepted proposals, host approval
 
 ## Verification boundary
 
-The executable `AuthorizationChecks` and foundation `ContractChecks` exercise this local authorization seam without XCTest. **VM integration, Broker integration/atomic external dispatch, and S16 full acceptance: `NOT_RUN`.** Passing these checks is not evidence that those integration requirements have been met.
+The executable `AuthorizationChecks` and foundation `ContractChecks` exercise this local authorization seam without XCTest. Their recorded scope lists VM integration, Broker integration/atomic external dispatch, and S16 acceptance as `NOT_RUN`; external dispatch uses the separate gateway and final-effect interfaces.

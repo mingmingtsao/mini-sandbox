@@ -8,7 +8,7 @@ once in F03, then injects the same controller and `HostRunHandle` into the
 workbench, model gateway and MCP gateway. Its `diagnosticSession(owner:run:)`
 passes that same handle to the VM protocol session; it does not launch a VM.
 Connection registries are empty at App startup until trusted configuration is
-provided. This is not an App→Agent end-to-end completion claim.
+provided.
 
 - `RunAuthorizationController(auditSink:now:monotonic:)`: F03 action/ticket
   ledger. Production monotonic time uses `ContinuousClock`; tests can inject a
@@ -78,19 +78,16 @@ denial and issued-ticket completion remain exactly once. Cleanup task errors are
 propagated. These are source-binding and compiled-route checks, **not rendered
 GUI click, keyboard, or accessibility evidence**.
 
-## Remaining safety boundary (not release-ready)
+## Concrete effect interfaces
 
-This increment does **not** serialize the final shared check with the concrete
-URLSession `resume()` across executors. Nor does it replace arbitrary streaming
-callbacks with a controlled receiver that rechecks at actual business acceptance.
-P2 must supply those concrete start/receiver boundaries, including run generation,
-connection invalidation, action start deadline, and cancellation. A pre-committed
-delivery ticket followed by a later unchecked callback is not sufficient.
-Raw OS completions may still arrive for cleanup; they must not become business
-success after terminal state. Shared Stop prevents later admissions, but proactive
-cancellation of every already-running transport from the UI and VM socket-write
-acceptance still require integration work. No full safety or App/Agent PASS is
-claimed.
+Shared authority supplies run identity, generation, connection invalidation and
+terminal state. Concrete transport starts and consumer acceptance use the
+[controlled execution/output interfaces](controlled-execution-output.md) and
+[final-effect clock contract](final-effect-clock.md). Those interfaces bind the
+action start deadline and cancellation to the actual effect. A pre-committed
+delivery ticket followed by an unchecked callback is not sufficient.
+Raw OS completions may arrive for cleanup; they must not become business success
+after terminal state.
 
 ## Executable evidence entrypoints
 

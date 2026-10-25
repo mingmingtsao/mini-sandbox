@@ -1,6 +1,6 @@
 # Controlled execution/output increment
 
-This is a narrow host-only increment, not an end-to-end consumer migration or a release safety claim.
+This document describes host-side transport start and controlled consumer acceptance interfaces.
 
 ## Actual effect boundaries
 
@@ -25,14 +25,14 @@ The receiver has a 256-event queue and an 8 MiB cumulative value-size budget. Pr
 
 Consumer acceptance is transactional: validate all fallible event data before changing accepted text, completion, metadata, finals, tool results, event counts or dequeuing. A malformed MCP source ID throws `denied` and leaves the same head queued and all accepted state unchanged, including on repeated attempts. Explicit cancellation may discard that queue without recording acceptance. Proposal ingress and receiver defense both use `ModelBlock.validID`; a nil source ID is valid and produces no tool result. The debug-only internal fixture factory deliberately bypasses ingress to exercise receiver defense independently; its completions are synthetic, not authenticated transport evidence.
 
-## Remaining surfaces
+## Compatibility surfaces and scope
 
 - Existing raw-returning `execute` overloads and Model `emit` remain for compatibility. Their consumers are **not** covered by the new acceptance contract.
-- `MCPModelHandoff.propose(completion:...)` and `toolResult(...)` remain raw DTO APIs. Existing model-to-MCP and next-model-turn callers still need migration to owned state with acceptance at the destination. The controlled receiver does not yet expose a complete usable Agent/UI consumer.
+- `MCPModelHandoff.propose(completion:...)` and `toolResult(...)` are raw DTO APIs. Their values do not authorize destination acceptance; callers using controlled output must retain consumer ownership and enter its acceptance boundary.
 - The MCP controlled receiver is limited to approved tools/call; discovery/control operations use the existing gateway path. Successful discovery and failed refresh invalidate old connection-revision outputs, but discovery/catalog registry mutations themselves are not yet inside the output fence.
 - Direct standalone transport APIs are not run-bound gateways.
 - Credential-provider entry itself is not atomic with Stop. An already-entered preparation may return afterward, but its suspended task cannot pass a terminal start fence. No credential preloading or cross-request cache was added.
-- No claim is made about GUI/VM/external-provider integration or physical network cancellation reversing a remote side effect.
+- Physical network cancellation cannot reverse an already committed remote side effect.
 
 ## Offline verification entrypoints
 

@@ -75,6 +75,8 @@ func sharedStopCancelsStarted() async throws {
     try check(credentials.count == 1 && OfflineProtocol.probe.count == 1, "credential and actual arrival counters")
     try check(audit.completions.count == 1 && audit.completions.first?.outcome == .unknown, "exactly one unknown completion")
     try check(cancelled, "shared terminal did not proactively cancel the actual registered URLSession task")
+    try check(lifecycle.registeredEffectCount == 0, "terminal registration retained")
+    print("OBS R3-I gateway_completion_count=\(audit.completions.count) audit_sequence=\(audit.completions.first!.hostSequence) registered=\(lifecycle.registeredEffectCount) actual_arrivals=\(OfflineProtocol.probe.count)")
 }
 func queuedOutputStopsAtConsumer() async throws {
     let now = Date(), id = UUID()
@@ -91,6 +93,23 @@ func queuedOutputStopsAtConsumer() async throws {
 @main struct ExecutionBoundaryChecks {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments == ["--final-effect-clock"] {
+            do {
+                try r3FinalEffectChecks(); try r3ExpandedChecks()
+                try await nativeActualGateway(streaming: false, nativeRequest: true)
+                try await nativeActualGateway(streaming: true, nativeRequest: true)
+                return
+            }
+            catch { print("FAIL final-effect-clock: \(error)"); exit(1) }
+        }
+        if arguments == ["--native-repairs"] {
+            do { try nativeRepairChecks(); return }
+            catch { print("FAIL native-repairs: \(error)"); exit(1) }
+        }
+        if arguments == ["--native-response"] {
+            do { try await nativeResponseChecks(); return }
+            catch { print("FAIL native-response: \(error)"); exit(1) }
+        }
         if arguments == ["--mcp-transaction"] {
             do { try await mcpTransactionChecks(); return }
             catch { print("FAIL mcp-transaction: \(error)"); exit(1) }

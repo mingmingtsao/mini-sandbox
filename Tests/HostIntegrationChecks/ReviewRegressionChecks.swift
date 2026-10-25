@@ -5,20 +5,12 @@ import SandboxContracts
 // Pulse only the deadline sample, then return valid time even during error
 // reconciliation. This prevents a later clock read from accidentally fixing it.
 final class StartGateClock: @unchecked Sendable {
-    let lock = NSLock(); let initial: Date; let expired: Date
-    var remaining: Int?; var observed = false
-    init(initial: Date, expired: Date) { self.initial = initial; self.expired = expired }
-    func arm(afterValidSamples count: Int) { lock.withLock { if !observed { remaining = count } } }
-    func rollback() { lock.withLock { remaining = nil } }
-    var didObserve: Bool { lock.withLock { observed } }
-    func now() -> Date {
-        lock.withLock {
-            guard let count = remaining else { return initial }
-            if count == 0 { remaining = nil; observed = true; return expired }
-            remaining = count - 1
-            return initial
-        }
-    }
+    let source: RunClock; let initial: Date; let expired: Date
+    init(initial: Date, expired: Date) { self.initial = initial; self.expired = expired; source = .manual(wall: initial) }
+    func arm(afterValidSamples count: Int) { if !didObserve { source.arm(at: count + 1, wall: expired) } }
+    func rollback() { source.disarm() }
+    var didObserve: Bool { source.observation.1 }
+    func now() -> Date { source.now() }
 }
 final class StartGateAudit: SynchronousAuditSink, @unchecked Sendable {
     let audit = Audit(); let clock: StartGateClock; let preCredential: Bool
@@ -51,7 +43,7 @@ func testStartGateRunExpiry(postPreparation: Bool, notYetValid: Bool = false) as
     FixtureProtocol.fixture.reset(sink.audit)
     let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 7, routeVersion: 11,
         model: .deepSeekFlash, protocol: .openAI, credentialProvider: credentials, configuration: configuration())
-    let gateway = try HostModelGateway(connections: [connection], auditSink: sink, now: clock.now)
+    let gateway = try HostModelGateway(connections: [connection], auditSink: sink, clock: clock.source)
     let handle = try await gateway.install(grant: grant)
     func approve() async throws -> HostModelApproval {
         let proposal = try await gateway.propose(handle: handle, connectionID: id, request: request(), streaming: false)
@@ -108,7 +100,7 @@ struct TimedSetup {
         FixtureProtocol.fixture.reset(sink.audit, stream: streaming, hangs: hangs)
         let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 7, routeVersion: 11,
             model: .deepSeekFlash, protocol: .openAI, credentialProvider: credentials, configuration: configuration())
-        gateway = try HostModelGateway(connections: [connection], auditSink: sink, now: clock.now)
+        gateway = try HostModelGateway(connections: [connection], auditSink: sink, clock: clock.source)
         let scope = try ResourceScope(service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
         let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: clock.now(), expiresAt: clock.now().addingTimeInterval(600),
             workloadImageDigest: String(repeating: "a", count: 64), agentAdapterVersion: "fixture", workspaceSnapshotID: UUID(),
@@ -125,18 +117,11 @@ struct TimedSetup {
     }
 }
 final class ProposalSequenceClock: @unchecked Sendable {
-    let lock = NSLock(); let initial: Date; let expired: Date
-    var sample: Int?
-    init(initial: Date, expired: Date) { self.initial = initial; self.expired = expired }
-    func arm() { lock.withLock { sample = 0 } }
-    func rollback() { lock.withLock { sample = nil } }
-    func now() -> Date {
-        lock.withLock {
-            guard let index = sample else { return initial }
-            sample = index + 1
-            return index == 0 ? initial : expired
-        }
-    }
+    let source: RunClock; let initial: Date; let expired: Date
+    init(initial: Date, expired: Date) { self.initial = initial; self.expired = expired; source = .manual(wall: initial) }
+    func arm() { source.arm(at: 2, wall: expired, persistent: true) }
+    func rollback() { source.disarm() }
+    func now() -> Date { source.now() }
 }
 struct ProposalSequenceSetup {
     let clock: ProposalSequenceClock; let audit = Audit(); let credentials = Credentials(); let id = UUID()
@@ -147,7 +132,7 @@ struct ProposalSequenceSetup {
         let grant = try grant(connection: id, scope: allowed, denies: explicitDeny ? [denied] : [])
         clock = ProposalSequenceClock(initial: grant.createdAt.addingTimeInterval(1), expired: grant.expiresAt)
         FixtureProtocol.fixture.reset(audit)
-        gateway = try HostModelGateway(connections: [connection(id, credentials)], auditSink: audit, now: clock.now)
+        gateway = try HostModelGateway(connections: [connection(id, credentials)], auditSink: audit, clock: clock.source)
         handle = try await gateway.install(grant: grant)
     }
     func propose(streaming: Bool = false) async throws -> HostModelProposal {

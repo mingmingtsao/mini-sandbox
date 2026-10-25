@@ -332,14 +332,15 @@ package final class ModelPreparedOperation: @unchecked Sendable {
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         task = session.dataTask(with: request)
     }
-    package func start() throws {
-        try lock.withLock {
-            guard !started, !cancelled else { throw ModelTransportError.cancelled }
-            started = true
-            task.resume()
-            resumes += 1
-        }
+    func acquireForStart() { lock.lock() }
+    func releaseForStart() { lock.unlock() }
+    func startLocked() throws {
+        guard !started, !cancelled else { throw ModelTransportError.cancelled }
+        started = true
+        task.resume()
+        resumes += 1
     }
+    package func start() throws { try lock.withLock { try startLocked() } }
     package func cancel() {
         lock.withLock { cancelled = true }
         task.cancel()

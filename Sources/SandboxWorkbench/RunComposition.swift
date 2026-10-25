@@ -20,10 +20,9 @@ import SandboxHost
 
     package init(audit: WorkbenchAuditSink, modelConnections: [HostModelConnection] = [],
                  mcpConnections: [HostMCPConnection] = [],
-                 now: @escaping @Sendable () -> Date = { Date() },
-                 monotonic: (@Sendable () -> Duration)? = nil) throws {
+                 clock: RunClock = .system()) throws {
         self.audit = audit
-        let authority = RunAuthorizationController(auditSink: audit, now: now, monotonic: monotonic)
+        let authority = RunAuthorizationController(auditSink: audit, clock: clock)
         self.authority = authority
         workbench = WorkbenchModel(audit: audit, authority: authority)
         model = try HostModelGateway(connections: modelConnections, auditSink: audit, authority: authority)

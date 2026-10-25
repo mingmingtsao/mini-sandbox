@@ -17,7 +17,7 @@ package struct MCPCompletion: Sendable {
     package let text: String
     package let sourceToolUseID: String?
     fileprivate init(text: String, sourceToolUseID: String?) { self.text = text; self.sourceToolUseID = sourceToolUseID }
-#if DEBUG
+#if DEBUG || SANDBOX_TEST_FIXTURES
     // Synthetic receiver-defense fixture; not an authenticated transport result.
     static func testOnlyUnvalidated(text: String, sourceToolUseID: String?) -> MCPCompletion {
         MCPCompletion(text: text, sourceToolUseID: sourceToolUseID)
@@ -69,10 +69,10 @@ package actor HostMCPGateway {
     private var registry: [UUID: Entry]
     private var runs: [UUID: Run] = [:]
     private var installing = 0
-    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
+    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, clock: RunClock = .system(), authority: RunAuthorizationController? = nil) throws {
         guard connections.count <= 32, Set(connections.map(\.connectionID)).count == connections.count else { throw HostMCPGatewayError.invalidConnection }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, clock: clock)
     }
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostMCPRunHandle {
         guard runs.count + installing < 32 else { throw HostMCPGatewayError.busy }

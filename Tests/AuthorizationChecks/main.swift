@@ -14,9 +14,10 @@ final class RecordingSink: SynchronousAuditSink, @unchecked Sendable {
 }
 
 final class TestClock: @unchecked Sendable {
-    var value: Date
-    init(_ value: Date) { self.value = value }
-    func now() -> Date { value }
+    let source: RunClock
+    var value: Date { get { source.wall } set { source.set(wall: newValue) } }
+    init(_ value: Date) { source = .manual(wall: value) }
+    func now() -> Date { source.now() }
 }
 
 @main struct AuthorizationChecks {
@@ -82,7 +83,7 @@ final class TestClock: @unchecked Sendable {
         let now = Date(timeIntervalSince1970: 1_000)
         let clock = TestClock(now)
         let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let controller = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let runID = UUID(); let connectionID = UUID()
         let scope = try ResourceScope(service: "files", resource: "docs/1", operation: "read")
         let grant = try makeGrant(runID: runID, now: now, connectionID: connectionID, scope: scope)
@@ -98,7 +99,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testBindingAndConnectionChecks() async throws {
         let now = Date(timeIntervalSince1970: 2_000)
-        let sink = RecordingSink(); let controller = RunAuthorizationController(auditSink: sink, now: { now })
+        let sink = RecordingSink(); let controller = RunAuthorizationController(auditSink: sink, clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/2", operation: "write")
         let runA = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let runB = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
@@ -127,7 +128,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testConcurrentConsume() async throws {
         let now = Date(timeIntervalSince1970: 3_000); let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: { now })
+        let controller = RunAuthorizationController(auditSink: sink, clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/3", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let handle = try await controller.install(grant: grant)
@@ -150,7 +151,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testAuditFailureRevokesWithoutDispatch() async throws {
         let now = Date(timeIntervalSince1970: 4_000); let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: { now })
+        let controller = RunAuthorizationController(auditSink: sink, clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/4", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let handle = try await controller.install(grant: grant)
@@ -164,7 +165,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testExpiryAndStop() async throws {
         let clock = TestClock(Date(timeIntervalSince1970: 5_000)); let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let controller = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let scope = try ResourceScope(service: "files", resource: "docs/5", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: clock.value, connectionID: UUID(), scope: scope, expiresIn: 1_000)
         let handle = try await controller.install(grant: grant)
@@ -172,7 +173,7 @@ final class TestClock: @unchecked Sendable {
         clock.value = clock.value.addingTimeInterval(301)
         try await expectError({ _ = try await controller.hostApprove(handle: handle, actionID: pending.actionID, nonce: pending.nonce) }, .actionExpired, "late approve")
         let stopClock = TestClock(Date(timeIntervalSince1970: 5_000))
-        let stopController = RunAuthorizationController(auditSink: RecordingSink(), now: stopClock.now)
+        let stopController = RunAuthorizationController(auditSink: RecordingSink(), clock: stopClock.source)
         let stopGrant = try makeGrant(runID: UUID(), now: stopClock.value, connectionID: UUID(), scope: scope)
         let stopHandle = try await stopController.install(grant: stopGrant)
         let pending2 = try await stopController.propose(handle: stopHandle, binding: makeBinding(grant: stopGrant, connectionID: stopGrant.connections[0].connectionID, scope: scope, body: "{\"value\":9}"), display: "read")
@@ -183,7 +184,7 @@ final class TestClock: @unchecked Sendable {
     static func testJSONLAuditSink() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("authorization-\(UUID().uuidString).jsonl")
         let sink = try JSONLAuditSink(newFileAt: path)
-        let controller = RunAuthorizationController(auditSink: sink, now: { Date(timeIntervalSince1970: 6_000) })
+        let controller = RunAuthorizationController(auditSink: sink, clock: .manual(wall: Date(timeIntervalSince1970: 6_000)))
         try await controller.recordGuestDiagnostic(runID: UUID(), operation: "read", resourceSummary: "docs", message: "diagnostic")
         let data = try Data(contentsOf: path)
         try require(data.last == 10, "audit is JSONL")
@@ -194,7 +195,7 @@ final class TestClock: @unchecked Sendable {
     static func testConnectionRevocationIsTerminal() async throws {
         let now = Date(timeIntervalSince1970: 7_000)
         let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: { now })
+        let controller = RunAuthorizationController(auditSink: sink, clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/revocation", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let connectionID = grant.connections[0].connectionID
@@ -214,7 +215,7 @@ final class TestClock: @unchecked Sendable {
     static func testConnectionVersionsCannotRollBack() async throws {
         for versions: (UInt64, UInt64) in [(8, 12), (8, 11), (7, 12)] {
             let now = Date(timeIntervalSince1970: 8_000)
-            let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+            let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
             let scope = try ResourceScope(service: "files", resource: "docs/versions", operation: "read")
             let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
             let connectionID = grant.connections[0].connectionID
@@ -235,7 +236,7 @@ final class TestClock: @unchecked Sendable {
     static func testHostApprovalChecksConnection() async throws {
         for change in 0..<3 {
             let now = Date(timeIntervalSince1970: 9_000)
-            let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+            let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
             let scope = try ResourceScope(service: "files", resource: "docs/approve", operation: "read")
             let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
             let connectionID = grant.connections[0].connectionID
@@ -252,7 +253,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testPendingLimitRecovery() async throws {
         let now = Date(timeIntervalSince1970: 10_000)
-        let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+        let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/capacity", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let binding = try makeBinding(grant: grant, connectionID: grant.connections[0].connectionID, scope: scope)
@@ -271,7 +272,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testDenialHistoryIsBounded() async throws {
         let now = Date(timeIntervalSince1970: 11_000)
-        let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+        let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/deny-history", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let binding = try makeBinding(grant: grant, connectionID: grant.connections[0].connectionID, scope: scope)
@@ -291,7 +292,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testExpiryReleasesCapacity() async throws {
         let clock = TestClock(Date(timeIntervalSince1970: 12_000))
-        let controller = RunAuthorizationController(auditSink: RecordingSink(), now: clock.now)
+        let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: clock.source)
         let scope = try ResourceScope(service: "files", resource: "docs/expiry-capacity", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: clock.value, connectionID: UUID(), scope: scope, expiresIn: 2_000)
         let binding = try makeBinding(grant: grant, connectionID: grant.connections[0].connectionID, scope: scope)
@@ -312,7 +313,7 @@ final class TestClock: @unchecked Sendable {
         let now = Date(timeIntervalSince1970: 13_000)
         let clock = TestClock(now)
         let sink = RecordingSink()
-        let controller = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let controller = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let scope = try ResourceScope(service: "files", resource: "docs/completion-history", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let binding = try makeBinding(grant: grant, connectionID: grant.connections[0].connectionID, scope: scope)
@@ -351,7 +352,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testOutstandingTicketBackpressure() async throws {
         let now = Date(timeIntervalSince1970: 14_000)
-        let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+        let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/in-flight", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let binding = try makeBinding(grant: grant, connectionID: grant.connections[0].connectionID, scope: scope)
@@ -455,7 +456,7 @@ final class TestClock: @unchecked Sendable {
 
     static func testCallerDataMutation() async throws {
         let now = Date(timeIntervalSince1970: 17_000)
-        let controller = RunAuthorizationController(auditSink: RecordingSink(), now: { now })
+        let controller = RunAuthorizationController(auditSink: RecordingSink(), clock: .manual(wall: now))
         let scope = try ResourceScope(service: "files", resource: "docs/original-bytes", operation: "write")
         let grant = try makeGrant(runID: UUID(), now: now, connectionID: UUID(), scope: scope)
         let original = Data("{\"value\":1}".utf8)
@@ -485,7 +486,7 @@ extension AuthorizationChecks {
         let clock = AuthorityPulseClock(), sink = RecordingSink(), id = UUID()
         let scope = try ResourceScope(service: "files", resource: "docs/pulse", operation: "read")
         let grant = try makeGrant(runID: UUID(), now: clock.base, connectionID: id, scope: scope, expiresIn: 900)
-        let authority = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let authority = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let handle = try await authority.install(grant: grant)
         let binding = try makeBinding(grant: grant, connectionID: id, scope: scope)
         let a = try await authority.propose(handle: handle, binding: binding, display: "A")

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 import SandboxContracts
 
@@ -86,13 +87,13 @@ package actor HostModelGateway {
     private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v2".utf8)).map { String(format: "%02x", $0) }.joined()
 
     package init(connections: [HostModelConnection], auditSink: any SynchronousAuditSink,
-        now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
+        clock: RunClock = .system(), authority: RunAuthorizationController? = nil) throws {
         guard Set(connections.map(\.connectionID)).count == connections.count,
               connections.allSatisfy({ $0.accountBindingVersion > 0 && $0.routeVersion > 0 }) else {
             throw HostModelGatewayError.invalidConnection
         }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, clock: clock)
     }
 
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostModelRunHandle {
@@ -197,6 +198,22 @@ package actor HostModelGateway {
     package func makeOutput(handle: HostModelRunHandle, approval: HostModelApproval) throws -> ControlledRunOutput {
         let run = try get(handle); try validate(run, proposal: approval.proposal)
         return ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID)
+    }
+    /// Trusted host accepts and relinquishes one local socket; no guest route or
+    /// connection ID is accepted here. Consumes the descriptor even on failure.
+    /// Only the existing controlled execute overload can produce into this output.
+    package func makeNativeOutput(handle: HostModelRunHandle, approval: HostModelApproval,
+                                  takingAcceptedSocket fd: Int32) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred, fd >= 0 { Darwin.close(fd) } }
+        let run = try get(handle); try validate(run, proposal: approval.proposal)
+        let envelope = try JSONDecoder().decode(Envelope.self, from: approval.proposal.pending.binding.canonicalRequest)
+        guard (envelope.schemaVersion == 3 && envelope.nativeBody != nil && envelope.request == nil) ||
+              (envelope.schemaVersion == 2 && envelope.nativeBody == nil && envelope.request?.protocol == .anthropic) else { throw NativeResponseError.invalidEvent }
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle,
+            scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
+            takingAcceptedSocket: fd, streaming: envelope.streaming)
     }
     /// Controlled-output vertical API: caller drives acceptNext on the owned receiver. Completion
     /// means producer/audit finished, NOT that queued business output was accepted.

@@ -67,14 +67,14 @@ func testDurableAudit() async throws {
     try require(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.intentSeen == [true] }, "durable intent file visible at actual upstream hit")
 }
 final class Clock: @unchecked Sendable {
-    private let lock = NSLock(); private var value = Date()
-    func now() -> Date { lock.withLock { value } }
-    func advance(_ seconds: TimeInterval) { lock.withLock { value = value.addingTimeInterval(seconds) } }
+    let source = RunClock.manual(wall: Date())
+    func now() -> Date { source.now() }
+    func advance(_ seconds: TimeInterval) { source.advance(seconds) }
 }
 func testApprovalExpiration() async throws {
     let clock = Clock(); let audit = Audit(); let credentials = Credentials(); let id = UUID()
     FixtureProtocol.fixture.reset(audit)
-    let gateway = try HostModelGateway(connections: [connection(id, credentials)], auditSink: audit, now: clock.now)
+    let gateway = try HostModelGateway(connections: [connection(id, credentials)], auditSink: audit, clock: clock.source)
     let handle = try await gateway.install(grant: grant(connection: id, scope: ResourceScope(service: "model", resource: "deepseek-flash", operation: "complete")))
     let pending = try await gateway.propose(handle: handle, connectionID: id, request: request(), streaming: false)
     clock.advance(301)

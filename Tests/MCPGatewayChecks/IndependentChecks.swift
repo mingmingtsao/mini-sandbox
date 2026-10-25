@@ -8,9 +8,9 @@ func fixtureGate(_ command: String) throws {
 }
 final class MatrixClock: @unchecked Sendable {
     let base = Date(timeIntervalSince1970: 1_900_000_000)
-    private let lock = NSLock(); private var offset: TimeInterval = 0
-    func now() -> Date { lock.withLock { base.addingTimeInterval(offset) } }
-    func set(_ value: TimeInterval) { lock.withLock { offset = value } }
+    let source = RunClock.manual(wall: Date(timeIntervalSince1970: 1_900_000_000))
+    func now() -> Date { source.now() }
+    func set(_ value: TimeInterval) { source.set(wall: base.addingTimeInterval(value)) }
 }
 func matrixGrant(_ id: UUID, at date: Date, concurrent: Int = 2, account: UInt64 = 1, route: UInt64 = 1) throws -> RunGrant {
     let original = try boundedGrant(id, at: date, concurrent: concurrent)
@@ -19,7 +19,7 @@ func matrixGrant(_ id: UUID, at date: Date, concurrent: Int = 2, account: UInt64
 func matrixContext(_ port: UInt16, _ token: String, concurrent: Int = 2, clock: MatrixClock = MatrixClock()) async throws -> Context {
     let id = UUID(), account = UUID(); let audit = Audit(); let credentials = Credentials(token, audit)
     let connection = try HostMCPConnection.testOnlyLoopback(connectionID: id, accountID: account, port: port, provider: credentials)
-    let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, now: { clock.now() })
+    let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, clock: clock.source)
     let handle = try await gateway.install(grant: matrixGrant(id, at: clock.base, concurrent: concurrent))
     return Context(gateway: gateway, handle: handle, id: id, account: account, audit: audit, credentials: credentials, port: port)
 }

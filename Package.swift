@@ -21,7 +21,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(name: "ExecutionBoundaryChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ExecutionBoundaryChecks", exclude: ["loopback.py"]),
-        .target(name: "SharedClockSupport", path: "Tests/SharedClockSupport"),
+        .target(name: "SharedClockSupport", dependencies: ["SandboxHost"], path: "Tests/SharedClockSupport"),
         .executableTarget(name: "SharedAuthorityChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts", "SharedClockSupport"], path: "Tests/SharedAuthorityChecks"),
         .target(name: "SandboxContracts"),
         .target(name: "SandboxHost", dependencies: ["SandboxContracts"], linkerSettings: [.linkedFramework("Virtualization")]),

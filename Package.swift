@@ -20,6 +20,7 @@ let package = Package(
         .executable(name: "WorkspaceChecks", targets: ["WorkspaceChecks"]),
     ],
     targets: [
+        .executableTarget(name: "WorkspaceTransferChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/WorkspaceTransferChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .executableTarget(name: "ExecutionBoundaryChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ExecutionBoundaryChecks", exclude: ["loopback.py"]),
         .target(name: "SharedClockSupport", dependencies: ["SandboxHost"], path: "Tests/SharedClockSupport"),
         .executableTarget(name: "SharedAuthorityChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts", "SharedClockSupport"], path: "Tests/SharedAuthorityChecks"),

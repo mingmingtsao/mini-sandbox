@@ -2,7 +2,7 @@
 
 ## Proven scope
 
-This is a standalone VZ acceptance harness, not an Agent, App, model gateway, or completed file bridge. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. No Package.swift, diagnostic session, App, workbench, or shared authority file is changed.
+This is a standalone VZ acceptance harness, not an Agent, App, model gateway, or completed file bridge. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. The workspace quota increment adds only its concrete native-check target to Package.swift and links the real Host/Contracts sources for standalone builds; it does not modify diagnostic sessions, App, workbench, or shared authority sources.
 
 The real Linux VM runs Node, Python and Git, reads a synthetic project, observes its Python test fail, changes subtraction to addition, reruns the actual Python test successfully, and reads the changed bytes again in the same VM. The host checks the expected before/after SHA256, exit statuses, stdout/stderr chunk hashes, cancellation, and original fixture hashes. A second session starts on a distinct fresh disk. A startup cancellation check requires settled framework callbacks and actual stopped state before serial handles are released.
 
@@ -13,16 +13,16 @@ Use a private artifact root outside Git and the previously verified diagnostic b
 ```sh
 python3 -m unittest discover -s Tests/AgentRuntimeTests -v
 python3 -m unittest discover -s Tests/GuestFixtureTests -v
-swiftc Sources/SandboxHost/AgentRuntimeProbe.swift Sources/SandboxHost/RuntimeJSON.swift Tests/AgentRuntimeTests/RuntimeReceiveTests.swift -o "$ART/runtime-receive-tests"
-"$ART/runtime-receive-tests"
+python3 Tools/WorkspaceTransfer/build_host.py runtime-checks "$ART/runtime-receive-tests"
+"$ART/runtime-receive-tests/host"
 python3 Tools/AgentRuntime/fetch.py "$ART/downloads"
 python3 Tools/AgentRuntime/build.py "$ART" "$DIAGNOSTIC_BUNDLE" "$ART/image-new"
-swiftc Sources/SandboxHost/AgentRuntimeProbe.swift Sources/SandboxHost/RuntimeJSON.swift Tools/AgentRuntime/main.swift -o "$ART/AgentRuntimeProbe"
-codesign --force --sign - --entitlements scripts/vm-probe.entitlements "$ART/AgentRuntimeProbe"
-codesign --verify --strict "$ART/AgentRuntimeProbe"
-python3 Tools/AgentRuntime/verify_vm.py "$ART/AgentRuntimeProbe" "$ART/image-new" "$ART/normal-new"
-python3 Tools/AgentRuntime/verify_vm.py "$ART/AgentRuntimeProbe" "$ART/image-new" "$ART/normal-other"
-python3 Tools/AgentRuntime/verify_vm.py "$ART/AgentRuntimeProbe" "$ART/image-new" "$ART/cancel-new" --cancel-start
+python3 Tools/WorkspaceTransfer/build_host.py runtime-probe "$ART/runtime-host"
+codesign --force --sign - --entitlements scripts/vm-probe.entitlements "$ART/runtime-host/host"
+codesign --verify --strict "$ART/runtime-host/host"
+python3 Tools/AgentRuntime/verify_vm.py "$ART/runtime-host/host" "$ART/image-new" "$ART/normal-new"
+python3 Tools/AgentRuntime/verify_vm.py "$ART/runtime-host/host" "$ART/image-new" "$ART/normal-other"
+python3 Tools/AgentRuntime/verify_vm.py "$ART/runtime-host/host" "$ART/image-new" "$ART/cancel-new" --cancel-start
 ```
 
 The actual CLI (not only the wrapper) requires absolute paths without dot/parent components, caller-owned private image/session leaf directories (0700), and non-symlink ancestry owned by the caller or root without group/other write permission. Input files must be caller-owned, non-symlink single-link regular files without group/other write permission. **The caller must keep inputs, sessions and their ancestry non-mutating for the entire run.** VZ reopens verified paths: these checks do not establish immunity against a hostile process running as the same user, root, or concurrent owner mutations. Do not reuse a directory writable by another principal or an ACL that grants another principal write access.
@@ -51,7 +51,7 @@ Explicit separate budgets: 256 MiB uncompressed image, 64 MiB individual file, 2
 
 ### Runtime v1 framing
 
-4-byte unsigned big-endian body length, then UTF-8 JSON. Maximum body 16,384 bytes; receive buffer 16,388 bytes; 512 frames; host transmit queue 32,768 bytes; output chunks 4,096 decoded bytes; cumulative stdout+stderr 262,144 bytes. The standalone host explicitly compiles `Sources/SandboxHost/RuntimeJSON.swift`, a runtime-local adaptation of the reviewed raw model JSON grammar, with no model/Package dependency. It rejects decoded duplicate keys before dictionary erasure, Boolean/float/exponent integer coercions, unknown/missing/wrong-type fields, nesting beyond 8, and more than 128 JSON nodes. Native tests invoke the actual Swift receive and fragmented/coalesced ingest boundary; Python protocol tests are not evidence for that decoder. Headers outside bounds poison the guest parser or stop the host session. IDs are host sequential command IDs, not identities or permissions.
+4-byte unsigned big-endian body length, then UTF-8 JSON. Maximum body 16,384 bytes; receive buffer 16,388 bytes; 512 frames; host transmit queue 32,768 bytes; output chunks 4,096 decoded bytes; cumulative stdout+stderr 262,144 bytes. The standalone host includes `Sources/SandboxHost/RuntimeJSON.swift`, a runtime-local adaptation of the reviewed raw model JSON grammar. The build helper now also links the real shared Host/Contracts implementation required by workspace quota binding; this does not route runtime-control messages through a model gateway. It rejects decoded duplicate keys before dictionary erasure, Boolean/float/exponent integer coercions, unknown/missing/wrong-type fields, nesting beyond 8, and more than 128 JSON nodes. Native tests invoke the actual Swift receive and fragmented/coalesced ingest boundary; Python protocol tests are not evidence for that decoder. Headers outside bounds poison the guest parser or stop the host session. IDs are host sequential command IDs, not identities or permissions.
 
 ```json
 {"v":1,"type":"launch","id":1,"argv":["/usr/bin/python3","-B","task.py"]}
@@ -67,6 +67,6 @@ Guest starts with `hello` (ID 0); its kernel/interfaces/workdir/fresh fields are
 
 * No real Agent, provider credentials, external account, model round-trip or MCP execution.
 * No production shared-lifecycle authority injection; this fixed synthetic acceptance harness must not be used as an App grant bypass.
-* No arbitrary host project import, guest file upload, immutable result snapshot, review or export. Stdout data/chunk digests are not a file bridge. Future file transport must stay chunked/capped, materialize only into a host-owned isolated directory, freeze exact result bytes, and invoke existing workspace stale-review/export guards. Never host-unpack a guest tar or backwrite the original project.
+* The default runtime profile has no file bridge; stdout digests are not file snapshots. A separate [workspace transfer fixture](workspace-transfer.md) now exercises bounded transport, frozen result review and new-directory export using only a synthetic source. It is not arbitrary project selection or App authorization.
 * No reconnect/resume, persistent disk reuse, interactive input, PTY, generic model proxy or route chosen by the guest.
 * The self-review/unit/VM evidence is not an independent security approval. Full application suites (including previously known failures) and release/distribution acceptance are separate.

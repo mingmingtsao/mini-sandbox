@@ -17,6 +17,11 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
     var exitCode: Int32 = 1
     var now: Double { ProcessInfo.processInfo.systemUptime }
     var vendorDisk: URL? = nil
+    var workspace: WorkspaceTransferFlow?
+    var frameByteLimit: Int { workspace?.messageBytes ?? 16384 }
+    var workspaceResult: FrozenWorkspaceTransfer?
+    let workspaceCancellation = WorkspaceExportCancellation()
+    var servicePort: UInt32 { workspace == nil ? 4060 : 4062 }
     var commands: [[String]] = [
         ["/usr/bin/node", "-e", "console.log(process.version);console.error('synthetic-stderr-channel')"], ["/usr/bin/python3", "--version"], ["/usr/bin/git", "--version"],
         ["/usr/bin/python3", "-B", "task.py"],
@@ -50,17 +55,17 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
             let serial=VZVirtioConsoleDeviceSerialPortConfiguration();serial.attachment=VZFileHandleSerialPortAttachment(fileHandleForReading:nil,fileHandleForWriting:p.fileHandleForWriting);c.serialPorts=[serial]
             try c.validate(); let machine=VZVirtualMachine(configuration:c,queue:queue);vm=machine;machine.delegate=self
             guard let d=machine.socketDevices.first as? VZVirtioSocketDevice else { throw Failure.identity }
-            device=d;let l=VZVirtioSocketListener();listener=l;l.delegate=self;d.setSocketListener(l,forPort:4060)
-            event("configuration",["NIC":c.networkDevices.count,"shares":c.directorySharingDevices.count,"privateDisks":c.storageDevices.count,"RAM":c.memorySize,"CPUs":c.cpuCount,"controlPort":4060])
+            device=d;let l=VZVirtioSocketListener();listener=l;l.delegate=self;d.setSocketListener(l,forPort:servicePort)
+            event("configuration",["NIC":c.networkDevices.count,"shares":c.directorySharingDevices.count,"privateDisks":c.storageDevices.count,"RAM":c.memorySize,"CPUs":c.cpuCount,"controlPort":servicePort])
             let t=DispatchSource.makeTimerSource(queue:queue);timer=t;t.schedule(deadline:.now(),repeating:.milliseconds(10));t.setEventHandler{[weak self] in self?.tick()};t.resume()
             for n in [SIGINT,SIGTERM] { signal(n,SIG_IGN);let s=DispatchSource.makeSignalSource(signal:n,queue:queue);s.setEventHandler{[weak self] in self?.stop(true,"hostCancel")};s.resume();signals.append(s) }
             startPending=true;event("vm.start")
             machine.start { result in
                 self.startPending=false
-                switch result { case .success:self.event("start.callback"); case .failure(let e):self.event("start.failed",["error":String(describing:e)]);self.stop(true,"startFailed") }
+                switch result { case .success:self.event("start.callback"); case .failure(let e):self.event("start.failed",["error":self.workspace == nil ? String(describing:e) : "frameworkStart"]);self.stop(true,"startFailed") }
                 if self.stopping {self.progressStop()}
             }
-        } catch { event("preparation.failed",["error":String(describing:error)]);stop(true,"prepare") }
+        } catch { event("preparation.failed",["error":workspace == nil ? String(describing:error) : "preparation"]);stop(true,"prepare") }
     }
     enum Failure: Error { case io, identity, frame, order, budget, digest }
     func listener(_ listener:VZVirtioSocketListener,shouldAcceptNewConnection new:VZVirtioSocketConnection,from socket:VZVirtioSocketDevice)->Bool {
@@ -82,6 +87,26 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
         try send("launch",command,["argv":commands[command-1]])
     }
     func receive(_ data:Data) throws {
+        guard !stopping else { throw Failure.order }
+        if let workspace {
+            do {
+                if let body = try workspace.receive(data) {
+                    guard body.count <= frameByteLimit, output.count + body.count + 4 <= 32768 else { throw Failure.budget }
+                    var size=UInt32(body.count).bigEndian
+                    withUnsafeBytes(of:&size){output.append(contentsOf:$0)};output.append(body)
+                }
+                if workspace.cancelOnChunk && workspace.receiver.acceptedBytes > 0 {
+                    event("workspace.midTransferCancel",["acceptedBytes":workspace.receiver.acceptedBytes])
+                    stop(true,"workspaceCancel");return
+                }
+                if workspace.completed {
+                    workspaceResult=try workspace.receiver.snapshot()
+                    event("workspace.sealed",["files":workspaceResult!.files.count,"sha256":workspaceResult!.sha256])
+                    stop(false,"workspaceComplete")
+                }
+                return
+            } catch { stop(true,"workspaceRejected");throw error }
+        }
         try validateRuntimeFrame(data)
         guard let f=try JSONSerialization.jsonObject(with:data) as? [String:Any],f["v"] as? Int==1,let kind=f["type"] as? String,let id=f["id"] as? Int else {throw Failure.frame}
         if kind=="hello" {
@@ -104,13 +129,17 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
         }
     }
     func ingest(_ bytes:Data) throws {
+        do { try ingestChecked(bytes) }
+        catch { stop(true,"ingressRejected"); throw error }
+    }
+    private func ingestChecked(_ bytes:Data) throws {
         guard !stopping else {throw Failure.order}
-        guard input.count+bytes.count<=16388 else{throw Failure.budget};input.append(bytes)
+        guard bytes.count <= frameByteLimit + 4 - input.count else{throw Failure.budget};input.append(bytes)
         // At most one socket read per turn; total accepted frames and bytes are separately bounded.
         while input.count>=4 {
-            let size=input.prefix(4).reduce(0){($0<<8)|Int($1)};guard size>0,size<=16384 else{throw Failure.frame}
+            let size=input.prefix(4).reduce(0){($0<<8)|Int($1)};guard size>0,size<=frameByteLimit else{throw Failure.frame}
             if input.count<4+size{break}
-            let body=Data(input.dropFirst(4).prefix(size));input.removeFirst(4+size);frames+=1;guard frames<=512 else{throw Failure.budget}
+            let body=Data(input.dropFirst(4).prefix(size));input.removeFirst(4+size);frames+=1;guard frames <= (workspace == nil ? 512 : 16400) else{throw Failure.budget}
             try receive(body);if stopping{return}
         }
     }
@@ -119,21 +148,25 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
         do {
             if let p=console {
                 var b=[UInt8](repeating:0,count:4096);let n=Darwin.read(p.fileHandleForReading.fileDescriptor,&b,b.count)
-                if n>0 && consoleBytes<65536 {consoleBytes+=n;if vendorDisk == nil {event("console",["base64":Data(b.prefix(n)).base64EncodedString()])}}
+                if n>0 && consoleBytes<65536 {consoleBytes+=n;if vendorDisk == nil && workspace == nil {event("console",["base64":Data(b.prefix(n)).base64EncodedString()])}}
             }
             guard let c=connection else{return}
             if !output.isEmpty {
                 let n=output.withUnsafeBytes{Darwin.write(c.fileDescriptor,$0.baseAddress,$0.count)}
                 if n>0{output.removeFirst(n)}else if n<0 && errno != EAGAIN && errno != EINTR{throw Failure.io}
             }
-            var b=[UInt8](repeating:0,count:4096);let n=Darwin.read(c.fileDescriptor,&b,b.count)
+            let remaining = min(4096, frameByteLimit + 4 - input.count)
+            guard remaining > 0 else { throw Failure.budget }
+            var b=[UInt8](repeating:0,count:remaining);let n=Darwin.read(c.fileDescriptor,&b,b.count)
             if n==0{throw Failure.io};if n<0{if errno != EAGAIN && errno != EINTR{throw Failure.io};return}
             try ingest(Data(b.prefix(n)))
-        }catch{event("protocol.failed",["error":String(describing:error)]);stop(true,"protocol")}
+        }catch{event("protocol.failed",["error":workspace == nil ? String(describing:error) : "protocol"]);stop(true,"protocol")}
     }
     func stop(_ failure:Bool,_ reason:String) {
+        if failure { workspaceCancellation.cancel() }
         failed=failed || failure;guard !stopping else{return};stopping=true;stopEnd=now+10
-        device?.removeSocketListener(forPort:4060);listener=nil;connection?.close();connection=nil;output.removeAll();input.removeAll()
+        if failure || workspace?.completed != true { workspace?.receiver.stop();workspaceResult=nil }
+        device?.removeSocketListener(forPort:servicePort);listener=nil;connection?.close();connection=nil;output.removeAll();input.removeAll()
         event("vm.stopping",["reason":reason]);progressStop()
     }
     func progressStop() {
@@ -151,7 +184,21 @@ final class AgentRuntimeProbe: NSObject, VZVirtioSocketListenerDelegate, VZVirtu
             m.stop {error in self.stopPending=false;if error != nil{self.failed=true};self.event("stop.callback");self.progressStop()}
         }
     }
-    func finish(_ code:Int32) {guard !finished else{return};finished=true;exitCode=code;timer?.cancel();for s in signals{s.cancel()};signals=[];event("result",["exitCode":code,"commands":min(command,commands.count),"frames":frames,"outputBytes":outputBytes]);completion.signal()}
+    func finish(_ code:Int32) {
+        guard !finished else{return}
+        finished=true;exitCode=code;timer?.cancel()
+        if code != 0 { workspaceCancellation.cancel() }
+        // VM done is not workspace workflow done: keep cancellation live while
+        // the calling host receives, reviews, and commits the frozen result.
+        if workspace == nil { releaseSignals() }
+        event("result",["exitCode":code,"commands":min(command,commands.count),"frames":frames,"outputBytes":outputBytes]);completion.signal()
+    }
+    private func releaseSignals() {
+        for source in signals { source.cancel() }
+        signals.removeAll()
+        for number in [SIGINT, SIGTERM] { signal(number, SIG_DFL) }
+    }
+    func finishWorkspaceWorkflow() { queue.sync { releaseSignals() } }
     func guestDidStop(_ virtualMachine:VZVirtualMachine){stop(!stopping,"guestStopped")}
     func virtualMachine(_ virtualMachine:VZVirtualMachine,didStopWithError error:Error){stop(true,"frameworkError")}
 }

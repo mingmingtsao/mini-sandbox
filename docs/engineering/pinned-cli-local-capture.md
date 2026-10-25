@@ -21,12 +21,12 @@ Use new private directories outside Git for each output; keep all input files an
 ```sh
 python3 Tools/AgentRuntime/vendor_data.py "$IMMUTABLE_VENDOR_SOURCE" "$NEW_PRIVATE/vendor.raw"
 python3 Tools/AgentRuntime/build.py "$RUNTIME_DOWNLOAD_ROOT" "$DIAGNOSTIC_BUNDLE" "$NEW_IMAGE" --agent-probe
-swiftc Sources/SandboxHost/AgentRuntimeProbe.swift Sources/SandboxHost/RuntimeJSON.swift Tools/AgentRuntime/main.swift -o "$NEW_PRIVATE/host"
-codesign --force --sign - --entitlements scripts/vm-probe.entitlements "$NEW_PRIVATE/host"
-codesign --verify --strict "$NEW_PRIVATE/host"
-python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_NORMAL_SESSION"
-python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_ACTIVE_CANCEL_SESSION" --cancel-active
-python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_START_CANCEL_SESSION" --cancel-start
+python3 Tools/WorkspaceTransfer/build_host.py runtime-probe "$NEW_PRIVATE/runtime-host"
+codesign --force --sign - --entitlements scripts/vm-probe.entitlements "$NEW_PRIVATE/runtime-host/host"
+codesign --verify --strict "$NEW_PRIVATE/runtime-host/host"
+python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/runtime-host/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_NORMAL_SESSION"
+python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/runtime-host/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_ACTIVE_CANCEL_SESSION" --cancel-active
+python3 Tools/AgentRuntime/verify_agent_vm.py "$NEW_PRIVATE/runtime-host/host" "$NEW_IMAGE" "$NEW_PRIVATE/vendor.raw" "$NEW_START_CANCEL_SESSION" --cancel-start
 ```
 
 The builder records the named profile, original and padded vendor sizes/digests, closure hashes, tmpfs budgets and deadlines in `runtime.json`. It includes the reviewed capture source byte-for-byte under `/runtime/capture.py`. The supervisor invokes its original entrypoint in a separate owned process with a readiness-only wrapper, preserves the original 35-second lifetime and applies a 37-second outer capture deadline. This differs from the proposed capture script location in the declaration: `/opt/agent-probe` is reserved for the vendor-only read-only tmpfs. Fixed vendor argv/environment/stdin are unchanged. Version/help use isolated check directories; the actual launch's exact HOME/cwd/tmp are freshly created afterward.

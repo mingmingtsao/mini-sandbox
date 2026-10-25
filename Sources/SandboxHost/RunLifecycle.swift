@@ -204,7 +204,7 @@ public final class RunLifecycle: @unchecked Sendable {
         if owned { try output.prepareAcceptanceLocked() }
         return try lock.withLock {
             let sample = clock.sample()
-            _ = reduce(sample.wall, sample.elapsed)
+            let observation = reduce(sample.wall, sample.elapsed)
             cancelled = drainTerminal()
             guard output.lifecycle === self, output.handle.lifecycle === self,
                   output.handle.installedEpoch == output.generation,
@@ -213,6 +213,14 @@ public final class RunLifecycle: @unchecked Sendable {
                 guard output.scope.runHandle === output.handle else { throw AuthorizationError.wrongRun }
             }
             try validate(output.scope)
+            if let deadline = output.startDeadline {
+                guard let notBefore = output.notBefore else { throw AuthorizationError.wrongRun }
+                guard observation.wallTime >= notBefore else { throw AuthorizationError.grantNotYetValid }
+                // A permission reply grants a future guest tool action. Every
+                // concrete send, including a partial/EAGAIN retry, must remain
+                // inside the exact approval lifetime, not just the run lifetime.
+                guard observation.effectiveTime < deadline else { throw AuthorizationError.actionExpired }
+            }
             try Task.checkCancellation()
             guard owned else { return false }
             return try output.acceptLocked()

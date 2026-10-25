@@ -20,8 +20,8 @@ let package = Package(
         .executable(name: "WorkspaceChecks", targets: ["WorkspaceChecks"]),
     ],
     targets: [
-        .executableTarget(name: "RuntimeReceiveChecks", dependencies: ["SandboxHost"], path: "Tests/AgentRuntimeTests", exclude: ["base_snapshot_check.py", "cli_ancestry.py", "vendor_host_check.py", "test_base_snapshot.py", "test_cancel_classifier.py", "test_image.py", "test_protocol.py", "test_supervisor.py", "test_vendor_data.py"], sources: ["RuntimeReceiveTests.swift", "RuntimeJSONChecks.swift", "RuntimeStateChecks.swift"]),
         .executableTarget(name: "BusinessIngressChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/BusinessIngressChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
+        .executableTarget(name: "RuntimeReceiveChecks", dependencies: ["SandboxHost"], path: "Tests/AgentRuntimeTests", exclude: ["base_snapshot_check.py", "cli_ancestry.py", "vendor_host_check.py", "test_base_snapshot.py", "test_cancel_classifier.py", "test_image.py", "test_protocol.py", "test_supervisor.py", "test_vendor_data.py"], sources: ["RuntimeReceiveTests.swift", "RuntimeJSONChecks.swift", "RuntimeStateChecks.swift"]),
         .executableTarget(name: "WorkspaceTransferChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/WorkspaceTransferChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .executableTarget(name: "ExecutionBoundaryChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ExecutionBoundaryChecks", exclude: ["loopback.py"]),
         .target(name: "SharedClockSupport", dependencies: ["SandboxHost"], path: "Tests/SharedClockSupport"),
@@ -34,7 +34,7 @@ let package = Package(
         .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
         .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts", "SharedClockSupport"], path: "Tests/HostIntegrationChecks"),
         .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks"),
-        .executableTarget(name: "MCPGatewayChecks", dependencies: ["SandboxHost", "SandboxContracts", "SharedClockSupport"], path: "Tests/MCPGatewayChecks"),
+        .executableTarget(name: "MCPGatewayChecks", dependencies: ["SandboxHost", "SandboxContracts", "SharedClockSupport"], path: "Tests/MCPGatewayChecks", exclude: ["claude_loopback.py"]),
         .target(name: "SandboxWorkbench", dependencies: ["SandboxHost", "SandboxContracts"]),
         .executableTarget(name: "WorkbenchChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts"], path: "Tests/WorkbenchChecks"),
         .executableTarget(name: "VMChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/VMChecks", exclude: ["test_build_vm_probe.py", "live_lifecycle.py"]),

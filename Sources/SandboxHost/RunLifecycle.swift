@@ -34,8 +34,9 @@ enum RunPreparedEffect: Sendable {
         case .model(let operation):
             guard scope.connectionID != nil else { throw AuthorizationError.connectionNotGranted }
             try operation.validateVMOwner(scope: scope, lifecycle: lifecycle)
-        case .mcp:
+        case .mcp(let operation):
             guard scope.connectionID != nil else { throw AuthorizationError.connectionNotGranted }
+            try operation.validateVMOwner(scope: scope, lifecycle: lifecycle)
         case .businessVM(let operation):
             guard scope.connectionID == nil, scope.runHandle === operation.handle,
                   operation.handle.lifecycle === lifecycle, operation.generation == scope.generation else {

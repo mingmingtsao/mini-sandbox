@@ -151,6 +151,15 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             try check(withMetadata.root == ModelJSON.parse(Data(metadata.utf8)) && withMetadata.input == tool.input,
                 "SDK suggestions retained as metadata without changing one-action input")
             try rejected("unknown permission semantics") { _ = try CLIPermissionRequest.parse(Data(permission.replacingOccurrences(of: "\"subtype\":", with: "\"updatedPermissions\":[],\"subtype\":").utf8)) }
+            let mcpPermission = #"{"type":"control_request","request_id":"mcp-request","request":{"subtype":"can_use_tool","tool_use_id":"mcp-1","tool_name":"mcp__sandbox__repo_read","input":{"repo":"A"},"mcp_server":{"name":"sandbox","source":"dynamic"},"server_policy_ask_only":true}}"#
+            let mcp = try CLIPermissionRequest.parse(Data(mcpPermission.utf8))
+            try check(mcp.service == "mcp" && mcp.resource == "A" && mcp.operation == "read", "MCP permission resolves separate service/resource")
+            for changed in [mcpPermission.replacingOccurrences(of: "\"source\":\"dynamic\"", with: "\"source\":\"untrusted\""),
+                            mcpPermission.replacingOccurrences(of: "\"server_policy_ask_only\":true", with: "\"server_policy_ask_only\":false"),
+                            mcpPermission.replacingOccurrences(of: "mcp__sandbox__repo_read", with: "mcp__other__repo_read"),
+                            mcpPermission.replacingOccurrences(of: "\"repo\":\"A\"", with: "\"repo\":\"A\",\"url\":\"https://example.invalid\"")] {
+                try rejected("unsupported MCP permission metadata/input") { _ = try CLIPermissionRequest.parse(Data(changed.utf8)) }
+            }
             if let index = CommandLine.arguments.firstIndex(of: "--captured-permission"), index + 1 < CommandLine.arguments.count {
                 let captured = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
                 let parsed = try CLIPermissionRequest.parse(captured)

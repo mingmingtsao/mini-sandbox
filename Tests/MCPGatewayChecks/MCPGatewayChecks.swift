@@ -143,10 +143,11 @@ func discover(_ c: Context, name: String) async throws {
 @main struct Checks {
     static func main() async {
         let selector = Array(CommandLine.arguments.dropFirst())
-        guard selector.isEmpty || selector == ["--independent"] || selector == ["--transport-unit"] else { output("invalid selector"); exit(64) }
+        guard selector.isEmpty || selector == ["--independent"] || selector == ["--transport-unit"] || selector == ["--claude-native"] else { output("invalid selector"); exit(64) }
         do {
             if selector == ["--transport-unit"] { try await transportUnitChecks(); exit(0) }
             guard let line = readLine(), let config = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let port = config["port"] as? Int, let token = config["token"] as? String, let p = UInt16(exactly: port) else { throw Failure(message: "loopback driver input required") }
+            if selector == ["--claude-native"] { try await claudeClientChecks(p, token); exit(0) }
             if selector == ["--independent"] {
                 try await independentChecks(p, token)
                 output("PASS MCP independent scope; default suite not run here"); exit(0)

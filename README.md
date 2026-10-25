@@ -13,6 +13,12 @@ Agent 在没有网卡、没有宿主共享目录的 Linux 虚拟机里修改项�
 
 ---
 
+## 使用演示
+
+[▶ 观看完整使用视频（8 分 13 秒）](http://tnhkeg6ps.hd-bkt.clouddn.com/MiniSandbox-Full-Walkthrough.mp4)
+
+展示项目配置、逐次审批、测试失败后的修复、结果审阅与导出，以及 Stop 操作。
+
 ## 为什么需要它
 
 让 AI Agent 直接在本机运行，意味着它能读取你的全部文件、拿到你的 API key、访问任意网络。mini-sandbox 把这些能力拆开，由宿主逐项控制：

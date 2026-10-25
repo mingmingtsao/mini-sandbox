@@ -34,9 +34,18 @@ func expectPresentation(_ value: @autoclosure () throws -> Bool, _ message: Stri
     func image(in view: NSView? = nil) throws -> CGImage {
         let view = view ?? host
         view.layoutSubtreeIfNeeded()
-        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        // Render at a fixed 2x density: headless CI hosts have a 1x backing
+        // store, where small caption text is too coarse for reliable OCR.
+        let scale: CGFloat = 2
+        guard
+            let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int((view.bounds.width * scale).rounded(.up)),
+                pixelsHigh: Int((view.bounds.height * scale).rounded(.up)), bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else {
             throw PresentationFailure(message: "no render buffer")
         }
+        bitmap.size = view.bounds.size
         view.cacheDisplay(in: view.bounds, to: bitmap)
         guard let image = bitmap.cgImage else { throw PresentationFailure(message: "no rendered pixels") }
         guard

@@ -59,10 +59,12 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
       - if: matrix.language == 'go'
         name: Build the Go guest probe and protocol tests
+        # The CodeQL Go tracer follows the working directory, not `go -C`.
         run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -C Tools/GuestFixture -o "$RUNNER_TEMP/guest-probe" ./cmd/probe
-          go build -C Tools/GuestFixture ./...
-          go test -C Tests/GuestFixtureTests -c -o "$RUNNER_TEMP/guest-protocol.test" ./...
+          cd "$GITHUB_WORKSPACE/Tools/GuestFixture"
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
+          cd "$GITHUB_WORKSPACE/Tests/GuestFixtureTests"
+          go test -c -o "$RUNNER_TEMP/guest-protocol.test" .
       - if: matrix.language == 'swift'
         name: Build all Swift targets
         run: swift build

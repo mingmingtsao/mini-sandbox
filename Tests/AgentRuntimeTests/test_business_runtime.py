@@ -35,6 +35,13 @@ def frames(files):
 
 
 class BusinessRuntimeTests(unittest.TestCase):
+    def test_business_shell_is_explicit_inside_the_replaced_environment(self):
+        plan = json.loads((ROOT / 'Tools/AgentProtocolProbe/claude-business-runtime-v1.json').read_text())
+        self.assertEqual(plan['environment_mode'], 'replace-not-inherit')
+        self.assertEqual(plan['environment']['SHELL'], '/bin/bash')
+        self.assertEqual(plan['environment']['PATH'], '/usr/bin:/bin')
+        self.assertNotIn('--dangerously-skip-permissions', plan['argv'])
+
     def test_start_requires_exact_typed_host_shape_and_bounded_task(self):
         valid = dict(v=1, type='start', task='Read the project and run its tests.', mcp=False)
         self.assertEqual(cli.validate_start(valid), valid)

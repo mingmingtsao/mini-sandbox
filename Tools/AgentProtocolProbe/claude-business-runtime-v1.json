@@ -9,6 +9,7 @@
     "HOME": "/run/agent-probe/business-home",
     "TMPDIR": "/run/agent-probe/business-tmp",
     "PATH": "/usr/bin:/bin",
+    "SHELL": "/bin/bash",
     "LANG": "C.UTF-8",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:4061",
     "ANTHROPIC_AUTH_TOKEN": "mini-sandbox-local-only",

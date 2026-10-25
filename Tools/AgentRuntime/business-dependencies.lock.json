@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "architecture": "aarch64",
+  "indexSHA256": "2822e83c6dc363b1e0997a86a9c855484d2760e11d8c08da46d51e21f882472b",
+  "indexURL": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/APKINDEX.tar.gz",
+  "packages": [
+    {
+      "name": "bash",
+      "version": "5.3.9-r1",
+      "file": "bash-5.3.9-r1.apk",
+      "bytes": 542084,
+      "sha256": "95f4f976bdf2f4ca18ff41c32916eb6d7b12a0dae12504d55d04427460d6542f",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/bash-5.3.9-r1.apk",
+      "license": "GPL-3.0-or-later",
+      "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/1522c3193610902d8493f9790a2755c11f21f26d/main/bash",
+      "depends": "/bin/sh so:libc.musl-aarch64.so.1 so:libreadline.so.8",
+      "provides": "cmd:bash=5.3.9-r1",
+      "apkIndexControlChecksum": "Q1Tmocg1FubGlvWQ6+OAUIG9yLWko=",
+      "apkDataSHA256": "bfbd96492477bb776613589e4de2bfde5f820473b8e306f78939862edc6cb19a"
+    }
+  ]
+}

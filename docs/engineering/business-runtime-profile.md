@@ -8,6 +8,13 @@ musl executable through the verified read-only vendor disk; it does not include
 the diagnostic fixture's `task.py`, script edit, static capture responder or
 fixed "Do not run tools" prompt.
 
+The replaced CLI environment explicitly selects `/bin/bash`. The business-only
+dependency lock adds Bash 5.3.9-r1 to the existing 44-package cache. Its aarch64
+APK is pinned by full SHA-256, the already pinned Alpine index's control checksum
+and its data-section checksum; existing musl/readline dependencies are reused.
+BusyBox `/bin/sh` alone was rejected by the real CLI's Bash tool and is not
+claimed as sufficient. No package install script is executed by the builder.
+
 The host sends a bounded task and optional MCP selection over control port 4060.
 The guest then receives the selected project through the existing strict
 workspace transfer protocol on port 4062. It starts the actual CLI using its

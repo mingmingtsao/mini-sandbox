@@ -27,6 +27,14 @@ def main():
     kernel,base_entries=validated_base(base)
     entries={n:(v['mode'],v['data'],5 if n=='dev/console' else 1 if n=='dev/null' else 0,1 if n=='dev/console' else 3 if n=='dev/null' else 0) for n,v in base_entries.items()}
     lock=json.loads(image.read_regular(pathlib.Path(__file__).parent/'dependencies.lock.json',1024*1024))
+    if business:
+        extra=json.loads(image.read_regular(pathlib.Path(__file__).parent/'business-dependencies.lock.json',65536))
+        if extra['schema']!=1 or extra['architecture']!=lock['architecture'] or extra['indexSHA256']!=lock['indexSHA256']:
+            raise ValueError('business dependency index mismatch')
+        names={package['name'] for package in lock['packages']}
+        for package in extra['packages']:
+            if package['name'] in names:raise ValueError('duplicate business dependency')
+            names.add(package['name']);lock['packages'].append(package)
     kernel_entries=None
     for package in lock['packages']:
         data=image.legacy.read_source(root/'downloads'/package['file'],package['sha256'],64*1024*1024)

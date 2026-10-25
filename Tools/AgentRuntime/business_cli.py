@@ -291,8 +291,9 @@ def main():
         # an additional seal; the host still treats all guest data as untrusted.
         subprocess.run(['/bin/busybox', 'mount', '-o', 'remount,ro', '/work'], check=True,
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-        files = frozen_result(); send_workspace(workspace, files)
+        files = frozen_result()
         control.send(dict(v=1, type='finished', workspaceSHA256=wire.treehash(files), **result))
+        send_workspace(workspace, files)
         # Host closes the channels and actually stops the machine before adoption.
         try:
             control.exact(1)

@@ -33,7 +33,8 @@ def main():
     if not sources or not objects:
         raise SystemExit("missing concrete host/contract build inputs")
     entry_flags = [] if sys.argv[1] == "runtime-probe" else ["-parse-as-library"]
-    command = ["swiftc", *entry_flags, "-package-name", "MiniSandbox", "-swift-version", "6", "-I", str(binary_dir / "Modules"), *map(str, sources), *map(str, objects), "-o", str(out / "host")]
+    fixture_flags = ["-DSANDBOX_TEST_FIXTURES", "-enable-testing"] if sys.argv[1] == "business-probe" else []
+    command = ["swiftc", *entry_flags, *fixture_flags, "-package-name", "MiniSandbox", "-swift-version", "6", "-I", str(binary_dir / "Modules"), *map(str, sources), *map(str, objects), "-o", str(out / "host")]
     print(json.dumps({"command": command}), flush=True)
     subprocess.run(command, cwd=root, check=True)
     hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}

@@ -17,7 +17,10 @@ An unimplemented service is closed by its host consumer.
 Only the actual registered listener and `VZVirtioSocketDevice` can create a
 `BusinessVMConnection`. Its run, lifecycle, epoch, runtime, service and channel
 identity come from the host. At most eight channels and two model/MCP channels
-per service are retained. The native response consumer takes one owned
+per service (also bounded by the grant concurrency) are retained. Each session
+admits one control/workspace channel and at most 64 channels for each other
+service. Outbound reservations never refund: one control/permission response,
+or at most 8,192 workspace frames and 32 MiB per workspace channel. The native response consumer takes one owned
 duplicate, then retires the original on the VM queue after terminal cleanup.
 Raw-fd diagnostic APIs do not gain VZ authority.
 
@@ -26,14 +29,18 @@ workspace frames use a concrete immutable writer. Writer and connection
 ownership precede the lifecycle fence; the fence samples trusted time after
 those waits, validates the actual run/generation/scope, then invokes one bounded
 nonblocking send. Every partial/EAGAIN/EINTR retry enters again. Permission
-frames additionally require a connection scope and action identity from their
-trusted policy/approval producer. The writer is not itself permission policy.
+frames additionally require a connection scope, action identity, and immutable
+not-before/action deadline from their trusted policy/approval producer. The
+lifecycle must check these times at its final clock fence on every send,
+including partial retries. The writer is not itself permission policy.
 
 Cancellation terminalizes the run synchronously, then removes listeners and
 retires channels on the VM queue. Start completion rechecks closing and
 generation before announcing availability. `waitUntilStopped` reports actual
 VZ stopped state, settled start/stop callbacks, and session-disk removal
-separately. A teardown timeout reports failure and retains framework resources
+separately, with the concrete runtime ID, run ID and installed epoch. The report
+also distinguishes actual VZ start invocation and cancellation while its start
+callback is pending. Its initializer is private to the VM owner file. A teardown timeout reports failure and retains framework resources
 while callbacks remain pending; it never reports a fabricated stopped state.
 Natural result completion stops the VM before the coordinator adopts its
 immutable received tree. It does not revive an expired or stopped run.

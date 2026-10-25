@@ -32,7 +32,8 @@ def main():
     parser=Parser(); active=None; selector=selectors.DefaultSelector();selector.register(s,selectors.EVENT_READ,'control')
     def send(kind,id,**kw):s.sendall(encode(dict(v=1,type=kind,id=id,**kw)))
     send('hello',0,kernel=open('/proc/sys/kernel/osrelease').read().strip(),interfaces=os.listdir('/sys/class/net'),workdir='/work/project',fresh=not os.path.exists('/work/session-marker'))
-    last=0;deadline=time.monotonic()+60;total=0;cancelled=False
+    agent_profile=os.path.exists('/runtime/profile.json')
+    last=0;deadline=time.monotonic()+(75 if agent_profile else 60);total=0;cancelled=False
     try:
         while time.monotonic()<deadline:
             for key,_ in selector.select(0.05):
@@ -52,7 +53,7 @@ def main():
                             if set(frame)!={'v','type','id','argv'}:raise ValueError('launch fields')
                             last=frame['id'];cancelled=False
                             active=subprocess.Popen(argv,cwd='/work/project',env={'PATH':'/usr/bin:/bin','HOME':'/work','TMPDIR':'/work/tmp','PYTHONDONTWRITEBYTECODE':'1'},stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,preexec_fn=child_limits)
-                            command_end=time.monotonic()+15
+                            command_end=time.monotonic()+(55 if agent_profile else 15)
                             for stream,kind in ((active.stdout,'stdout'),(active.stderr,'stderr')):
                                 os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ,kind)
                         else:raise ValueError('unexpected control')

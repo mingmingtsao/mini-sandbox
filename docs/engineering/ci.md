@@ -1,6 +1,6 @@
 # 持续集成
 
-`.github/workflows/ci.yml` 在 Pull Request（包括 Draft）及 `main` 的 push 上执行，也提供手动触发入口。首次工作流合入默认分支前，手动入口可能尚不可用；历史 PR 不会仅因新增工作流而自动补跑，需更新到包含该工作流的分支并触发新的 PR 事件。
+[`CI` 工作流](../../.github/workflows/ci.yml) 在 Pull Request（包括 Draft）及 `main` 的 push 上执行，也提供 [手动触发入口](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml)。README 顶部的状态徽章绑定 `main`，点击可查看该分支的运行记录。历史 PR 不会仅因新增工作流而自动补跑，需更新到包含该工作流的分支并触发新的 PR 事件。
 
 ## 检查范围
 
@@ -8,10 +8,14 @@
 |---|---|---|
 | Workflow and Python syntax | GitHub 托管 Ubuntu 24.04 | 固定版本 actionlint；`scripts`、`Tests` 的 Python 语法 |
 | Python safety and host fixtures | GitHub 托管 Ubuntu 24.04 / Python 3.13 | 打包路径与所有权回归；仅回环监听、使用假资源的 OAuth/MCP fixtures |
-| macOS build, contracts and packaging | GitHub 托管 macOS 15 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；Release App 构建、ad-hoc 签名及严格签名验证 |
+| macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；Release App 构建、ad-hoc 签名及严格签名验证 |
 | CI | GitHub 托管 Ubuntu 24.04 | 汇总以上结果；任何失败、跳过或取消都不能被当作通过 |
 
-`ContractChecks` 是当前契约测试入口；没有使用不适用的 `swift test`。当前默认分支没有 Go module，因此不添加零测试的 Go job。后续模块合入时应显式补充其测试入口，不能把本工作流的绿色结果外推到尚未接入的测试套件。
+`ContractChecks` 是 CI 当前实际执行的 Swift 检查入口；其他 Swift 检查目标会被编译，但不会因此自动运行。`AuthorizationChecks`、`HostIntegrationChecks`、`MCPGatewayChecks`、`WorkbenchChecks`、`WorkspaceTransferChecks` 等组件检查仍需按各自文档显式执行。仓库使用这些可执行入口，而非 `swift test`。
+
+仓库已包含 `Tools/GuestFixture/go.mod`，但当前工作流尚未接入 Go guest 协议测试、guest 镜像构建或 `Tools` 下的完整测试集合。绿色结果仅覆盖上表中的项目。
+
+macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift 工具链保持一致。[2026-10-25 的主线运行](https://github.com/mingmingtsao/mini-sandbox/actions/runs/40199585315) 已通过全部 CI 检查，日志记录 macOS 26.6.2、Xcode 26.6、Swift 6.3.3；最新结果以徽章及运行页面为准。
 
 ## 权限与运行边界
 

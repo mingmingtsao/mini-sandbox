@@ -97,7 +97,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual((app.stat().st_mode & 0o777), 0o755, "App bundle must be traversable by macOS launch services")
         self.assertEqual((app.parent.stat().st_mode & 0o777), 0o755)
         first_marker = json.loads(marker.read_text())
-        self.assertEqual(first_marker["project_root"], str(self.root))
+        self.assertEqual(first_marker["project_root"], str(self.root.resolve()))
         self.assertEqual(first_marker["output"], str(app))
 
         self.binary.write_bytes(b"replacement executable")

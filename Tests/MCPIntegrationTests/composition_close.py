@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Composition MCP close/settlement; original authenticated loopback handler."""
 import json
+import argparse
 from pathlib import Path
 import subprocess
 import threading
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NAMES = {"queued", "running", "completion-failure", "unknown-failure"}
 
 
-def run():
+def run(binary):
     with running_fixture() as fixture:
         token = mint(fixture)
         mode = {"hold": False}
@@ -33,7 +34,7 @@ def run():
                 super()._mcp_result(request_id, result)
 
         fixture.resource.server.RequestHandlerClass = Boundary
-        process = subprocess.Popen([str(ROOT / ".build/debug/WorkbenchChecks"), "--composition-mcp"],
+        process = subprocess.Popen([str(binary), "--composition-mcp"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=ROOT)
         assert process.stdin is not None and process.stdout is not None
         seen, cases, failed = set(), set(), False
@@ -91,4 +92,6 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=ROOT / ".build/debug/WorkbenchChecks")
+    run(parser.parse_args().binary)

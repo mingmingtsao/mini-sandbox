@@ -32,6 +32,12 @@ func additionalChecks(_ fixture: String, _ source: String) throws {
     }
     test("DENY-only ancestor permitted unchanged") {
         let p = fixture + "/deny"; try mkdir(p); try fixtureACL(p, "everyone deny delete")
+        defer {
+            if let empty = acl_init(0) {
+                _ = acl_set_file(p, ACL_TYPE_EXTENDED, empty)
+                acl_free(UnsafeMutableRawPointer(empty))
+            }
+        }
         let before = try aclText(p)
         _ = try WorkspaceStore(newRoot: p + "/new")
         try check(try aclText(p) == before, "ancestor ACL untouched")

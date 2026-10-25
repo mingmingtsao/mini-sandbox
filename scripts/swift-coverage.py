@@ -1,16 +1,50 @@
 #!/usr/bin/env python3
-"""Measure Sources/ Swift line coverage from the existing CI contract checks."""
+"""Measure all Sources/ Swift files using the offline CI regression suites."""
 import argparse
 import html
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKS = ("ContractChecks",)
+CHECKS = (
+    "ContractChecks", "AuthorizationChecks", "ModelTransportChecks",
+    "HostIntegrationChecks", "StructuredModelChecks", "WorkbenchChecks",
+    "SharedAuthorityChecks", "WorkspaceChecks", "WorkspaceTransferChecks", "VMChecks", "RuntimeReceiveChecks",
+    "ExecutionBoundaryChecks", "ExecutionBoundaryChecks --final-effect-clock",
+    "ExecutionBoundaryChecks --native-repairs", "ExecutionBoundaryChecks --native-response",
+    "MCPGatewayChecks --transport-unit",
+    "MCPGatewayChecks (loopback)", "MCPGatewayChecks (independent loopback)",
+    "ExecutionBoundaryChecks --mcp (loopback)",
+    "ExecutionBoundaryChecks --mcp-transaction (loopback)",
+    "WorkbenchChecks --composition-mcp (loopback)",
+    "MiniSandbox --diagnostics-json (validated)",
+)
+
+
+def check_commands(binary_dir):
+    for name in CHECKS:
+        if name.endswith("(validated)"):
+            yield [sys.executable, str(ROOT / "Tests/DiagnosticsTests/check_diagnostics.py"),
+                   "--binary", str(binary_dir / "MiniSandbox")]
+        elif "loopback)" not in name:
+            binary, *args = name.split()
+            yield [str(binary_dir / binary), *args]
+        elif name.startswith("MCPGatewayChecks"):
+            yield [sys.executable, str(ROOT / "Tests/MCPIntegrationTests/test_loopback.py"),
+                   "--binary", str(binary_dir / "MCPGatewayChecks"), "--scope",
+                   "independent" if "independent" in name else "default"]
+        elif name.startswith("ExecutionBoundaryChecks"):
+            args = ["--transaction"] if "transaction" in name else []
+            yield [sys.executable, str(ROOT / "Tests/ExecutionBoundaryChecks/loopback.py"),
+                   "--binary", str(binary_dir / "ExecutionBoundaryChecks"), *args]
+        else:
+            yield [sys.executable, str(ROOT / "Tests/MCPIntegrationTests/composition_close.py"),
+                   "--binary", str(binary_dir / "WorkbenchChecks")]
 
 
 def source_totals(export, root, sources):
@@ -84,7 +118,7 @@ def run(args):
         subprocess.run(build, cwd=ROOT, check=True)
     binary_dir = Path(subprocess.check_output(build + ["--show-bin-path"], cwd=ROOT, text=True).strip())
     sources = sorted((ROOT / "Sources").rglob("*.swift"))
-    # Load every product source object, including modules not linked by ContractChecks.
+    # Load every product source object, including modules not linked by the checks.
     objects = [binary_dir / (source.relative_to(ROOT / "Sources").parts[0] + ".build") /
                (source.name + ".o") for source in sources]
     for obj in objects:
@@ -93,20 +127,23 @@ def run(args):
     output.mkdir(parents=True, exist_ok=True)
     # A fresh profile directory prevents old test executions from inflating coverage.
     with tempfile.TemporaryDirectory(prefix="swift-coverage-") as temp:
-        profile_dir = Path(temp)
+        profile_dir = Path(temp).resolve()
         env = dict(os.environ, LLVM_PROFILE_FILE=str(profile_dir / "%m-%p.profraw"))
-        for name in CHECKS:
-            subprocess.run([str(binary_dir / name)], cwd=ROOT, env=env, check=True, timeout=120)
+        env["TMPDIR"] = str(profile_dir)
+        for name, command in zip(CHECKS, check_commands(binary_dir), strict=True):
+            print(f"Running {name}", flush=True)
+            subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=120)
         profiles = sorted(profile_dir.glob("*.profraw"))
         if not profiles:
             raise ValueError("checks produced no raw coverage profiles")
         merged = profile_dir / "merged.profdata"
         subprocess.run(["xcrun", "llvm-profdata", "merge", "-sparse", *map(str, profiles),
                         "-o", str(merged)], check=True)
-        command = ["xcrun", "llvm-cov", "export", "-summary-only", f"-instr-profile={merged}", str(objects[0])]
+        command = ["xcrun", "llvm-cov", "export", f"-instr-profile={merged}", str(objects[0])]
         for obj in objects[1:]:
             command += ["-object", str(obj)]
         exported = json.loads(subprocess.check_output(command, text=True))
+        (output / "llvm.json").write_text(json.dumps(exported) + "\n")
     totals = source_totals(exported, ROOT, sources)
     commit = os.environ.get("GITHUB_SHA") or subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()

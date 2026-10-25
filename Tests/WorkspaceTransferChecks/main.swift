@@ -89,7 +89,7 @@ func framed(_ body:Data) -> Data {var size=UInt32(body.count).bigEndian;var resu
     let stopped=WorkspaceTransferReceiver();try stopped.receive(messages[0]);try stopped.receive(messages[1]);try stopped.receive(messages[2]);stopped.stop()
     do {try stopped.receive(messages[3]);throw NSError(domain:"stopped",code:1)} catch WorkspaceTransferError.rejected {}
     pass("stop clears partial")
-    let root=ProcessInfo.processInfo.environment["TMPDIR"]!+"/workspace-transfer-check-"+UUID().uuidString
+    let root=URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"]!).appendingPathComponent("workspace-transfer-check-"+UUID().uuidString).path
     try check(mkdir(root,0o700)==0,"mkdir fixture")
     try check(mkdir(root+"/source",0o700)==0,"mkdir source")
     try check(mkdir(root+"/source/empty",0o700)==0,"mkdir empty")

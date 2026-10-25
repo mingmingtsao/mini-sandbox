@@ -54,9 +54,9 @@ python3 -m unittest discover -s Tests/APITests -v
 python3 -m unittest discover -s Tests/PackagingTests -v
 ```
 
-[GitHub Actions](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml) 在 PR、`main` push 和手动触发时运行。当前包含 Python 安全回归、回环 OAuth/MCP fixtures、全部 Debug 目标编译、公共契约/API 检查及 Release App 打包和严格签名验证；汇总检查名为 `CI`。
+[GitHub Actions](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml) 在 PR、`main` push 和手动触发时运行。当前包含全部离线 Swift 检查、回环 OAuth/MCP 集成、Python 安全回归、Go guest 协议竞态检查及 ARM64 编译、公共 API/CLI 边界及 Release App 打包和严格签名验证；汇总检查名为 `CI`。
 
-CI 徽章显示 `main` 的构建状态；覆盖率徽章显示最近成功的主线 CI 中，现有 `ContractChecks` 对 `Sources/**/*.swift` 的实际行覆盖率，未执行的源码也计入分母。点击覆盖率徽章可查看每个文件的明细及对应提交。该数值不包含 Python、Go 或 VM/GUI 验收；完整口径见 [覆盖率说明](docs/engineering/coverage.md)。
+CI 徽章显示 `main` 的构建状态；覆盖率徽章显示最近成功的主线 CI 中，离线检查对 `Sources/**/*.swift` 的实际行覆盖率，未执行的源码也计入分母。点击覆盖率徽章可查看每个文件的明细及对应提交。该数值不包含 Python、Go 或 VM/GUI 验收；完整口径见 [覆盖率说明](docs/engineering/coverage.md)。
 
 精确 CI 范围及复现命令见 [持续集成说明](docs/engineering/ci.md)；其他组件检查入口见相应工程文档。
 

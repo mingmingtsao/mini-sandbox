@@ -22,6 +22,10 @@ open dist/MiniSandbox.app
 
 本地打包默认使用 ad-hoc 签名，不代表 Developer ID 分发签名或已公证。可通过 `--sign-identity` 指定已安装身份；公证与分发验收尚未接入。
 
+## 持续集成
+
+Pull Request 和 `main` push 会运行 Python 安全回归、回环 OAuth/MCP fixtures、macOS 构建、公共契约/API 检查及 Release App ad-hoc 签名验证。工作流只使用无产品凭据的 GitHub 托管 runner；汇总检查名为 `CI`。覆盖范围与本地复现见 [持续集成说明](docs/engineering/ci.md)。这不替代真实 VM、GUI、Keychain 或 Agent 主链验收。
+
 ## 模块
 
 - `SandboxContracts`：不可变运行快照、精确资源范围、拒绝优先的纯范围检查和动作参数绑定。

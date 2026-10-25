@@ -128,6 +128,11 @@ func testGatewayPositive() async throws {
             exit(64)
         }
         let checks: [(String, @Sendable () async throws -> Void)] = [
+            ("shared expiry is visible before authority audit returns", testSharedExpiryBeforeAuditReturn),
+            ("shared expiry denial audit pulse", { try await testSharedModelExpiry(path: "deny") }),
+            ("shared expiry intent audit pulse", { try await testSharedModelExpiry(path: "intent") }),
+            ("shared expiry completion audit pulse", { try await testSharedModelExpiry(path: "completion") }),
+            ("shared expiry stream completion audit pulse", { try await testSharedModelExpiry(path: "completion", streaming: true) }),
             ("pre-credential deadline sample observes run expiry", { try await testStartGateRunExpiry(postPreparation: false) }),
             ("post-preparation deadline sample observes run expiry", { try await testStartGateRunExpiry(postPreparation: true) }),
             ("pre-credential not-yet-valid sample is nonterminal", { try await testStartGateRunExpiry(postPreparation: false, notYetValid: true) }),

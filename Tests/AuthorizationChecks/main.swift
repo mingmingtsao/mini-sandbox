@@ -1,4 +1,5 @@
 import Foundation
+import SharedClockSupport
 import SandboxContracts
 import SandboxHost
 
@@ -38,7 +39,9 @@ final class TestClock: @unchecked Sendable {
             ("grant digest canonical reconstruction", testCanonicalGrantDigest),
             ("grant digest covers every field", testGrantDigestFieldCoverage),
             ("caller Data mutation preserves proposal bytes", testCallerDataMutation)
-        ]
+        ] + sharedExpiryPaths.map { path, position in
+            ("shared expiry observation " + path, { try await testSharedExpiry(path: path, position: position) })
+        }
         var failures = 0
         for (name, test) in tests {
             do {
@@ -468,4 +471,60 @@ final class TestClock: @unchecked Sendable {
     }
 
     enum CheckFailure: Error { case message(String); init(_ message: String) { self = .message(message) } }
+}
+
+/// Host-owned clock: one expiry observation followed immediately by rollback.
+typealias AuthorityPulseClock = SharedHostClock
+
+extension AuthorizationChecks {
+    static let sharedExpiryPaths: [(String, Int)] = [
+        ("propose", 1), ("approve", 1), ("deny", 1), ("consume", 1),
+        ("intent", 2), ("completion", 1), ("reject", 2), ("diagnostic", 1)
+    ]
+    static func testSharedExpiry(path: String, position: Int) async throws {
+        let clock = AuthorityPulseClock(), sink = RecordingSink(), id = UUID()
+        let scope = try ResourceScope(service: "files", resource: "docs/pulse", operation: "read")
+        let grant = try makeGrant(runID: UUID(), now: clock.base, connectionID: id, scope: scope, expiresIn: 900)
+        let authority = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let handle = try await authority.install(grant: grant)
+        let binding = try makeBinding(grant: grant, connectionID: id, scope: scope)
+        let a = try await authority.propose(handle: handle, binding: binding, display: "A")
+        let b = try await authority.propose(handle: handle, binding: binding, display: "B")
+        let approvedB = try await authority.hostApprove(handle: handle, actionID: b.actionID, nonce: b.nonce)
+        var approvedA: ApprovedAction?
+        var ticketA: DispatchTicket?
+        if ["consume", "intent", "completion"].contains(path) {
+            approvedA = try await authority.hostApprove(handle: handle, actionID: a.actionID, nonce: a.nonce)
+        }
+        if path == "completion" { ticketA = try await authority.consume(handle: handle, approved: approvedA!) }
+        clock.arm(position)
+        var observedError: AuthorizationError?
+        do {
+            switch path {
+            case "propose": _ = try await authority.propose(handle: handle, binding: binding, display: "pulse")
+            case "approve": _ = try await authority.hostApprove(handle: handle, actionID: a.actionID, nonce: a.nonce)
+            case "deny": try await authority.deny(handle: handle, actionID: a.actionID)
+            case "consume", "intent": ticketA = try await authority.consume(handle: handle, approved: approvedA!)
+            case "completion": try await authority.complete(handle: handle, ticket: ticketA!, outcome: .unknown)
+            case "reject":
+                let wrong = try ActionBinding(runID: UUID(), epoch: grant.epoch, grantDigest: binding.grantDigest, connectionID: id, operation: scope.operation, schemaDigest: binding.schemaDigest, resolvedResource: scope.resource, canonicalRequest: binding.canonicalRequest)
+                _ = try await authority.propose(handle: handle, binding: wrong, display: "reject")
+            default: try await authority.recordGuestDiagnostic(runID: grant.runID, operation: "read", resourceSummary: "docs/pulse", message: "untrusted text is not authority")
+            }
+        } catch let error as AuthorizationError { observedError = error }
+        let events = sink.events
+        var bConsumed = false
+        do { _ = try await authority.consume(handle: handle, approved: approvedB); bConsumed = true }
+        catch let error as AuthorizationError { try require(error == .runRevoked || error == .grantExpired, "terminal rejection is truthful") }
+        print("AUTH_PULSE path=\(path) fired=\(clock.observed) rollback_B_consumed=\(bConsumed) audit_failed=\(observedError == .auditFailed) network_attempted=false")
+        try require(clock.observed, "real sample anchor reached")
+        try require(observedError != .auditFailed, "expiry is not an audit failure")
+        if path == "deny" { try require(events.filter { $0.reason == "explicit-deny" }.count == 1, "truthful denial persisted once; returning normally is allowed") }
+        if path == "completion" {
+            try require(events.filter { $0.reason == "dispatch-completion" && $0.outcome == .unknown }.count == 1, "truthful completion persists once")
+            try await expectError({ try await authority.complete(handle: handle, ticket: ticketA!, outcome: .completed) }, .completionAlreadyRecorded, "expired completion remains one-shot")
+        }
+        if path == "diagnostic" { try require(events.last?.origin == .guestDiagnostic && events.last?.decision == .observe, "host timestamp does not upgrade guest origin") }
+        try require(!bConsumed, "trusted \(path) expiry observation must revoke independently approved B despite rollback")
+    }
 }

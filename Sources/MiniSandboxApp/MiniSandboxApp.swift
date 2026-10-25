@@ -38,7 +38,14 @@ struct MiniSandboxApplication: App {
 
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
-    let model = WorkbenchModel.applicationModel()
+    private let composition: RunComposition?
+    let model: WorkbenchModel
+    override init() {
+        let composition = try? RunComposition.application()
+        self.composition = composition
+        self.model = composition?.workbench ?? WorkbenchModel(unavailable: "App composition unavailable; authority disabled")
+        super.init()
+    }
     private var terminationPending = false
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if model.isClosed { return .terminateNow }

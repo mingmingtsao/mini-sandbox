@@ -4,9 +4,11 @@ import SandboxHost
 
 @MainActor public struct WorkbenchView: View {
     @ObservedObject private var model: WorkbenchModel
-    @State private var presentation: ApprovalPresentation?
-    @State private var lastPresented: PendingAction?
-    public init(model: WorkbenchModel) { self.model = model }
+    @StateObject private var approval: WorkbenchApprovalController
+    public init(model: WorkbenchModel) {
+        self.model = model
+        _approval = StateObject(wrappedValue: WorkbenchApprovalController(model: model))
+    }
 
     public var body: some View {
         ScrollView {
@@ -31,8 +33,7 @@ import SandboxHost
                                         Text(verbatim: "\(scope.service) · \(scope.resource) · \(scope.operation)\(grant.explicitDenies.contains(scope) ? " — explicitly denied" : "")")
                                     }
                                 }
-                                Button("Stop and revoke") { Task { try? await model.stop(runID: grant.runID) } }
-                                    .disabled(model.isBusy || model.isClosing)
+                                stopControl(runID: grant.runID)
                             }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -44,7 +45,7 @@ import SandboxHost
                             HStack {
                                 Text(verbatim: action.safeDisplaySnapshot)
                                 Spacer()
-                                Button("Review") { lastPresented = action; presentation = ApprovalPresentation(action: action) }
+                                Button("Review") { approval.present(action) }
                                     .disabled(model.isBusy || model.isClosing || !model.authorityAvailable)
                             }
                         }
@@ -64,16 +65,15 @@ import SandboxHost
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
-        .sheet(item: $presentation, onDismiss: {
-            if let action = lastPresented { Task { await model.dismiss(action) } }
-            lastPresented = nil
+        .sheet(item: $approval.presentation, onDismiss: {
+            Task { await approval.didDismiss() }
         }) { value in
             approvalSheet(value.action)
         }
         .task {
             while !Task.isCancelled {
                 await model.expirePending()
-                if let action = presentation?.action, !model.pending.contains(where: { $0.actionID == action.actionID }) { presentation = nil }
+                approval.reconcile()
                 do { try await Task.sleep(for: .milliseconds(250)) } catch { break }
             }
         }
@@ -105,25 +105,28 @@ import SandboxHost
                 field("Expires", action.expiresAt.formatted())
             }
             HStack {
-                Button("Deny") { Task { await model.dismiss(action); presentation = nil } }
+                Button("Deny") { Task { await approval.dismiss(action) } }
                     .keyboardShortcut(.defaultAction)
-                Button("Cancel / deny") { Task { await model.dismiss(action); presentation = nil } }
+                Button("Cancel / deny") { Task { await approval.dismiss(action) } }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Approve once") {
                     Task {
-                        do { _ = try await model.approveOnce(action) } catch { /* Model publishes the real rejection. */ }
-                        presentation = nil
+                        do { try await approval.approve(action) } catch { /* Model publishes the real rejection. */ }
                     }
                 }
-            }.disabled(model.isBusy || model.isClosing || !model.authorityAvailable)
+            }.disabled(approval.ordinaryControlsDisabled)
+            stopControl(runID: action.binding.runID)
         }.padding(28).frame(width: 620)
     }
     private func field(_ label: String, _ value: String) -> some View {
         GridRow { Text(label).foregroundStyle(.secondary); Text(verbatim: value).textSelection(.enabled) }
     }
-    private struct ApprovalPresentation: Identifiable {
-        let action: PendingAction
-        var id: UUID { action.actionID }
+    private func stopControl(runID: UUID) -> some View {
+        Button("Stop and revoke") {
+            Task {
+                do { try await approval.stop(runID: runID) } catch { /* Model publishes cleanup failure. */ }
+            }
+        }.disabled(!model.canStop(runID: runID))
     }
 }

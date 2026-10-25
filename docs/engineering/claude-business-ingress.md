@@ -145,3 +145,16 @@ exact root for Glob/Grep). Relative paths and tilde expansion are rejected.
 Permission replies carry the immutable grant not-before time and action expiry
 to the concrete writer; the lifecycle checks them at the final clock before each
 send, including partial retries. Stop and connection revocation still apply.
+
+S05 measurements now expose only request counts/sizes: actual resumed requests,
+cumulative and maximum outbound JSON bytes, configured outbound header bytes and
+maximum active transport operations. Configured headers deliberately exclude
+headers URLSession adds on the wire; loopback capture records wire sizes
+separately. Native progress reports maximum framed event bytes, maximum retained
+queue bytes/events, total enqueued HTTP bytes and actual committed socket bytes.
+
+`BudgetChecks` admits complete envelopes of 65,535 and 65,536 bytes and rejects
+65,537; raw HTTP header/body/combined wire boundaries are checked at limit ±1.
+Growing paired tool history at 1/8/16/24 turns retains every original message and
+tool result (24 turns: 54,511 raw, 54,542 canonical, 55,007 approval bytes). A
+32-turn 72,631-byte request rejects without truncation or any credential read.

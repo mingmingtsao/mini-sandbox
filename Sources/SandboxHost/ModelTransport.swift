@@ -369,6 +369,9 @@ private final class RequestLimiter: @unchecked Sendable {
 /// Cancellation cannot prove an upstream side effect did not occur after start.
 package final class ModelPreparedOperation: @unchecked Sendable {
     package let chunks: AsyncThrowingStream<ModelStreamChunk, Error>
+    package let requestBodyBytes: Int
+    /// Configured fields only; URLSession's automatic wire headers are excluded.
+    package let configuredHeaderBytes: Int
     private let session: URLSession
     private let task: URLSessionDataTask
     private let delegate: ModelOperationDelegate
@@ -384,6 +387,8 @@ package final class ModelPreparedOperation: @unchecked Sendable {
         release: @escaping @Sendable () -> Void) {
         let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
         chunks = pair.stream
+        requestBodyBytes = request.httpBody?.count ?? 0
+        configuredHeaderBytes = (request.allHTTPHeaderFields ?? [:]).reduce(0) { $0 + $1.key.utf8.count + 2 + $1.value.utf8.count + 2 }
         delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming, activeCredential: activeCredential,
             decodeText: decodeText, decodeEvent: decodeEvent, release: release)
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)

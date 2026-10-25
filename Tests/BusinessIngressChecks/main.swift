@@ -89,6 +89,7 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             ] { try rejected("invalid body") { _ = try BusinessHTTPIngress.parse(wire(changed))?.claudeRequest() } }
             let credential = Credential()
             let (authority, handle, connection) = try await installed(credential)
+            try businessBudgetChecks(authority: authority, handle: handle, connection: connection)
             if let index = CommandLine.arguments.firstIndex(of: "--captured-http"), index + 1 < CommandLine.arguments.count {
                 let captured = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
                 guard let parsed = try BusinessHTTPIngress.parse(captured) else { throw CheckFailure.failed("captured request incomplete") }
@@ -111,6 +112,8 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             catch HostModelGatewayError.invalidApproval {}
             do { _ = try await gateway.execute(handle: modelHandle, approval: approval); throw CheckFailure.failed("activation bypass") }
             catch HostModelGatewayError.businessRouteDisabled {}
+            let gatedMeasurements = try await gateway.measurements(handle: modelHandle)
+            try check(gatedMeasurements.dispatchedRequests == 0 && gatedMeasurements.outboundBodyBytes == 0 && gatedMeasurements.configuredHeaderBytes == 0, "disabled route has no outbound measurements")
             let transport = ModelTransport(credentialProvider: credential)
 #if SANDBOX_TEST_FIXTURES
             let local = try ModelTransport(localClaudeFixturePort: 49152)

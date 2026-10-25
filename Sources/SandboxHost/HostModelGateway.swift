@@ -60,6 +60,15 @@ package struct HostModelApproval: Sendable {
     fileprivate let approved: ApprovedAction
 }
 
+package struct ModelRunMeasurements: Sendable {
+    package let dispatchedRequests: Int
+    package let outboundBodyBytes: Int
+    package let configuredHeaderBytes: Int
+    package let largestBodyBytes: Int
+    package let largestConfiguredHeaderBytes: Int
+    package let peakActiveRequests: Int
+}
+
 #if DEBUG
 package enum HostAttachmentPhase: String, CaseIterable, Sendable { case afterRegistration, beforeExposure }
 #endif
@@ -90,6 +99,8 @@ package actor HostModelGateway {
         var revoked: Bool { authorityHandle.lifecycle.currentStatus != .active }
         var reserved = 0
         var resumeCalls = 0
+        var outboundBodyBytes = 0, configuredHeaderBytes = 0
+        var largestBodyBytes = 0, largestConfiguredHeaderBytes = 0, peakActiveRequests = 0
         var operations: [UUID: (UUID, ModelPreparedOperation)] = [:]
         init(handle: HostModelRunHandle, authorityHandle: HostRunHandle, grant: RunGrant) {
             self.handle = handle; self.authorityHandle = authorityHandle; self.grant = grant
@@ -411,6 +422,11 @@ package actor HostModelGateway {
                 notBefore: run.grant.createdAt, startDeadline: proposal.pending.expiresAt)
             started = true
             run.resumeCalls += operation.resumeCalls
+            run.outboundBodyBytes += operation.requestBodyBytes
+            run.configuredHeaderBytes += operation.configuredHeaderBytes
+            run.largestBodyBytes = max(run.largestBodyBytes, operation.requestBodyBytes)
+            run.largestConfiguredHeaderBytes = max(run.largestConfiguredHeaderBytes, operation.configuredHeaderBytes)
+            run.peakActiveRequests = max(run.peakActiveRequests, run.operations.values.filter { $0.1.resumeCalls > 0 }.count)
             var text = ""
             var sawFinal = false
             var completion: ModelCompletion?
@@ -481,6 +497,12 @@ package actor HostModelGateway {
     }
     package func isRevoked(handle: HostModelRunHandle) throws -> Bool { try get(handle).revoked }
     package func resumedTaskCount(handle: HostModelRunHandle) throws -> Int { try get(handle).resumeCalls }
+    package func measurements(handle: HostModelRunHandle) throws -> ModelRunMeasurements {
+        let run = try get(handle)
+        return ModelRunMeasurements(dispatchedRequests: run.resumeCalls, outboundBodyBytes: run.outboundBodyBytes,
+            configuredHeaderBytes: run.configuredHeaderBytes, largestBodyBytes: run.largestBodyBytes,
+            largestConfiguredHeaderBytes: run.largestConfiguredHeaderBytes, peakActiveRequests: run.peakActiveRequests)
+    }
     package func lifecycle(handle: HostModelRunHandle) throws -> RunLifecycle { try get(handle).authorityHandle.lifecycle }
 
     package func revokeConnection(_ connectionID: UUID) async throws {

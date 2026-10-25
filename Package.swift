@@ -13,6 +13,7 @@ let package = Package(
         .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"]),
         .executable(name: "WorkbenchChecks", targets: ["WorkbenchChecks"]),
         .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"]),
+        .executable(name: "StructuredModelChecks", targets: ["StructuredModelChecks"]),
     ],
     targets: [
         .target(name: "SandboxContracts"),
@@ -24,5 +25,6 @@ let package = Package(
         .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
         .executableTarget(name: "WorkbenchChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts"], path: "Tests/WorkbenchChecks"),
         .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks"),
+        .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks"),
     ]
 )

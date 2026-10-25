@@ -2,9 +2,9 @@
 
 ## Scope
 
-This increment implements a host-only, text-only DeepSeek transport in `SandboxHost`. It is package-visible, has no guest listener, and does **not** grant permission to call a service. The future Broker must connect an authenticated run, a live authorization decision, and its dispatch boundary before using it.
+This increment implements a host-only DeepSeek transport in `SandboxHost`, with a bounded structured Anthropic data candidate described in `structured-model-tools.md`. Its v2 stricter-contract reconciliation passes all 29 retained non-Keychain model groups plus 3 additive rejection groups; this is not an all-integration PASS. It is package-visible, has no guest listener, and does **not** grant permission to call a service. The future Broker must connect an authenticated run, a live authorization decision, and its dispatch boundary before using it.
 
-The allowlisted model is `deepseek-flash`. Structured requests select only the OpenAI-compatible or Anthropic-compatible protocol; there are no caller-supplied URLs or HTTP headers. The two routes are fixed to `https://api.deepseek.com/chat/completions` and `https://api.deepseek.com/anthropic/v1/messages`. Host credentials are added in the corresponding authentication header. Anthropic system instructions are carried in the `system` field, not discarded. This text-only increment explicitly disables thinking and does not implement tool calls, image inputs, Agent adapters or MCP.
+The allowlisted model is `deepseek-flash`. Requests select only the fixed OpenAI-compatible text route or Anthropic-compatible structured route; there are no caller-supplied URLs or HTTP headers. The two routes are fixed to `https://api.deepseek.com/chat/completions` and `https://api.deepseek.com/anthropic/v1/messages`. Host credentials are added in the corresponding authentication header. Anthropic system instructions are carried in the `system` field, not discarded. Thinking remains explicitly disabled. The structured candidate transports text/tool-use/tool-result data, but never executes tools; image inputs, Agent adapters and MCP execution remain unsupported.
 
 The default session is ephemeral, does not use cookies or a response cache, refuses redirects, and uses finite request/resource timeouts (60/120 seconds). Error messages report bounded categories/status codes, not upstream response bodies or credentials. Requests are not retried automatically. Injected `URLSessionConfiguration` is a trusted package-level test seam, never a protocol field exposed to guests.
 
@@ -21,14 +21,17 @@ synchronously once. Cancel-before-start and deinit-before-start never dispatch.
 Repeated cancellation/deinitialization releases a reservation exactly once.
 Direct completion checks task cancellation again after stream iteration (which
 may otherwise end silently on cancellation) and requires a genuine final marker
-before returning. Successfully decoded empty text and empty terminal SSE remain
-valid; empty iteration alone is not success.
+before returning. Successfully decoded empty text remains valid; an Anthropic empty stream now
+requires message start, message delta and message stop, with indexed block
+lifecycles when blocks are present, not a bare terminal marker. A no-block empty
+lifecycle emits three empty-text metadata chunks and exactly one final.
+Empty iteration alone is not success.
 
 OpenAI-compatible completion and SSE responses reject explicit `finish_reason` values `insufficient_system_resource` and `aborted` as `providerFailure` (`upstream generation failed`), even with HTTP 200 and partial text. No body, credential, or raw provider error is included. A failed SSE event emits neither its own text nor a success-final marker; previously delivered partial chunks cannot be retracted, and the consumer must handle the terminal error. A later `[DONE]` does not override the failure.
 
 Other finish reasons retain the text-only behavior: `stop`, `length`, `content_filter`, and `tool_calls` preserve any supplied string text, rather than becoming provider failures. This does not guarantee an untruncated/unfiltered answer or execute tools. Missing/null finish reasons remain compatible; unknown reasons are not interpreted. SSE still requires a framed `[DONE]` for successful termination, not merely a finish reason.
 
-Every Anthropic `type: text` completion block requires string `text` (including an allowed empty string); missing, null, or non-string text rejects the entire completion as `invalidResponse`. Non-text blocks are separately treated as metadata and ignored. JSON decoding failures in either completion protocol also return sanitized `invalidResponse`, not `network`.
+Every Anthropic `type: text` completion block requires string `text` (including an allowed empty string); missing, null, or non-string text rejects the entire completion as `invalidResponse`. The structured candidate preserves supported tool-use blocks and rejects unsupported non-text blocks instead of ignoring them. JSON decoding failures in either completion protocol also return sanitized `invalidResponse`, not `network`.
 
 ## Credential storage
 
@@ -37,6 +40,52 @@ Every Anthropic `type: text` completion block requires string `text` (including 
 **Real Keychain CRUD is currently BLOCKED in the tested CLI context:** `SecItemAdd` returned `-60008` (authorization unavailable). A separate disposable-item probe reproduced that result. Read-only Keychain reachability from the foundation is not evidence that credential storage works. A signed native probe was also built, but LaunchServices could not launch it from the private test location (permission denied), so no application-context CRUD result was obtained. Native application-context validation remains BLOCKED; do not treat the provider implementation as a passed storage integration.
 
 ## Reproduction and evidence
+
+The metadata-merge revision passed **29/29 structured groups**, **38/38 host**,
+**17/17 authorization**, **7/7 contracts**, **32/32 distinct non-Keychain model
+groups**, and all-products Debug compilation. This revision also passed
+**4/4 API boundary**, **7/7 packaging**, and the explicit Release `MiniSandbox`
+application build and strict signature verification.
+Those results and independent approval apply to the earlier metadata-merge
+revision. The response-usage correction now passes **37/37 structured groups**
+(29 retained plus 8 usage groups), **38/38 host**, **32/32 distinct non-Keychain
+model**, **17/17 authorization**, **7/7 contracts**, **2/2 permanent CLI tests**,
+and all-products Debug compilation. Fresh **4/4 API boundary**, **7/7 packaging**,
+and explicit Release application build/strict signature verification also passed
+on this correction. All **29 old named
+groups** remain, with **3 additive negatives** retaining the exact former thinking,
+incomplete-lifecycle and bare-stop payloads. Valid ordered/empty text remains
+accepted; unsupported thinking and malformed lifecycle data fail closed. The
+three original failures were captured RED before editing fixtures, without any
+production changes. Actual PASS names were deduplicated for overlapping selectors;
+direct cancellation remains **50/50 cancelled, 0 success, 0 other**. See
+`structured-model-tools.md` for the exact contract decision and evidence.
+The first credential-present structured attempt on **2026-10-24 failed** on its
+first nonstream request with gateway `outcomeUnknown`; its actual JSONL audit
+has one intent and one unknown completion,
+and STOP succeeded. The streaming case was **NOT_RUN**. Separate diagnostic
+attempts observed underlying `invalidResponse` on the same request path and isolated
+`ModelUsage`'s assumption that every response usage value was a nonnegative integer:
+the observed shape instead had four integer token/cache counters plus string
+`service_tier` (actual string value not retained).
+
+The response-only fix represents `standard`, `priority`, or `batch` as nullable
+`ModelUsage.serviceTier`, separate from integer `values`. Initial absence/null is
+none; SSE absence/null retains a known tier, identical repeats and late first values
+are accepted, and conflicting non-null tiers fail. Counters remain cumulative and
+nondecreasing; optional cache counters are not newly required. Other heterogeneous
+or nested usage fields remain unsupported and rejected. There is no request-tier
+selection or billing feature. Synthetic shape fixtures are not captured responses.
+The correction passed independent review. A normal real-provider rerun on
+**2026-10-24** passed both nonstream and streaming tool round-trips: each received
+`tool_use`, supplied one matching synthetic fixture result, then received nonempty
+final text with `end_turn`. Four task starts and credential reads reconcile with
+four completed intent/completion pairs in the actual JSONL; both runs stopped.
+This proves only the bounded host model-protocol path. Agent/MCP execution, guest
+bridge, VM, UI and isolated Keychain CRUD remain **NOT_RUN**. Detailed results are
+in `structured-model-tools.md`; the following text-only evidence is historical.
+
+### Earlier text-only evidence
 
 Tested on Apple Silicon / macOS 26.6.2 / Swift 6.3.3:
 

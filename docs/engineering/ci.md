@@ -18,6 +18,8 @@ Swift 运行集合由 `scripts/swift-coverage.py` 的 `CHECKS` 统一维护。�
 
 Python 按测试目录分别发现，避免没有包标记的子目录被顶层 discovery 静默跳过。故意包含错误逻辑、供 Agent 修复的 `Tools/AgentRuntime/fixture/test_logic.py` 不作为成功回归运行。CI 不构建完整 guest 镜像、不下载真实 CLI 产物。
 
+回环 HTTP fixture 直接使用数字地址绑定，跳过 `HTTPServer` 默认的反向 DNS 查询；回归检查在禁止 `socket.getfqdn` 的情况下验证启动与 HTTP 行为，避免宿主 DNS 延迟吞掉 driver 的超时预算。
+
 macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift 工具链保持一致。[2026-10-25 的主线运行](https://github.com/mingmingtsao/mini-sandbox/actions/runs/40199585315) 已通过全部 CI 检查，日志记录 macOS 26.6.2、Xcode 26.6、Swift 6.3.3；最新结果以徽章及运行页面为准。
 
 ## 权限与运行边界

@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "fixture": "coding-task",
+  "verification_command": [
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "-v"
+  ],
+  "host_execution": false,
+  "expected_initial_failures": 3,
+  "expected_test_count": 4,
+  "allowed_changed_files": [
+    "intervals.py"
+  ],
+  "files": {
+    "README.md": {
+      "bytes": 421,
+      "sha256": "a32ef4f8b7cce75bd5f036349a71edcd49a74566504979bc0e61fca1334e65b6"
+    },
+    "intervals.py": {
+      "bytes": 147,
+      "sha256": "418ebbb37de120b2844c64db67ead983585497dfed5bc5a40094fb83845e9c64"
+    },
+    "test_intervals.py": {
+      "bytes": 545,
+      "sha256": "e28098df1a9803d6a2ec759bf0780a435d514a7e6e056e9fc96e5f20c16547a6"
+    }
+  },
+  "task": "Run python3 -B -m unittest -v first and inspect its failures. Read intervals.py and test_intervals.py. Fix closed_interval so that both endpoints are included and reversed intervals are empty. Change only intervals.py; preserve all tests and README. Run the same tests again and report their actual result."
+}

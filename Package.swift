@@ -14,6 +14,8 @@ let package = Package(
         .executable(name: "WorkbenchChecks", targets: ["WorkbenchChecks"]),
         .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"]),
         .executable(name: "StructuredModelChecks", targets: ["StructuredModelChecks"]),
+        .executable(name: "VMChecks", targets: ["VMChecks"]),
+        .executable(name: "VMProbe", targets: ["VMProbe"]),
     ],
     targets: [
         .target(name: "SandboxContracts"),
@@ -26,5 +28,7 @@ let package = Package(
         .executableTarget(name: "WorkbenchChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts"], path: "Tests/WorkbenchChecks"),
         .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks"),
         .executableTarget(name: "StructuredModelChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/StructuredModelChecks"),
+        .executableTarget(name: "VMChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/VMChecks", exclude: ["test_build_vm_probe.py", "live_lifecycle.py"]),
+        .executableTarget(name: "VMProbe", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tools/VMProbe"),
     ]
 )

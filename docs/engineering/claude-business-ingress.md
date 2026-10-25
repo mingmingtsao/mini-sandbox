@@ -132,3 +132,16 @@ and alternate endpoint do not exist in normal Debug or Release builds.
 
 Evidence from this test is real VM/CLI execution with a local scripted provider;
 it is not evidence of external provider compatibility or Release readiness.
+
+Product schema-4 proposals use `proposeVMClaude` and bind the actual runtime and
+channel IDs into the complete approved bytes. `makeVMNativeOutput` additionally
+requires the exact same retained owner object; an equal run ID is insufficient.
+Execution requires that concrete VZ output. Raw callbacks, in-memory output and
+the old AF_UNIX constructor cannot dispatch schema 4, including in fixture builds.
+The separate pure `proposeClaude` admission remains inspectable but cannot execute.
+
+File tool paths now require explicit `/work/project/...` absolute paths (or the
+exact root for Glob/Grep). Relative paths and tilde expansion are rejected.
+Permission replies carry the immutable grant not-before time and action expiry
+to the concrete writer; the lifecycle checks them at the final clock before each
+send, including partial retries. Stop and connection revocation still apply.

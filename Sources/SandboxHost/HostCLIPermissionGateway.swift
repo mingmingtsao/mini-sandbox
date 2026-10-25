@@ -47,11 +47,9 @@ package struct CLIPermissionRequest: Sendable {
     private static func projectPath(_ path: String, allowRoot: Bool = false) -> Bool {
         guard !path.isEmpty, path.utf8.count <= 1024,
               !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return false }
-        if allowRoot, path == "/work/project" || path == "." { return true }
-        let relative: String
-        if path.hasPrefix("/work/project/") { relative = String(path.dropFirst("/work/project/".count)) }
-        else if path.hasPrefix("/") { return false }
-        else { relative = path }
+        if allowRoot, path == "/work/project" { return true }
+        guard path.hasPrefix("/work/project/") else { return false }
+        let relative = String(path.dropFirst("/work/project/".count))
         let parts = relative.split(separator: "/", omittingEmptySubsequences: false)
         return !parts.isEmpty && parts.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
@@ -116,7 +114,7 @@ package actor HostCLIPermissionGateway {
         try await authority.deny(handle: handle, actionID: proposal.pending.actionID)
         let bytes = Data(#"{"behavior":"deny","message":"User denied this tool action"}"#.utf8)
         let output = try BusinessVMFrameOutput(connection: proposal.channel, handle: handle, scope: proposal.scope,
-            body: bytes, actionID: proposal.pending.actionID)
+            body: bytes, actionID: proposal.pending.actionID, notBefore: grant.createdAt, startDeadline: proposal.pending.expiresAt)
         try await drain(output)
     }
     package func approveAndSend(_ proposal: Proposal) async throws {
@@ -136,7 +134,7 @@ package actor HostCLIPermissionGateway {
             let request = try CLIPermissionRequest.parse(encoder.encode(root))
             let response = try encoder.encode(ModelJSON.object(["behavior": .string("allow"), "updatedInput": request.input]))
             let writer = try BusinessVMFrameOutput(connection: proposal.channel, handle: handle, scope: proposal.scope,
-                body: response, actionID: proposal.pending.actionID)
+                body: response, actionID: proposal.pending.actionID, notBefore: grant.createdAt, startDeadline: proposal.pending.expiresAt)
             output = writer
             try await drain(writer)
             completionAttempted = true

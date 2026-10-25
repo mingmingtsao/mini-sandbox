@@ -107,16 +107,25 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             let proposal = try await gateway.proposeClaude(handle: modelHandle, connectionID: connection.connectionID, ingress: ingress)
             try check(proposal.pendingAction.binding.canonicalRequest == admission.binding.canonicalRequest, "preflight and actual proposal bytes identical")
             let approval = try await gateway.hostApprove(handle: modelHandle, proposal: proposal)
-            let output = try await gateway.makeOutput(handle: modelHandle, approval: approval)
-            do { try await gateway.execute(handle: modelHandle, approval: approval, output: output); throw CheckFailure.failed("activation bypass") }
+            do { _ = try await gateway.makeOutput(handle: modelHandle, approval: approval); throw CheckFailure.failed("schema4 memory output") }
+            catch HostModelGatewayError.invalidApproval {}
+            do { _ = try await gateway.execute(handle: modelHandle, approval: approval); throw CheckFailure.failed("activation bypass") }
             catch HostModelGatewayError.businessRouteDisabled {}
             let transport = ModelTransport(credentialProvider: credential)
 #if SANDBOX_TEST_FIXTURES
             let local = try ModelTransport(localClaudeFixturePort: 49152)
             try check(local.claudeRouteEnabled && !transport.claudeRouteEnabled, "only dedicated fixed-loopback fixture route is enabled")
             try rejected("fixture zero port") { _ = try ModelTransport(localClaudeFixturePort: 0) }
-            let fixture = try HostModelConnection.localClaudeFixture(port: 49152)
+            let fixture = try HostModelConnection.localClaudeFixture(port: 49152, connectionID: connection.connectionID, accountID: connection.accountID)
             try check(fixture.model == .deepSeekFlash && fixture.protocol == .anthropic, "fixture fixed model dialect")
+            let fixtureGateway = try HostModelGateway(connections: [fixture], auditSink: Audit(), authority: authority)
+            let fixtureHandle = try await fixtureGateway.install(grant: authority.installedGrantForOwnership(of: handle), authorityHandle: handle)
+            let pureProposal = try await fixtureGateway.proposeClaude(handle: fixtureHandle, connectionID: fixture.connectionID, ingress: ingress)
+            let pureApproval = try await fixtureGateway.hostApprove(handle: fixtureHandle, proposal: pureProposal)
+            do { _ = try await fixtureGateway.execute(handle: fixtureHandle, approval: pureApproval); throw CheckFailure.failed("pure proposal fixture dispatch") }
+            catch HostModelGatewayError.invalidApproval {}
+            let fixtureResumes = try await fixtureGateway.resumedTaskCount(handle: fixtureHandle)
+            try check(fixtureResumes == 0, "pure schema4 cannot start local fixture transport")
 #endif
             try rejected("direct transport gate") { _ = try transport.prepareClaude(request, selectors: .pinned) }
             try rejected("native fallback gate") { _ = try transport.prepareNative(request) }
@@ -133,7 +142,7 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             let permission = #"{"type":"control_request","request_id":"request-1","request":{"subtype":"can_use_tool","tool_use_id":"tool-1","tool_name":"Edit","input":{"file_path":"/work/project/logic.py","old_string":"-","new_string":"+"}}}"#
             let tool = try CLIPermissionRequest.parse(Data(permission.utf8))
             try check(tool.operation == "write" && tool.input["old_string"]?.string == "-", "normal CLI permission retains exact input")
-            for path in ["/etc/passwd", "/work/project/../private", "../outside", "/work/project/", "/work/project//logic.py"] {
+            for path in ["/etc/passwd", "/work/project/../private", "../outside", "logic.py", "~/logic.py", "~user/logic.py", "/work/project/", "/work/project//logic.py"] {
                 try rejected("permission path") { _ = try CLIPermissionRequest.parse(Data(permission.replacingOccurrences(of: "/work/project/logic.py", with: path).utf8)) }
             }
             let shortCredential = Credential()

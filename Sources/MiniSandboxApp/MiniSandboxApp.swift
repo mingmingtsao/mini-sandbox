@@ -103,6 +103,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if model.isClosed { return .terminateNow }
         if !terminationPending {
+            if taskController?.hasUnexportedResult == true && taskController?.isBusy == false {
+                let alert = NSAlert()
+                alert.messageText = "Quit without exporting the reviewed result?"
+                alert.informativeText = "The private task snapshot remains on disk, but this window cannot reopen it after Quit. Cancel to export the reviewed project to a new directory."
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Quit without exporting")
+                guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+            }
             if let composition { composition.beginClose() }
             else { connectionSettings?.close(); model.beginClose() }
             terminationPending = true

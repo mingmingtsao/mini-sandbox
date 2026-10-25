@@ -114,6 +114,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     @Published package private(set) var stderr = ""
     @Published package private(set) var approvals: [Approval] = []
     @Published package private(set) var review: WorkspaceReview?
+    @Published package private(set) var hasUnexportedResult = false
     @Published package private(set) var measurements: [String] = []
     @Published package private(set) var stopSummary: String?
     @Published package private(set) var importExclusions: [String] = []
@@ -160,10 +161,10 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         selectedMCPConnectionID = mcpConfiguration?.connectionID
         guestFinished = false; transferFinished = false; guestSucceeded = false; resultStopRequested = false
         finishedDigest = nil; transferredDigest = nil
-        generation = UUID(); let token = generation, task = task
+        generation = UUID(); let token = generation, task = task, allowMCPWrite = allowMCPWrite
         runTask = Task { [self] in
             do { try await execute(project: project, runtime: runtimeDirectory, vendor: vendorDisk, task: task,
-                configuration: configuration, mcpConfiguration: mcpConfiguration, token: token) }
+                configuration: configuration, mcpConfiguration: mcpConfiguration, allowMCPWrite: allowMCPWrite, token: token) }
             catch {
                 if !(error is CancellationError), !(error is BusinessTaskFailure && generation != token) {
                     self.error = "Task stopped: \(String(describing: error))"
@@ -179,7 +180,8 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         if let run { guard run.authorityHandle.lifecycle.observeAndReduce(reason: "business-task-checkpoint").status == .active else { throw BusinessTaskFailure.cancelled } }
     }
     private func execute(project: URL, runtime: URL, vendor: URL, task: String,
-                         configuration: FixedModelConnectionConfiguration, mcpConfiguration: LocalMCPConfiguration?, token: UUID) async throws {
+                         configuration: FixedModelConnectionConfiguration, mcpConfiguration: LocalMCPConfiguration?,
+                         allowMCPWrite: Bool, token: UUID) async throws {
         status = "Verifying runtime and copying the selected project…"
         let bundle = try await Task.detached { try BusinessRuntimeBundle(directory: runtime, vendorDisk: vendor) }.value
         try check(token)
@@ -269,7 +271,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
             status = "VM stopped · validating and adopting the complete result…"
             let review = try await Task.detached { try workspace.sealAndAdopt(after: stopped) }.value
             try check(token)
-            self.review = review
+            self.review = review; hasUnexportedResult = true
             try await composition.workbench.stop(runID: grant.runID)
             status = "Result ready for review. Run authorization is stopped."
             self.vm = nil
@@ -466,7 +468,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     package func decide(_ id: UUID, allow: Bool) { decisions[id]?.resolve(allow) }
     package func finishReview() {
         guard !isBusy, !isClosing else { return }
-        review = nil; workspace = nil
+        review = nil; workspace = nil; hasUnexportedResult = false
         status = "Review closed. The task snapshot remains in the private task directory."
     }
     package func expireApprovals() {
@@ -502,6 +504,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         exportTask = Task { [self] in
             do {
                 try await Task.detached { try workspace.exportReviewedAfterStop(review, toNewDirectory: destination.path, actionCancellation: cancellation) }.value
+                hasUnexportedResult = false
                 status = "Exported the reviewed snapshot to \(destination.lastPathComponent). The original project was not overwritten."
             } catch { self.error = "Export failed: \(String(describing: error))" }
             exportCancellation = nil; isBusy = false; exportTask = nil

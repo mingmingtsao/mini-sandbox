@@ -5,6 +5,7 @@ Only a locally generated in-memory canary is sent. This is not a provider, VM,
 CLI or GUI acceptance test. Model's production fixed endpoint is unchanged; the
 Swift test's URLProtocol forwards that request to this owned HTTP fixture.
 """
+
 import argparse
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,9 +16,19 @@ import threading
 import time
 
 MODES = (
-    "plain", "escaped", "adjacent", "tool", "tool-escaped", "sse-split",
-    "sse-escaped", "sse-tool-escaped", "error", "ordinary", "ordinary-sse",
-    "ordinary-tool", "prefix-sse",
+    "plain",
+    "escaped",
+    "adjacent",
+    "tool",
+    "tool-escaped",
+    "sse-split",
+    "sse-escaped",
+    "sse-tool-escaped",
+    "error",
+    "ordinary",
+    "ordinary-sse",
+    "ordinary-tool",
+    "prefix-sse",
 )
 
 
@@ -26,20 +37,49 @@ def encoded(value):
 
 
 def events(texts, *, tool=False):
-    result = [{"type": "message_start", "message": {
-        "id": "msg_loopback", "type": "message", "role": "assistant",
-        "model": "deepseek-flash", "content": [], "usage": {"input_tokens": 1, "output_tokens": 0},
-    }}]
-    result.append({"type": "content_block_start", "index": 0, "content_block":
-        {"type": "tool_use", "id": "tool_1", "name": "record", "input": {}} if tool else {"type": "text", "text": ""}})
+    result = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_loopback",
+                "type": "message",
+                "role": "assistant",
+                "model": "deepseek-flash",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            },
+        }
+    ]
+    result.append(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "tool_1", "name": "record", "input": {}}
+            if tool
+            else {"type": "text", "text": ""},
+        }
+    )
     for text in texts:
-        result.append({"type": "content_block_delta", "index": 0, "delta":
-            {"type": "input_json_delta", "partial_json": text} if tool else {"type": "text_delta", "text": text}})
-    result.extend([
-        {"type": "content_block_stop", "index": 0},
-        {"type": "message_delta", "delta": {"stop_reason": "tool_use" if tool else "end_turn"}, "usage": {"output_tokens": 1}},
-        {"type": "message_stop"},
-    ])
+        result.append(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": text}
+                if tool
+                else {"type": "text_delta", "text": text},
+            }
+        )
+    result.extend(
+        [
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use" if tool else "end_turn"},
+                "usage": {"output_tokens": 1},
+            },
+            {"type": "message_stop"},
+        ]
+    )
     return [b"data: " + encoded(event) + b"\n\n" for event in result]
 
 
@@ -62,22 +102,41 @@ def response(mode, canary):
     if mode == "prefix-sse":
         return 200, True, events(["ordinary ", canary[:12]])
     if mode in ("tool", "tool-escaped", "ordinary-tool"):
-        value = "ordinary loopback" if mode == "ordinary-tool" else ("ESCAPED_CANARY" if mode == "tool-escaped" else canary)
+        value = (
+            "ordinary loopback" if mode == "ordinary-tool" else ("ESCAPED_CANARY" if mode == "tool-escaped" else canary)
+        )
         content = [{"type": "tool_use", "id": "tool_1", "name": "record", "input": {"value": value}}]
     elif mode == "adjacent":
         middle = len(canary) // 2
         content = [{"type": "text", "text": part} for part in [canary[:middle], canary[middle:]]]
     else:
-        content = [{"type": "text", "text": "ordinary loopback" if mode == "ordinary" else ("ESCAPED_CANARY" if mode == "escaped" else canary)}]
-    body = encoded({"id": "msg_loopback", "type": "message", "role": "assistant", "model": "deepseek-flash", "content": content,
-                    "stop_reason": "tool_use" if mode in ("tool", "tool-escaped", "ordinary-tool") else "end_turn",
-                    "usage": {"input_tokens": 1, "output_tokens": 1}})
+        content = [
+            {
+                "type": "text",
+                "text": "ordinary loopback"
+                if mode == "ordinary"
+                else ("ESCAPED_CANARY" if mode == "escaped" else canary),
+            }
+        ]
+    body = encoded(
+        {
+            "id": "msg_loopback",
+            "type": "message",
+            "role": "assistant",
+            "model": "deepseek-flash",
+            "content": content,
+            "stop_reason": "tool_use" if mode in ("tool", "tool-escaped", "ordinary-tool") else "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
     return 200, False, [body.replace(b"ESCAPED_CANARY", escaped.encode())]
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parents[2] / ".build/debug/ExecutionBoundaryChecks")
+    parser.add_argument(
+        "--binary", type=Path, default=Path(__file__).resolve().parents[2] / ".build/debug/ExecutionBoundaryChecks"
+    )
     args = parser.parse_args()
     counts = Counter()
     failures = []
@@ -115,7 +174,7 @@ def main():
                     # Actual HTTP writes preserve SSE cross-event delay and also
                     # split JSON bodies at transport boundaries.
                     for offset in range(0, len(chunk), 47):
-                        self.wfile.write(chunk[offset:offset + 47])
+                        self.wfile.write(chunk[offset : offset + 47])
                         self.wfile.flush()
                     if streaming:
                         time.sleep(0.01)
@@ -131,9 +190,13 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        child = subprocess.run([str(args.binary), "--model-reflection-loopback"],
-            input=json.dumps({"port": server.server_address[1]}) + "\n", text=True,
-            capture_output=True, timeout=90)
+        child = subprocess.run(
+            [str(args.binary), "--model-reflection-loopback"],
+            input=json.dumps({"port": server.server_address[1]}) + "\n",
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -141,18 +204,26 @@ def main():
     # Do not print arbitrary child output: only static case labels and numeric
     # output metrics are part of the evidence contract.
     import re
+
     accepted = []
     for line in child.stdout.splitlines():
-        if re.fullmatch(r"PASS native-reflection [a-z-]+ peer_bytes=\d+ secret_occurrences=0 reads=1 resumes=1 audit=(unknown|completed)", line):
+        if re.fullmatch(
+            r"PASS native-reflection [a-z-]+ peer_bytes=\d+ secret_occurrences=0 reads=1 resumes=1 audit=(unknown|completed)",
+            line,
+        ):
             accepted.append(line)
             print(line)
         elif line.startswith("FAIL native-reflection"):
             print("FAIL native-reflection child assertion")
     expected = Counter({mode: 1 for mode in MODES})
     if child.returncode or failures or counts != expected or len(accepted) != len(MODES):
-        print(f"FAIL native-reflection-loopback child_exit={child.returncode} hits={sum(counts.values())} cases={len(accepted)} fixture_errors={len(failures)}")
+        print(
+            f"FAIL native-reflection-loopback child_exit={child.returncode} hits={sum(counts.values())} cases={len(accepted)} fixture_errors={len(failures)}"
+        )
         return 1
-    print(f"PASS native-reflection-loopback actual_http_hits={sum(counts.values())} cases={len(MODES)} secret_occurrences=0")
+    print(
+        f"PASS native-reflection-loopback actual_http_hits={sum(counts.values())} cases={len(MODES)} secret_occurrences=0"
+    )
     return 0
 
 

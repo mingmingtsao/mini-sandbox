@@ -23,7 +23,7 @@ private let metadataMutations: [(String, String, ModelJSON?)] = [
     ("missing input tokens", "usage", .object(["output_tokens": .integer(0)])),
     ("missing output tokens", "usage", .object(["input_tokens": .integer(0)])),
     ("negative input tokens", "usage", .object(["input_tokens": .integer(-1), "output_tokens": .integer(0)])),
-    ("negative output tokens", "usage", .object(["input_tokens": .integer(0), "output_tokens": .integer(-1)]))
+    ("negative output tokens", "usage", .object(["input_tokens": .integer(0), "output_tokens": .integer(-1)])),
 ]
 
 func metadataRejections(streaming: Bool) async throws {
@@ -31,23 +31,30 @@ func metadataRejections(streaming: Bool) async throws {
     let original = streaming ? source["message"]!.object! : source.object!
     var mutations = metadataMutations
     if !streaming {
-        mutations += [("wrong stop reason", "stop_reason", .string("end_turn")), ("missing stop reason", "stop_reason", nil)]
+        mutations += [
+            ("wrong stop reason", "stop_reason", .string("end_turn")), ("missing stop reason", "stop_reason", nil),
+        ]
     }
     var failures: [String] = []
     for (name, key, value) in mutations {
-        var body = original; body[key] = value
+        var body = original
+        body[key] = value
         let raw: Data
         if streaming {
-            var start = source.object!; start["message"] = .object(body)
+            var start = source.object!
+            start["message"] = .object(body)
             var events = toolEvents()
             events[0] = String(decoding: try JSONEncoder().encode(ModelJSON.object(start)), as: UTF8.self)
             raw = Data(events.map { "data: \($0)\n\n" }.joined().utf8)
-        } else { raw = try JSONEncoder().encode(ModelJSON.object(body)) }
+        } else {
+            raw = try JSONEncoder().encode(ModelJSON.object(body))
+        }
         Fixture.install([[raw]])
         let credential = Credential()
         let transport = ModelTransport(credentialProvider: credential, configuration: configuration())
         let operation = try transport.prepare(baseRequest(), streaming: streaming)
-        var chunks: [ModelStreamChunk] = []; var receivedError: ModelTransportError?
+        var chunks: [ModelStreamChunk] = []
+        var receivedError: ModelTransportError?
         do {
             try operation.start()
             for try await chunk in operation.chunks { chunks.append(chunk) }
@@ -56,9 +63,13 @@ func metadataRejections(streaming: Bool) async throws {
         do {
             try check(receivedError != nil, "accepted invalid metadata")
             try check(chunks.isEmpty, "invalid body exposed metadata, blocks or success final")
-            try check(receivedError == .invalidResponse || (streaming && receivedError == .malformedSSE), "meaningful metadata error")
+            try check(
+                receivedError == .invalidResponse || (streaming && receivedError == .malformedSSE),
+                "meaningful metadata error")
             let description = String(describing: receivedError!)
-            try check(description == "invalid upstream response" || description == "malformed upstream SSE", "sanitized error without raw body")
+            try check(
+                description == "invalid upstream response" || description == "malformed upstream SSE",
+                "sanitized error without raw body")
             try check(!description.contains("private-body-marker"), "raw model leaked")
             try check(credential.reads == 1 && Fixture.requests.count == 1, "single synthetic dispatch")
         } catch { failures.append("\(name): \(error)") }
@@ -76,14 +87,30 @@ func metadataCompatibility() async throws {
     Fixture.install([[try JSONEncoder().encode(ModelJSON.object(body))]])
     let transport = ModelTransport(credentialProvider: Credential(), configuration: configuration())
     let completion = try await transport.complete(baseRequest())
-    try check(completion.metadata.messageID == body["id"]?.string && completion.metadata.model == body["model"]?.string && completion.metadata.usage?.inputTokens == 0 && completion.metadata.usage?.outputTokens == 0, "valid bounded full tool completion")
+    try check(
+        completion.metadata.messageID == body["id"]?.string && completion.metadata.model == body["model"]?.string
+            && completion.metadata.usage?.inputTokens == 0 && completion.metadata.usage?.outputTokens == 0,
+        "valid bounded full tool completion")
     Fixture.install([[Data(#"{"content":[{"type":"text","text":"legacy"}]}"#.utf8)]])
     let legacy = try await transport.complete(baseRequest())
-    try check(legacy.text == "legacy" && legacy.metadata == ModelMetadata(), "legacy text-only missing metadata remains valid")
-    body["content"] = .array([]); body["stop_reason"] = .null
-    let start = try JSONEncoder().encode(ModelJSON.object(["type": .string("message_start"), "message": .object(body)]))
-    Fixture.install([sse([String(decoding: start, as: UTF8.self), #"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}"#, #"{"type":"message_stop"}"#])])
+    try check(
+        legacy.text == "legacy" && legacy.metadata == ModelMetadata(), "legacy text-only missing metadata remains valid"
+    )
+    body["content"] = .array([])
+    body["stop_reason"] = .null
+    let start = try JSONEncoder().encode(
+        ModelJSON.object(["type": .string("message_start"), "message": .object(body)]))
+    Fixture.install([
+        sse([
+            String(decoding: start, as: UTF8.self),
+            #"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}"#,
+            #"{"type":"message_stop"}"#,
+        ])
+    ])
     var chunks: [ModelStreamChunk] = []
     for try await chunk in transport.stream(try baseRequest()) { chunks.append(chunk) }
-    try check(chunks.count == 3 && chunks.filter(\.isFinal).count == 1 && chunks.last?.completion?.blocks == [] && chunks.last?.completion?.metadata.messageID == body["id"]?.string, "valid empty full SSE with bounded opaque identity")
+    try check(
+        chunks.count == 3 && chunks.filter(\.isFinal).count == 1 && chunks.last?.completion?.blocks == []
+            && chunks.last?.completion?.metadata.messageID == body["id"]?.string,
+        "valid empty full SSE with bounded opaque identity")
 }

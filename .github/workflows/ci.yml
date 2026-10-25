@@ -19,7 +19,7 @@ defaults:
 
 jobs:
   lint:
-    name: Workflow and Python syntax
+    name: Workflow syntax and Python lint
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -31,6 +31,19 @@ jobs:
           python-version: '3.13'
       - name: Check Python syntax
         run: python3 -m compileall -q scripts Tests Tools
+      - name: Lint and format-check Python with pinned ruff
+        env:
+          RUFF_VERSION: 0.17.1
+          RUFF_SHA256: a293ac937715ae6fb6b64da86761598379e6149f40fbc00fde9ba8a2a562ac65
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$RUNNER_TEMP/ruff.tar.gz"
+          printf '%s  %s\n' "$RUFF_SHA256" "$RUNNER_TEMP/ruff.tar.gz" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/ruff.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 ruff-x86_64-unknown-linux-gnu/ruff
+          "$RUNNER_TEMP/ruff" --version
+          "$RUNNER_TEMP/ruff" check --output-format github .
+          "$RUNNER_TEMP/ruff" format --check --diff .
       - name: Check workflow syntax with pinned actionlint
         env:
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -108,6 +121,10 @@ jobs:
           xcodebuild -version
           swift --version
           python3 --version
+      - name: Swift format lint (toolchain swift-format, .swift-format)
+        run: |
+          swift format --version
+          git ls-files -z '*.swift' | xargs -0 swift format lint --strict --parallel
       - name: Build all Debug targets
         run: swift build
       - name: Public contract checks

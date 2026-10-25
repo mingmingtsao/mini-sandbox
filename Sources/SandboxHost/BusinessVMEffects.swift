@@ -1,5 +1,5 @@
-import Foundation
 import Darwin
+import Foundation
 @preconcurrency import Virtualization
 
 /// Prepared and invoked on the VM queue. The lifecycle takes this concrete
@@ -14,8 +14,11 @@ final class BusinessVMPreparedStart: @unchecked Sendable {
     private var cancelled = false
     private var started = false
     init(machine: VZVirtualMachine, session: BusinessVMSession) {
-        handle = session.handle; generation = session.grant.epoch
-        self.machine = machine; self.session = session; queue = session.queue
+        handle = session.handle
+        generation = session.grant.epoch
+        self.machine = machine
+        self.session = session
+        queue = session.queue
     }
     func acquireForStart() { lock.lock() }
     func releaseForStart() { lock.unlock() }
@@ -55,24 +58,34 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     private var writeCount = 0
     private var backpressureCount = 0
 
-    init(connection: BusinessVMConnection, handle: HostRunHandle, scope: RunEffectScope,
-         body: Data, actionID: UUID? = nil, notBefore: Date? = nil, startDeadline: Date? = nil) throws {
+    init(
+        connection: BusinessVMConnection, handle: HostRunHandle, scope: RunEffectScope,
+        body: Data, actionID: UUID? = nil, notBefore: Date? = nil, startDeadline: Date? = nil
+    ) throws {
         guard connection.lifecycle === handle.lifecycle, connection.runID == handle.runID,
-              connection.epoch == scope.generation, !body.isEmpty, body.count <= 16_384,
-              [.control, .workspace, .permission].contains(connection.service) else { throw BusinessVMError.invalidOwner }
+            connection.epoch == scope.generation, !body.isEmpty, body.count <= 16_384,
+            [.control, .workspace, .permission].contains(connection.service)
+        else { throw BusinessVMError.invalidOwner }
         if connection.service == .permission {
             guard actionID != nil, scope.connectionID != nil,
-                  let notBefore, let startDeadline, notBefore < startDeadline else { throw BusinessVMError.invalidOwner }
-            self.bytes = body; retireAfterFrame = true
+                let notBefore, let startDeadline, notBefore < startDeadline
+            else { throw BusinessVMError.invalidOwner }
+            self.bytes = body
+            retireAfterFrame = true
         } else {
             guard actionID == nil, notBefore == nil, startDeadline == nil else { throw BusinessVMError.invalidOwner }
             var length = UInt32(body.count).bigEndian
             self.bytes = withUnsafeBytes(of: &length) { Data($0) } + body
             retireAfterFrame = false
         }
-        self.handle = handle; generation = scope.generation; self.scope = scope
-        lifecycle = handle.lifecycle; channelID = connection.id; self.actionID = actionID
-        self.notBefore = notBefore; self.startDeadline = startDeadline
+        self.handle = handle
+        generation = scope.generation
+        self.scope = scope
+        lifecycle = handle.lifecycle
+        channelID = connection.id
+        self.actionID = actionID
+        self.notBefore = notBefore
+        self.startDeadline = startDeadline
         self.connection = connection
         descriptor = try connection.takeFrameDescriptor(bytes: bytes.count)
     }
@@ -82,12 +95,17 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     package var writeCalls: Int { lock.withLock { writeCount } }
     package var backpressureWrites: Int { lock.withLock { backpressureCount } }
     package func acceptNext() throws -> Bool {
-        do { return try lifecycle.acceptVMFrame(self) }
-        catch { cancel(); throw error }
+        do { return try lifecycle.acceptVMFrame(self) } catch {
+            cancel()
+            throw error
+        }
     }
     func acquireForAcceptance() -> Bool {
         guard lock.try() else { return false }
-        guard connection.acquireFrameEffect() else { lock.unlock(); return false }
+        guard connection.acquireFrameEffect() else {
+            lock.unlock()
+            return false
+        }
         return true
     }
     func prepareAcceptanceLocked() throws {
@@ -115,21 +133,29 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     }
     private func detachLocked() {
         guard !terminal else { return }
-        terminal = true; cleanupDescriptor = descriptor; descriptor = -1; cleanupOwner = true
+        terminal = true
+        cleanupDescriptor = descriptor
+        descriptor = -1
+        cleanupOwner = true
     }
     func releaseForAcceptance() {
-        let fd = cleanupDescriptor, finish = cleanupOwner
+        let fd = cleanupDescriptor
+        let finish = cleanupOwner
         let retire = retireAfterFrame || offset != bytes.count
-        cleanupDescriptor = -1; cleanupOwner = false
+        cleanupDescriptor = -1
+        cleanupOwner = false
         connection.releaseFrameEffect()
         lock.unlock()
         if fd >= 0 { Darwin.close(fd) }
         if finish { connection.finishFrame(retire: retire) }
     }
     package func cancel() {
-        lock.lock(); detachLocked()
-        let fd = cleanupDescriptor, finish = cleanupOwner
-        cleanupDescriptor = -1; cleanupOwner = false
+        lock.lock()
+        detachLocked()
+        let fd = cleanupDescriptor
+        let finish = cleanupOwner
+        cleanupDescriptor = -1
+        cleanupOwner = false
         lock.unlock()
         if fd >= 0 { Darwin.close(fd) }
         if finish { connection.finishFrame(retire: true) }

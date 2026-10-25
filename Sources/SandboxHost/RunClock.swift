@@ -3,7 +3,10 @@ import Foundation
 /// Closed host time source. Production has no injectable callback/provider.
 /// Manual storage is package-only fixture support, never a guest capability.
 public final class RunClock: @unchecked Sendable {
-    struct Sample { let wall: Date; let elapsed: Duration }
+    struct Sample {
+        let wall: Date
+        let elapsed: Duration
+    }
     private let origin = ContinuousClock.now
     private let fixture: Fixture?
     private final class Fixture: @unchecked Sendable {
@@ -15,7 +18,10 @@ public final class RunClock: @unchecked Sendable {
         var pulseWall: Date?
         var persistent = false
         var fired = false
-        init(_ wall: Date, _ elapsed: Duration?) { self.wall = wall; self.elapsed = elapsed }
+        init(_ wall: Date, _ elapsed: Duration?) {
+            self.wall = wall
+            self.elapsed = elapsed
+        }
     }
     private init(_ fixture: Fixture?) { self.fixture = fixture }
     public static func system() -> RunClock { RunClock(nil) }
@@ -28,7 +34,8 @@ public final class RunClock: @unchecked Sendable {
                 fixture.reads += 1
                 var wall = fixture.wall
                 if let at = fixture.pulseAt, fixture.reads >= at, fixture.persistent || fixture.reads == at {
-                    wall = fixture.pulseWall!; fixture.fired = true
+                    wall = fixture.pulseWall!
+                    fixture.fired = true
                 }
                 return Sample(wall: wall, elapsed: fixture.elapsed ?? origin.duration(to: ContinuousClock.now))
             }
@@ -46,7 +53,10 @@ public final class RunClock: @unchecked Sendable {
     }
     package func set(wall: Date, elapsed: Duration? = nil) {
         guard let fixture else { preconditionFailure("system clock is immutable") }
-        fixture.lock.withLock { fixture.wall = wall; if let elapsed { fixture.elapsed = elapsed } }
+        fixture.lock.withLock {
+            fixture.wall = wall
+            if let elapsed { fixture.elapsed = elapsed }
+        }
     }
     package func advance(_ seconds: TimeInterval) {
         guard let fixture else { preconditionFailure("system clock is immutable") }
@@ -55,7 +65,13 @@ public final class RunClock: @unchecked Sendable {
     package func arm(at read: Int, wall: Date, persistent: Bool = false) {
         precondition(read > 0)
         guard let fixture else { preconditionFailure("system clock is immutable") }
-        fixture.lock.withLock { fixture.reads = 0; fixture.fired = false; fixture.pulseAt = read; fixture.pulseWall = wall; fixture.persistent = persistent }
+        fixture.lock.withLock {
+            fixture.reads = 0
+            fixture.fired = false
+            fixture.pulseAt = read
+            fixture.pulseWall = wall
+            fixture.persistent = persistent
+        }
     }
     package func disarm() { fixture?.lock.withLock { fixture?.pulseAt = nil } }
     package var observation: (Int, Bool) {

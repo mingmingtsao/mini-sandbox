@@ -1,4 +1,5 @@
 """Compile-time API boundary checks; run after `swift build`."""
+
 import os
 import subprocess
 import tempfile
@@ -7,21 +8,30 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
 class PublicAPITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.modules = Path(subprocess.check_output(
-            ["swift", "build", "--show-bin-path"], cwd=ROOT, text=True).strip()) / "Modules"
+        cls.modules = (
+            Path(subprocess.check_output(["swift", "build", "--show-bin-path"], cwd=ROOT, text=True).strip())
+            / "Modules"
+        )
 
     def compile(self, body):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR", str(ROOT / ".build"))) as directory:
             source = Path(directory) / "Client.swift"
             source.write_text("import Foundation\nimport SandboxContracts\nimport SandboxHost\n" + body)
-            return subprocess.run(["xcrun", "swiftc", "-typecheck", "-I", str(self.modules), str(source)],
-                                  cwd=ROOT, text=True, capture_output=True)
+            return subprocess.run(
+                ["xcrun", "swiftc", "-typecheck", "-I", str(self.modules), str(source)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
 
     def test_public_types_are_importable(self):
-        result = self.compile("func inspect(_ grant: RunGrant, _ action: PendingAction, _ event: SecurityEvent) { _ = event.origin }\n")
+        result = self.compile(
+            "func inspect(_ grant: RunGrant, _ action: PendingAction, _ event: SecurityEvent) { _ = event.origin }\n"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_client_cannot_construct_host_enforcement_event(self):
@@ -58,9 +68,22 @@ print("PASS guest diagnostic excluded; host rejection requires notDispatched")
             executable = folder / "EventChecks"
             objects = sorted((self.modules.parent / "SandboxContracts.build").glob("*.swift.o"))
             self.assertTrue(objects)
-            compile_result = subprocess.run(["xcrun", "swiftc", "-I", str(self.modules),
-                str(ROOT / "Sources/SandboxHost/SecurityEvent.swift"), str(source),
-                *map(str, objects), "-o", str(executable)], cwd=ROOT, text=True, capture_output=True)
+            compile_result = subprocess.run(
+                [
+                    "xcrun",
+                    "swiftc",
+                    "-I",
+                    str(self.modules),
+                    str(ROOT / "Sources/SandboxHost/SecurityEvent.swift"),
+                    str(source),
+                    *map(str, objects),
+                    "-o",
+                    str(executable),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
             result = subprocess.run([str(executable)], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -71,6 +94,7 @@ print("PASS guest diagnostic excluded; host rejection requires notDispatched")
                 result = self.compile(f'let object = try JSONDecoder().decode({name}.self, from: Data())\n')
                 self.assertNotEqual(result.returncode, 0, f"{name} became Decodable")
                 self.assertIn("Decodable", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,21 +22,40 @@ class DriverChecks(unittest.TestCase):
             directory = Path(directory)
             pidfile = directory / "owned-child.pid"
             child = directory / "child.py"
-            child.write_text("#!" + sys.executable + "\nimport os, time\n"
-                             + "from pathlib import Path\n"
-                             + f"Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
-                             + child_body)
+            child.write_text(
+                "#!"
+                + sys.executable
+                + "\nimport os, time\n"
+                + "from pathlib import Path\n"
+                + f"Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
+                + child_body
+            )
             child.chmod(0o700)
-            bootstrap = ("import faulthandler, os, runpy, sys; "
-                         "faulthandler.dump_traceback_later(6); "
-                         "driver = sys.argv.pop(1); "
-                         "sys.path.insert(0, os.path.dirname(driver)); "
-                         "runpy.run_path(driver, run_name='__main__')")
-            process = subprocess.Popen([sys.executable, "-c", bootstrap, str(DRIVER), "--binary", str(child),
-                                        "--overall-timeout", str(overall),
-                                        "--inactivity-timeout", str(inactivity)],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       start_new_session=True, text=True)
+            bootstrap = (
+                "import faulthandler, os, runpy, sys; "
+                "faulthandler.dump_traceback_later(6); "
+                "driver = sys.argv.pop(1); "
+                "sys.path.insert(0, os.path.dirname(driver)); "
+                "runpy.run_path(driver, run_name='__main__')"
+            )
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    bootstrap,
+                    str(DRIVER),
+                    "--binary",
+                    str(child),
+                    "--overall-timeout",
+                    str(overall),
+                    "--inactivity-timeout",
+                    str(inactivity),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                text=True,
+            )
             try:
                 try:
                     stdout, stderr = process.communicate(timeout=8)
@@ -73,17 +92,19 @@ class DriverChecks(unittest.TestCase):
         self.assertIn("inactivity deadline exceeded", output)
 
     def test_partial_output_cannot_extend_overall_deadline(self):
-        output = self.run_child_case("for _ in range(1000):\n    os.write(1, b'x')\n    time.sleep(0.05)\n", overall=2.5)
+        output = self.run_child_case(
+            "for _ in range(1000):\n    os.write(1, b'x')\n    time.sleep(0.05)\n", overall=2.5
+        )
         self.assertIn("overall deadline exceeded", output)
 
     def test_invalid_driver_selector(self):
-        result = subprocess.run([sys.executable, str(DRIVER), "--not-a-selector"],
-                                capture_output=True, timeout=3)
+        result = subprocess.run([sys.executable, str(DRIVER), "--not-a-selector"], capture_output=True, timeout=3)
         self.assertEqual(result.returncode, 2)
 
     def test_invalid_executable_selector(self):
-        result = subprocess.run([str(ROOT / ".build/debug/MCPGatewayChecks"), "invalid"],
-                                capture_output=True, timeout=3)
+        result = subprocess.run(
+            [str(ROOT / ".build/debug/MCPGatewayChecks"), "invalid"], capture_output=True, timeout=3
+        )
         self.assertEqual(result.returncode, 64)
 
     def bounded_output(self, body):

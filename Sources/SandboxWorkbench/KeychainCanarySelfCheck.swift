@@ -16,8 +16,10 @@ package enum KeychainCanarySelfCheck {
         package var osStatus: Int32?
     }
     package static func runPackaged() -> Report {
-        let identity = Bundle.main.bundleIdentifier == "dev.mini-sandbox.app" && Bundle.main.bundleURL.pathExtension == "app"
-        let provider = KeychainModelCredentialProvider(service: "dev.mini-sandbox.canary." + UUID().uuidString,
+        let identity =
+            Bundle.main.bundleIdentifier == "dev.mini-sandbox.app" && Bundle.main.bundleURL.pathExtension == "app"
+        let provider = KeychainModelCredentialProvider(
+            service: "dev.mini-sandbox.canary." + UUID().uuidString,
             account: "owned-fixture-" + UUID().uuidString)
         return exercise(store: KeychainFixedModelStore(provider: provider), packagedIdentity: identity)
     }
@@ -47,9 +49,13 @@ package enum KeychainCanarySelfCheck {
             result.verdict = "BLOCKED"
         } catch { result.verdict = "FAIL" }
         if owned {
-            do { try store.delete(); result.cleanup = try !store.check() }
-            catch CredentialProviderError.storageUnavailable(let status) { result.osStatus = status; result.verdict = "BLOCKED" }
-            catch { result.verdict = "FAIL" }
+            do {
+                try store.delete()
+                result.cleanup = try !store.check()
+            } catch CredentialProviderError.storageUnavailable(let status) {
+                result.osStatus = status
+                result.verdict = "BLOCKED"
+            } catch { result.verdict = "FAIL" }
         }
         if result.verdict == "PASS" && !result.cleanup { result.verdict = "FAIL" }
         return result

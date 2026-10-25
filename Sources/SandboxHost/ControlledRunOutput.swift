@@ -50,12 +50,15 @@ package final class ControlledRunOutput: @unchecked Sendable {
     }
     package var nativeProgress: NativeProgress? {
         lock.withLock {
-            native.map { NativeProgress(committedBytes: $0.committedBytes, writeCalls: $0.writeCalls, pendingBytes: $0.pendingBytes,
-                bufferedBytes: $0.bufferedBytes,
-                queuedEvents: $0.queuedEvents, acceptedEvents: $0.acceptedEvents, acceptedFinals: $0.acceptedFinals,
-                wouldBlockCount: $0.wouldBlockCount, partialWriteCount: $0.partialWriteCount, closed: $0.isClosed,
-                largestFrameBytes: $0.largestFrameBytes, peakQueuedEvents: $0.peakQueuedEvents,
-                peakBufferedBytes: $0.peakBufferedBytes, cumulativeEnqueuedBytes: $0.cumulativeEnqueuedBytes) }
+            native.map {
+                NativeProgress(
+                    committedBytes: $0.committedBytes, writeCalls: $0.writeCalls, pendingBytes: $0.pendingBytes,
+                    bufferedBytes: $0.bufferedBytes,
+                    queuedEvents: $0.queuedEvents, acceptedEvents: $0.acceptedEvents, acceptedFinals: $0.acceptedFinals,
+                    wouldBlockCount: $0.wouldBlockCount, partialWriteCount: $0.partialWriteCount, closed: $0.isClosed,
+                    largestFrameBytes: $0.largestFrameBytes, peakQueuedEvents: $0.peakQueuedEvents,
+                    peakBufferedBytes: $0.peakBufferedBytes, cumulativeEnqueuedBytes: $0.cumulativeEnqueuedBytes)
+            }
         }
     }
     // Actual consumer state, not just test counters. It is deliberately not a
@@ -79,34 +82,50 @@ package final class ControlledRunOutput: @unchecked Sendable {
     }
     private var preparedAcceptance: PreparedAcceptance?
     package init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID? = nil) {
-        self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
+        self.lifecycle = lifecycle
+        self.scope = scope
+        self.actionID = actionID
         self.native = nil
     }
     // Internal host binding; gateway factory derives the scope and wire mode from
     // the approved request. Descriptor ownership transfers even on setup failure.
-    init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID? = nil,
-         takingAcceptedSocket fd: Int32, streaming: Bool, mcp: Bool = false) throws {
-        self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
+    init(
+        lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID? = nil,
+        takingAcceptedSocket fd: Int32, streaming: Bool, mcp: Bool = false
+    ) throws {
+        self.lifecycle = lifecycle
+        self.scope = scope
+        self.actionID = actionID
         native = try NativeResponseChannel(takingAcceptedSocket: fd, streaming: streaming, mcp: mcp)
     }
-    init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID,
-         takingVMConnection owner: BusinessVMConnection, streaming: Bool, mcp: Bool = false) throws {
-        self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
+    init(
+        lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID,
+        takingVMConnection owner: BusinessVMConnection, streaming: Bool, mcp: Bool = false
+    ) throws {
+        self.lifecycle = lifecycle
+        self.scope = scope
+        self.actionID = actionID
         native = try NativeResponseChannel(takingVMConnection: owner, streaming: streaming, mcp: mcp)
     }
     package func enqueue(_ event: Event) throws {
         if try lock.withLock({ () throws -> Bool in
             guard !cancelled else { throw CancellationError() }
             guard let native else { return false }
-            try native.enqueue(event); return true
-        }) { return }
+            try native.enqueue(event)
+            return true
+        }) {
+            return
+        }
         if case .mcpResponse = event { throw NativeResponseError.invalidEvent }
         // Bounded, outside the authority lock. Reflection is used only to measure
         // retained value size, never emitted/logged or used as protocol encoding.
         let bytes = String(reflecting: event).utf8.count
         try lock.withLock {
-            guard !cancelled, queue.count < 256, bytes <= 8 * 1024 * 1024 - retainedBytes else { throw HostModelGatewayError.busy }
-            retainedBytes += bytes; queue.append(event)
+            guard !cancelled, queue.count < 256, bytes <= 8 * 1024 * 1024 - retainedBytes else {
+                throw HostModelGatewayError.busy
+            }
+            retainedBytes += bytes
+            queue.append(event)
         }
     }
     /// Native mode: true means one bounded send committed bytes. False may mean
@@ -118,10 +137,14 @@ package final class ControlledRunOutput: @unchecked Sendable {
     func acquireForAcceptance() -> Bool {
         if let native {
             guard lock.try() else { return false }
-            guard native.acquireOwnerForAcceptance() else { lock.unlock(); return false }
+            guard native.acquireOwnerForAcceptance() else {
+                lock.unlock()
+                return false
+            }
             return true
         }
-        lock.lock(); return true
+        lock.lock()
+        return true
     }
     func releaseForAcceptance() {
         let cleanup = native?.takeCleanup()
@@ -140,7 +163,8 @@ package final class ControlledRunOutput: @unchecked Sendable {
         if case .mcpCompletion(let value) = event, let id = value.sourceToolUseID {
             guard ModelBlock.validID(id) else { throw HostMCPGatewayError.denied }
         }
-        let previous = AcceptanceState(text: text, completion: completion, metadata: latestMetadata,
+        let previous = AcceptanceState(
+            text: text, completion: completion, metadata: latestMetadata,
             tools: toolResults, finals: finals, metadataCount: metadata)
         var next = previous
         switch event {
@@ -148,29 +172,42 @@ package final class ControlledRunOutput: @unchecked Sendable {
             next.text += chunk.text
             if chunk.isFinal { next.finals += 1 }
             if case .messageStart(let value) = chunk.event { next.metadata = value }
-            if case .messageDelta(let value) = chunk.event { next.metadata = value; next.metadataCount += 1 }
+            if case .messageDelta(let value) = chunk.event {
+                next.metadata = value
+                next.metadataCount += 1
+            }
             if let value = chunk.completion { next.completion = value }
-        case .modelCompletion(let value): next.completion = value; next.text = value.text; next.finals += 1
+        case .modelCompletion(let value):
+            next.completion = value
+            next.text = value.text
+            next.finals += 1
         case .mcpCompletion(let value):
-            next.text = value.text; next.finals += 1
-            if let id = value.sourceToolUseID { next.tools.append(.toolResult(toolUseID: id, content: value.text, isError: false)) }
+            next.text = value.text
+            next.finals += 1
+            if let id = value.sourceToolUseID {
+                next.tools.append(.toolResult(toolUseID: id, content: value.text, isError: false))
+            }
         case .mcpResponse: throw NativeResponseError.invalidEvent
         }
         preparedAcceptance = PreparedAcceptance(event: event, previous: previous, next: next)
     }
     func acceptLocked() throws -> Bool {
-            try Task.checkCancellation()
-            guard !cancelled else { throw CancellationError() }
-            // Concrete nonblocking socket effect under the unchanged lifecycle
-            // fence and this receiver's cancellation mutex. No callback or Task.
-            if let native { return try native.acceptOne() }
-            guard let preparedAcceptance else { return false }
-            let next = preparedAcceptance.next
-            text = next.text; completion = next.completion; latestMetadata = next.metadata
-            toolResults = next.tools; finals = next.finals; metadata = next.metadataCount
-            queue.removeFirst()
-            accepted += 1
-            return true
+        try Task.checkCancellation()
+        guard !cancelled else { throw CancellationError() }
+        // Concrete nonblocking socket effect under the unchanged lifecycle
+        // fence and this receiver's cancellation mutex. No callback or Task.
+        if let native { return try native.acceptOne() }
+        guard let preparedAcceptance else { return false }
+        let next = preparedAcceptance.next
+        text = next.text
+        completion = next.completion
+        latestMetadata = next.metadata
+        toolResults = next.tools
+        finals = next.finals
+        metadata = next.metadataCount
+        queue.removeFirst()
+        accepted += 1
+        return true
     }
     package func cancel() {
         lock.lock()
@@ -184,11 +221,15 @@ package final class ControlledRunOutput: @unchecked Sendable {
         withExtendedLifetime(discarded) {}
     }
     package var summary: Summary {
-        lock.withLock { Summary(queuedEvents: queue.count, acceptedEvents: accepted, acceptedTextBytes: text.utf8.count,
-                               acceptedFinals: finals, acceptedMetadata: metadata, acceptedToolResults: toolResults.count) }
+        lock.withLock {
+            Summary(
+                queuedEvents: queue.count, acceptedEvents: accepted, acceptedTextBytes: text.utf8.count,
+                acceptedFinals: finals, acceptedMetadata: metadata, acceptedToolResults: toolResults.count)
+        }
     }
     func matches(_ lifecycle: RunLifecycle, _ scope: RunEffectScope, actionID: UUID) -> Bool {
-        self.actionID == actionID && self.lifecycle === lifecycle && self.scope.generation == scope.generation &&
-        self.scope.connectionID == scope.connectionID && self.scope.connectionRevision == scope.connectionRevision
+        self.actionID == actionID && self.lifecycle === lifecycle && self.scope.generation == scope.generation
+            && self.scope.connectionID == scope.connectionID
+            && self.scope.connectionRevision == scope.connectionRevision
     }
 }

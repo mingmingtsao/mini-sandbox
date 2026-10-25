@@ -1,5 +1,5 @@
-import Foundation
 import Darwin
+import Foundation
 
 /// A bare `swift run MCPGatewayChecks` has no loopback fixture on stdin. Re-run
 /// this same binary under its repository driver, which starts the fixture and
@@ -22,9 +22,11 @@ enum DriverDelegation {
         }
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let script: URL, arguments: [String]
+        let script: URL
+        let arguments: [String]
         guard let binary = Bundle.main.executableURL?.resolvingSymlinksInPath().path else {
-            output("FAIL cannot resolve MCPGatewayChecks executable path"); exit(1)
+            output("FAIL cannot resolve MCPGatewayChecks executable path")
+            exit(1)
         }
         if selector == ["--claude-native"] {
             script = root.appendingPathComponent("Tests/MCPGatewayChecks/claude_loopback.py")
@@ -47,7 +49,8 @@ enum DriverDelegation {
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch {
-            output("FAIL cannot start python3 loopback driver: \(error)"); exit(1)
+            output("FAIL cannot start python3 loopback driver: \(error)")
+            exit(1)
         }
         process.waitUntilExit()
         exit(process.terminationReason == .exit ? process.terminationStatus : 1)

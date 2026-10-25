@@ -4,6 +4,7 @@
 Run through the coordinator's build queue when one is required. The new private
 output directory must not exist. No signing, VM launch, credentials or network.
 """
+
 import hashlib
 import json
 import os
@@ -13,8 +14,17 @@ import sys
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in {"fixture", "runtime-checks", "runtime-probe", "business-probe", "business-fixture", "permission-clock"}:
-        raise SystemExit("usage: build_host.py fixture|runtime-checks|runtime-probe|business-probe|business-fixture|permission-clock NEW_OUTPUT_DIRECTORY")
+    if len(sys.argv) != 3 or sys.argv[1] not in {
+        "fixture",
+        "runtime-checks",
+        "runtime-probe",
+        "business-probe",
+        "business-fixture",
+        "permission-clock",
+    }:
+        raise SystemExit(
+            "usage: build_host.py fixture|runtime-checks|runtime-probe|business-probe|business-fixture|permission-clock NEW_OUTPUT_DIRECTORY"
+        )
     root = Path(__file__).resolve().parents[2]
     out = Path(sys.argv[2]).absolute()
     os.umask(0o077)
@@ -35,8 +45,26 @@ def main():
     if not sources or not objects:
         raise SystemExit("missing concrete host/contract build inputs")
     entry_flags = [] if sys.argv[1] == "runtime-probe" else ["-parse-as-library"]
-    fixture_flags = ["-DSANDBOX_TEST_FIXTURES", "-enable-testing"] if sys.argv[1] in {"business-probe", "business-fixture", "permission-clock"} else []
-    command = ["swiftc", *entry_flags, *fixture_flags, "-package-name", "MiniSandbox", "-swift-version", "6", "-I", str(binary_dir / "Modules"), *map(str, sources), *map(str, objects), "-o", str(out / "host")]
+    fixture_flags = (
+        ["-DSANDBOX_TEST_FIXTURES", "-enable-testing"]
+        if sys.argv[1] in {"business-probe", "business-fixture", "permission-clock"}
+        else []
+    )
+    command = [
+        "swiftc",
+        *entry_flags,
+        *fixture_flags,
+        "-package-name",
+        "MiniSandbox",
+        "-swift-version",
+        "6",
+        "-I",
+        str(binary_dir / "Modules"),
+        *map(str, sources),
+        *map(str, objects),
+        "-o",
+        str(out / "host"),
+    ]
     hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources + objects}
     print(json.dumps({"command": command}), flush=True)
     subprocess.run(command, cwd=root, check=True)
@@ -44,7 +72,9 @@ def main():
     if hashes != after or sorted((root / "Sources/SandboxHost").glob("*.swift")) != sources[:-1]:
         raise SystemExit("build inputs changed during compile; binary is not accepted evidence")
     hashes["host"] = hashlib.sha256((out / "host").read_bytes()).hexdigest()
-    (out / "build.json").write_text(json.dumps({"mode": sys.argv[1], "command": command, "sha256": hashes}, indent=2) + "\n")
+    (out / "build.json").write_text(
+        json.dumps({"mode": sys.argv[1], "command": command, "sha256": hashes}, indent=2) + "\n"
+    )
 
 
 if __name__ == "__main__":

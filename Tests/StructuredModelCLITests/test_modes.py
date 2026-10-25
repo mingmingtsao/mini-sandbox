@@ -1,4 +1,5 @@
 """Credential-free CLI safety regressions; never invokes a live provider."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -20,7 +21,9 @@ class StructuredModelCLITests(unittest.TestCase):
         # env removes the one variable without Python reading or logging its value.
         return subprocess.run(
             ["/usr/bin/env", "-u", "TEST_DEEPSEEK_KEY", str(self.binary), *args],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
 
     def test_malformed_modes_refuse_before_fixtures_or_evidence(self):

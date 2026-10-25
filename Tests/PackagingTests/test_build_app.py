@@ -1,4 +1,5 @@
 """Regression tests for packaging path and ownership safety."""
+
 import contextlib
 import importlib.util
 import io
@@ -50,10 +51,12 @@ class PackagingTests(unittest.TestCase):
             self.commands.append(tuple(args))
             return str(self.bin_dir)
 
-        with mock.patch.object(self.build_app, "run", side_effect=fake_run), \
-                mock.patch.object(self.build_app.subprocess, "check_output", side_effect=fake_check_output), \
-                mock.patch.object(sys, "argv", [str(SCRIPT), *extra]), \
-                contextlib.redirect_stdout(io.StringIO()) as output:
+        with (
+            mock.patch.object(self.build_app, "run", side_effect=fake_run),
+            mock.patch.object(self.build_app.subprocess, "check_output", side_effect=fake_check_output),
+            mock.patch.object(sys, "argv", [str(SCRIPT), *extra]),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
             self.build_app.main()
         return json.loads(output.getvalue())
 
@@ -142,12 +145,16 @@ class PackagingTests(unittest.TestCase):
     def test_signing_failure_preserves_previous_bundle(self):
         first = self.run_build()
         output = Path(first["app"])
+
         def fail_sign(*args):
             if args[0] == "codesign":
                 raise subprocess.CalledProcessError(1, args)
-        with mock.patch.object(self.build_app, "run", side_effect=fail_sign), \
-                mock.patch.object(self.build_app.subprocess, "check_output", return_value=str(self.bin_dir)), \
-                mock.patch.object(sys, "argv", [str(SCRIPT)]):
+
+        with (
+            mock.patch.object(self.build_app, "run", side_effect=fail_sign),
+            mock.patch.object(self.build_app.subprocess, "check_output", return_value=str(self.bin_dir)),
+            mock.patch.object(sys, "argv", [str(SCRIPT)]),
+        ):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.build_app.main()
         self.assertEqual((output / "Contents/MacOS/MiniSandbox").read_bytes(), b"test executable")
@@ -156,10 +163,12 @@ class PackagingTests(unittest.TestCase):
         with self.build_app.ENTITLEMENTS.open("rb") as stream:
             self.assertEqual(plistlib.load(stream), {"com.apple.security.virtualization": True})
         commands = []
-        with mock.patch.object(self.build_app, "run", side_effect=lambda *args: commands.append(args)), \
-                mock.patch.object(self.build_app.subprocess, "check_output", return_value=str(self.bin_dir)), \
-                mock.patch.object(sys, "argv", [str(SCRIPT)]), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            mock.patch.object(self.build_app, "run", side_effect=lambda *args: commands.append(args)),
+            mock.patch.object(self.build_app.subprocess, "check_output", return_value=str(self.bin_dir)),
+            mock.patch.object(sys, "argv", [str(SCRIPT)]),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             self.build_app.main()
         signing = [args for args in commands if args[:2] == ("codesign", "--force")]
         self.assertEqual(len(signing), 1)

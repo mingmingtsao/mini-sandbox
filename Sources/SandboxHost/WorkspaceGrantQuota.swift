@@ -26,26 +26,33 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
             guard snapshot.grantSnapshotID == snapshotID else { throw WorkspaceError.foreignSnapshot }
             if let existing = workspaceBindingValue {
                 guard existing.storeOwner == storeOwner, existing.snapshot == snapshot,
-                      existing.workflowOwner == workflow.owner, existing.workflowGeneration == workflow.generation else { throw WorkspaceError.foreignSnapshot }
+                    existing.workflowOwner == workflow.owner, existing.workflowGeneration == workflow.generation
+                else { throw WorkspaceError.foreignSnapshot }
                 return
             }
-            workspaceBindingValue = WorkspaceRunBinding(handle: handle, notBefore: notBefore, snapshot: snapshot, storeOwner: storeOwner, workflow: workflow)
+            workspaceBindingValue = WorkspaceRunBinding(
+                handle: handle, notBefore: notBefore, snapshot: snapshot, storeOwner: storeOwner, workflow: workflow)
         }
     }
     var task: TaskQuotaLedger? { taskLock.withLock { taskValue } }
 
-    func createTask(storeOwner: UUID, limits: WorkspaceTaskLimits, store: WorkspaceLimits,
-                    workflow: WorkspaceWorkflowBinding) throws -> TaskQuotaLedger {
+    func createTask(
+        storeOwner: UUID, limits: WorkspaceTaskLimits, store: WorkspaceLimits,
+        workflow: WorkspaceWorkflowBinding
+    ) throws -> TaskQuotaLedger {
         try taskLock.withLock {
             if let taskValue {
-                guard taskValue.storeOwner == storeOwner, taskValue.hostLimits == limits else { throw WorkspaceTransferError.rejected }
+                guard taskValue.storeOwner == storeOwner, taskValue.hostLimits == limits else {
+                    throw WorkspaceTransferError.rejected
+                }
                 try taskValue.workflow.validate()
                 return taskValue
             }
             // Installing limits after ingress would erase prior cumulative input.
             guard !transferStarted else { throw WorkspaceTransferError.rejected }
-            let value = try TaskQuotaLedger(storeOwner: storeOwner, snapshotID: snapshotID, limits: limits,
-                                            store: store, quota: self, workflow: workflow)
+            let value = try TaskQuotaLedger(
+                storeOwner: storeOwner, snapshotID: snapshotID, limits: limits,
+                store: store, quota: self, workflow: workflow)
             taskValue = value
             return value
         }
@@ -64,7 +71,8 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
         // Clamp in UInt64 BEFORE conversion; UInt64.max must never trap/wrap.
         let memoryBytes = Int(min(UInt64(128 * 1024 * 1024), grant.resourceLimits.memoryBytes))
         let diskBytes = Int(min(UInt64(128 * 1024 * 1024), grant.resourceLimits.diskBytes))
-        memoryCeiling = memoryBytes; diskCeiling = diskBytes
+        memoryCeiling = memoryBytes
+        diskCeiling = diskBytes
         memory = WorkspaceTransferBudget(capacity: memoryBytes)
         disk = WorkspaceTransferBudget(capacity: diskBytes)
         byteCeiling = min(memoryBytes, diskBytes)
@@ -79,8 +87,10 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
     }
     private static let registry = Registry()
 
-    static func authenticated(authority: RunAuthorizationController,
-                              handle: HostRunHandle, grant: RunGrant) async throws -> WorkspaceGrantQuota {
+    static func authenticated(
+        authority: RunAuthorizationController,
+        handle: HostRunHandle, grant: RunGrant
+    ) async throws -> WorkspaceGrantQuota {
         try await authority.validateAttachment(handle: handle, grant: grant)
         return try installed(handle: handle, grant: grant)
     }
@@ -88,11 +98,17 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
     /// Host-only synchronous attachment for a store whose exclusive ownership is
     /// transferred into WorkspaceRunSession. Provenance is immutable; all future
     /// effects still sample the existing lifecycle at their actual commit.
-    static func authenticatedForSession(authority: RunAuthorizationController,
-                                        handle: HostRunHandle, grant: RunGrant) throws -> WorkspaceGrantQuota {
-        guard try authority.installedGrantForOwnership(of: handle) == grant else { throw AuthorizationError.grantBindingMismatch }
+    static func authenticatedForSession(
+        authority: RunAuthorizationController,
+        handle: HostRunHandle, grant: RunGrant
+    ) throws -> WorkspaceGrantQuota {
+        guard try authority.installedGrantForOwnership(of: handle) == grant else {
+            throw AuthorizationError.grantBindingMismatch
+        }
         let observation = handle.lifecycle.observeAndReduce(reason: "workspace-session-install")
-        guard observation.status == .active, observation.generation == grant.epoch else { throw AuthorizationError.runRevoked }
+        guard observation.status == .active, observation.generation == grant.epoch else {
+            throw AuthorizationError.runRevoked
+        }
         guard observation.wallTime >= grant.createdAt else { throw AuthorizationError.grantNotYetValid }
         return try installed(handle: handle, grant: grant)
     }
@@ -132,14 +148,21 @@ package struct WorkspaceTaskLimits: Equatable, Sendable {
     package var messageBytes: UInt64 = 16384
     package var transferInstances: UInt64 = 64
     package var materializations: UInt64 = 64
-    package init(retainedPayloadBytes: UInt64, diskBytes: UInt64, cumulativeInputBytes: UInt64,
-                 fileBytes: UInt64 = 4 * 1024 * 1024, entries: UInt64 = 1000, depth: UInt64 = 15,
-                 pathBytes: UInt64 = 1024, messageBytes: UInt64 = 16384,
-                 transferInstances: UInt64 = 64, materializations: UInt64 = 64) {
-        self.retainedPayloadBytes = retainedPayloadBytes; self.diskBytes = diskBytes
-        self.cumulativeInputBytes = cumulativeInputBytes; self.fileBytes = fileBytes
-        self.entries = entries; self.depth = depth; self.pathBytes = pathBytes
-        self.messageBytes = messageBytes; self.transferInstances = transferInstances
+    package init(
+        retainedPayloadBytes: UInt64, diskBytes: UInt64, cumulativeInputBytes: UInt64,
+        fileBytes: UInt64 = 4 * 1024 * 1024, entries: UInt64 = 1000, depth: UInt64 = 15,
+        pathBytes: UInt64 = 1024, messageBytes: UInt64 = 16384,
+        transferInstances: UInt64 = 64, materializations: UInt64 = 64
+    ) {
+        self.retainedPayloadBytes = retainedPayloadBytes
+        self.diskBytes = diskBytes
+        self.cumulativeInputBytes = cumulativeInputBytes
+        self.fileBytes = fileBytes
+        self.entries = entries
+        self.depth = depth
+        self.pathBytes = pathBytes
+        self.messageBytes = messageBytes
+        self.transferInstances = transferInstances
         self.materializations = materializations
     }
 
@@ -160,20 +183,26 @@ final class TaskQuotaLedger: @unchecked Sendable {
     private let treeLimits: WorkspaceLimits
     private let attemptLock = NSLock()
     private var transfers = 0, writes = 0
-    fileprivate init(storeOwner: UUID, snapshotID: UUID, limits: WorkspaceTaskLimits,
-                     store: WorkspaceLimits, quota: WorkspaceGrantQuota,
-                     workflow: WorkspaceWorkflowBinding) throws {
+    fileprivate init(
+        storeOwner: UUID, snapshotID: UUID, limits: WorkspaceTaskLimits,
+        store: WorkspaceLimits, quota: WorkspaceGrantQuota,
+        workflow: WorkspaceWorkflowBinding
+    ) throws {
         guard limits.retainedPayloadBytes > 0, limits.diskBytes > 0, limits.cumulativeInputBytes > 0,
-              limits.fileBytes > 0, limits.entries > 0, limits.depth > 0,
-              limits.pathBytes > 0, limits.messageBytes > 0, limits.transferInstances > 0,
-              limits.materializations > 0 else { throw WorkspaceTransferError.rejected }
+            limits.fileBytes > 0, limits.entries > 0, limits.depth > 0,
+            limits.pathBytes > 0, limits.messageBytes > 0, limits.transferInstances > 0,
+            limits.materializations > 0
+        else { throw WorkspaceTransferError.rejected }
         try workflow.validate()
-        self.storeOwner = storeOwner; self.snapshotID = snapshotID
-        hostLimits = limits; self.workflow = workflow
+        self.storeOwner = storeOwner
+        self.snapshotID = snapshotID
+        hostLimits = limits
+        self.workflow = workflow
         func bound(_ value: UInt64, _ cap: Int) -> Int { Int(min(value, UInt64(cap))) }
         let payload = bound(limits.retainedPayloadBytes, min(store.totalBytes, quota.memoryCeiling, 128 * 1024 * 1024))
         let diskBytes = bound(limits.diskBytes, min(store.totalBytes, quota.diskCeiling, 128 * 1024 * 1024))
-        memory = WorkspaceTransferBudget(capacity: payload, cumulativeLimit: bound(limits.cumulativeInputBytes, 128 * 1024 * 1024))
+        memory = WorkspaceTransferBudget(
+            capacity: payload, cumulativeLimit: bound(limits.cumulativeInputBytes, 128 * 1024 * 1024))
         disk = WorkspaceTransferBudget(capacity: diskBytes, retainCommitted: true)
         messageBytes = bound(limits.messageBytes, quota.messageBytes)
         var tree = WorkspaceTransferWire.effectiveLimits(store)

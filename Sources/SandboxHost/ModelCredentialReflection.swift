@@ -30,8 +30,15 @@ final class ModelCredentialReflection: @unchecked Sendable {
 
     func clear() {
         lock.withLock {
-            credential = nil; tail = ""; pending.removeAll(); pendingBytes = 0; toolIndex = nil; unstructuredText = ""
-            pattern.removeAll(); fallback.removeAll(); matched = 0
+            credential = nil
+            tail = ""
+            pending.removeAll()
+            pendingBytes = 0
+            toolIndex = nil
+            unstructuredText = ""
+            pattern.removeAll()
+            fallback.removeAll()
+            matched = 0
         }
     }
 
@@ -49,7 +56,8 @@ final class ModelCredentialReflection: @unchecked Sendable {
             if let completion = chunk.completion { try validateCompletion(completion, credential) }
             if let event = chunk.event {
                 switch event {
-                case .messageStart(let metadata), .messageDelta(let metadata): try validateMetadata(metadata, credential)
+                case .messageStart(let metadata), .messageDelta(let metadata):
+                    try validateMetadata(metadata, credential)
                 case .messageStop(let completion): try validateCompletion(completion, credential)
                 case .blockStart(let index, let block):
                     try validateBlock(block, credential)
@@ -71,7 +79,7 @@ final class ModelCredentialReflection: @unchecked Sendable {
                         toolIndex = nil
                     }
                 case .textDelta(_, let text): try reject(text, credential)
-                case .inputJSONDelta: break // withheld until decoded blockStop
+                case .inputJSONDelta: break  // withheld until decoded blockStop
                 }
             }
             if !chunk.text.isEmpty {
@@ -89,20 +97,28 @@ final class ModelCredentialReflection: @unchecked Sendable {
             // the gateway's legacy nonterminal-text fallback. Delivery is still
             // incremental; this is not an EOF-only output buffer.
             if chunk.event == nil {
-                guard chunk.text.utf8.count <= ModelTransport.maxResponseBytes - unstructuredText.utf8.count else { throw ModelTransportError.responseTooLarge }
+                guard chunk.text.utf8.count <= ModelTransport.maxResponseBytes - unstructuredText.utf8.count else {
+                    throw ModelTransportError.responseTooLarge
+                }
                 unstructuredText += chunk.text
             }
-            pending.append(chunk.isFinal && chunk.event == nil ? ModelStreamChunk(finalCompletion: ModelCompletion(text: unstructuredText)) : chunk)
+            pending.append(
+                chunk.isFinal && chunk.event == nil
+                    ? ModelStreamChunk(finalCompletion: ModelCompletion(text: unstructuredText)) : chunk)
             // Event queue is bounded independently of total response bytes; one
             // tool block is additionally bounded by ModelJSON.maxBytes in codec.
             pendingBytes += chunk.text.utf8.count
             if case .inputJSONDelta(_, let part) = chunk.event { pendingBytes += part.utf8.count }
             guard pending.count <= ModelTransport.maxResponseBytes,
-                  pendingBytes <= ModelTransport.maxResponseBytes else { throw ModelTransportError.responseTooLarge }
+                pendingBytes <= ModelTransport.maxResponseBytes
+            else { throw ModelTransportError.responseTooLarge }
             if chunk.isFinal {
                 guard toolIndex == nil else { throw ModelTransportError.invalidResponse }
                 let result = pending.map { tail.isEmpty ? $0 : $0.gatedByCompletionAudit() }
-                pending.removeAll(); pendingBytes = 0; tail = ""; matched = 0
+                pending.removeAll()
+                pendingBytes = 0
+                tail = ""
+                matched = 0
                 return result
             }
             guard toolIndex == nil else { return [] }
@@ -116,11 +132,14 @@ final class ModelCredentialReflection: @unchecked Sendable {
                 let first = pending[consumed]
                 let count = first.text.unicodeScalars.count
                 if count <= safeCount {
-                    result.append(first); consumed += 1; safeCount -= count
+                    result.append(first)
+                    consumed += 1
+                    safeCount -= count
                 } else {
                     if safeCount > 0 {
                         let parts = splitText(first, count: safeCount)
-                        result.append(parts.0); pending[consumed] = parts.1
+                        result.append(parts.0)
+                        pending[consumed] = parts.1
                     }
                     break
                 }
@@ -140,11 +159,15 @@ final class ModelCredentialReflection: @unchecked Sendable {
         let suffix = String(String.UnicodeScalarView(scalars.dropFirst(count)))
         switch chunk.event {
         case .blockStart(let index, .text):
-            return (ModelStreamChunk(text: prefix, event: .blockStart(index: index, block: .text(prefix))),
-                    ModelStreamChunk(text: suffix, event: .textDelta(index: index, text: suffix)))
+            return (
+                ModelStreamChunk(text: prefix, event: .blockStart(index: index, block: .text(prefix))),
+                ModelStreamChunk(text: suffix, event: .textDelta(index: index, text: suffix))
+            )
         case .textDelta(let index, _):
-            return (ModelStreamChunk(text: prefix, event: .textDelta(index: index, text: prefix)),
-                    ModelStreamChunk(text: suffix, event: .textDelta(index: index, text: suffix)))
+            return (
+                ModelStreamChunk(text: prefix, event: .textDelta(index: index, text: prefix)),
+                ModelStreamChunk(text: suffix, event: .textDelta(index: index, text: suffix))
+            )
         default:
             return (ModelStreamChunk(text: prefix, isFinal: false), ModelStreamChunk(text: suffix, isFinal: false))
         }
@@ -161,19 +184,29 @@ final class ModelCredentialReflection: @unchecked Sendable {
         case .null: try reject("null", credential)
         case .array(let values): for value in values { try validateJSON(value, credential) }
         case .object(let fields):
-            for (key, value) in fields { try reject(key, credential); try validateJSON(value, credential) }
+            for (key, value) in fields {
+                try reject(key, credential)
+                try validateJSON(value, credential)
+            }
         }
     }
     private func validateBlock(_ block: ModelBlock, _ credential: String) throws {
         switch block {
         case .text(let text): try reject(text, credential)
         case .toolUse(let id, let name, let input):
-            try reject(id, credential); try reject(name, credential); try validateJSON(input, credential)
-        case .toolResult(let id, let content, _): try reject(id, credential); try reject(content, credential)
+            try reject(id, credential)
+            try reject(name, credential)
+            try validateJSON(input, credential)
+        case .toolResult(let id, let content, _):
+            try reject(id, credential)
+            try reject(content, credential)
         }
     }
     private func validateMetadata(_ metadata: ModelMetadata, _ credential: String) throws {
-        for value in [metadata.messageID, metadata.model, metadata.stopReason, metadata.stopSequence, metadata.usage?.serviceTier?.rawValue].compactMap({ $0 }) { try reject(value, credential) }
+        for value in [
+            metadata.messageID, metadata.model, metadata.stopReason, metadata.stopSequence,
+            metadata.usage?.serviceTier?.rawValue,
+        ].compactMap({ $0 }) { try reject(value, credential) }
         for (key, value) in metadata.usage?.values ?? [:] {
             try reject(key, credential)
             try reject(String(value), credential)

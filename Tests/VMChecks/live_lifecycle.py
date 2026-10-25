@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Opt-in REAL VM lifecycle regression. Run only via the local build/VM queue."""
+
 import argparse
 import hashlib
 import json
@@ -22,7 +23,11 @@ def attempt(args, root, name, cancel):
     evidence = root / name  # VMProbe requires a new directory.
     result = {'name': name, 'evidence': str(evidence), 'signals': []}
     with (root / (name + '.stdout')).open('wb') as out, (root / (name + '.stderr')).open('wb') as err:
-        p = subprocess.Popen([str(args.probe), '--run', '--bundle', str(args.bundle), '--evidence-dir', str(evidence)], stdout=out, stderr=err)
+        p = subprocess.Popen(
+            [str(args.probe), '--run', '--bundle', str(args.bundle), '--evidence-dir', str(evidence)],
+            stdout=out,
+            stderr=err,
+        )
         result['pid'] = p.pid
         deadline = time.monotonic() + 75
         try:
@@ -45,16 +50,31 @@ def attempt(args, root, name, cancel):
                 p.wait(timeout=5)
     seen = events(evidence / 'security-events.jsonl')
     ops = [e['operation'] for e in seen]
-    result['ordering'] = [{'operation': e['operation'], 'reason': e['reason'], 'hostSequence': e['hostSequence']} for e in seen if e['operation'] != 'vm.console']
+    result['ordering'] = [
+        {'operation': e['operation'], 'reason': e['reason'], 'hostSequence': e['hostSequence']}
+        for e in seen
+        if e['operation'] != 'vm.console'
+    ]
     failures = []
+
     def require(ok, message):
         if not ok:
             failures.append(message)
+
     require(result['exitCode'] == (1 if cancel else 0), 'wrong exit (abort is not cancellation)')
     require(not result.get('timeout'), 'runner timeout')
     require('vm.stopped' in ops, 'missing actual stopped record')
     require((evidence / 'result.json').exists(), 'missing result.json')
-    require(any(e['operation'] == 'vm.stopped' and e['reason'] == 'actual VZ state stopped' and e['origin'] == 'hostEnforcement' and e['outcome'] == 'completed' for e in seen), 'missing completed host VZ stopped evidence')
+    require(
+        any(
+            e['operation'] == 'vm.stopped'
+            and e['reason'] == 'actual VZ state stopped'
+            and e['origin'] == 'hostEnforcement'
+            and e['outcome'] == 'completed'
+            for e in seen
+        ),
+        'missing completed host VZ stopped evidence',
+    )
     if (evidence / 'result.json').exists():
         summary = json.loads((evidence / 'result.json').read_text())
         require(summary['exitCode'] == str(result['exitCode']), 'result.json exit disagrees with process')
@@ -62,24 +82,42 @@ def attempt(args, root, name, cancel):
     if 'vm.console.released' in ops:
         released = ops.index('vm.console.released')
         require('vm.stopped' in ops and ops.index('vm.stopped') < released, 'console released before actual stopped')
-        require('vm.start.callback' in ops and ops.index('vm.start.callback') < released, 'console released before start callback settled')
+        require(
+            'vm.start.callback' in ops and ops.index('vm.start.callback') < released,
+            'console released before start callback settled',
+        )
         if 'vm.stop.callback' in ops:
             require(ops.index('vm.stop.callback') < ops.index('vm.stopped'), 'stopped before stop callback settled')
     if 'vm.stopping' in ops:
-        tail = seen[ops.index('vm.stopping') + 1:]
-        require(not any(e['operation'] in ('vm.protocol.ping', 'vm.protocol.pong') and e['decision'] == 'allow' for e in tail), 'authorized ping/pong after stopping')
+        tail = seen[ops.index('vm.stopping') + 1 :]
+        require(
+            not any(
+                e['operation'] in ('vm.protocol.ping', 'vm.protocol.pong') and e['decision'] == 'allow' for e in tail
+            ),
+            'authorized ping/pong after stopping',
+        )
     else:
         require(False, 'missing stopping record')
     if cancel:
         require(bool(result['signals']), 'never observed vm.start/sent SIGINT')
         require('vm.start.callback' not in result.get('operationsAtSignal', []), 'signal missed pending start window')
-        require(any(e['operation'] == 'vm.stopping' and e['reason'] == 'cancelled' for e in seen), 'not cancellation cleanup')
+        require(
+            any(e['operation'] == 'vm.stopping' and e['reason'] == 'cancelled' for e in seen),
+            'not cancellation cleanup',
+        )
         require('vm.start.callback' in ops, 'start callback never settled')
         if all(op in ops for op in ('vm.stopping', 'vm.start.callback', 'vm.stopped')):
-            require(ops.index('vm.stopping') < ops.index('vm.start.callback') < ops.index('vm.stopped'), 'not a pending-start cancellation / premature stopped')
+            require(
+                ops.index('vm.stopping') < ops.index('vm.start.callback') < ops.index('vm.stopped'),
+                'not a pending-start cancellation / premature stopped',
+            )
     else:
         require('vm.protocol.pong' in ops, 'missing real pong')
-        require({'type', 'uuid', 'oversized'} <= {e['reason'] for e in seen if e['operation'] == 'vm.protocol.reject' and e['decision'] == 'deny'}, 'missing host rejection cases')
+        require(
+            {'type', 'uuid', 'oversized'}
+            <= {e['reason'] for e in seen if e['operation'] == 'vm.protocol.reject' and e['decision'] == 'deny'},
+            'missing host rejection cases',
+        )
     result['failures'] = failures
     result['runIDs'] = sorted({e['runID'] for e in seen})
     result['pass'] = not failures

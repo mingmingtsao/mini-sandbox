@@ -1,6 +1,6 @@
 import Foundation
-import SandboxHost
 import SandboxContracts
+import SandboxHost
 
 enum Failure: Error { case check(String) }
 func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -9,7 +9,10 @@ func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throw
 final class Credential: ModelCredentialProvider, @unchecked Sendable {
     let lock = NSLock()
     var count = 0
-    func credential(for model: FixedModel) throws -> String { lock.withLock { count += 1 }; return "synthetic-only" }
+    func credential(for model: FixedModel) throws -> String {
+        lock.withLock { count += 1 }
+        return "synthetic-only"
+    }
     var reads: Int { lock.withLock { count } }
 }
 final class FixtureState: @unchecked Sendable {
@@ -19,7 +22,12 @@ final class FixtureState: @unchecked Sendable {
 }
 final class Fixture: URLProtocol {
     static let state = FixtureState()
-    static func install(_ bodies: [[Data]]) { state.lock.withLock { state.bodies = bodies; state.requests = [] } }
+    static func install(_ bodies: [[Data]]) {
+        state.lock.withLock {
+            state.bodies = bodies
+            state.requests = []
+        }
+    }
     static var requests: [URLRequest] { state.lock.withLock { state.requests } }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -28,30 +36,45 @@ final class Fixture: URLProtocol {
             Self.state.requests.append(request)
             return Self.state.bodies.isEmpty ? nil : Self.state.bodies.removeFirst()
         }
-        guard let chunks else { client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return }
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        guard let chunks else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(
+            self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+            cacheStoragePolicy: .notAllowed)
         for chunk in chunks { client?.urlProtocol(self, didLoad: chunk) }
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
 }
 func configuration() -> URLSessionConfiguration {
-    let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [Fixture.self]; return c
+    let c = URLSessionConfiguration.ephemeral
+    c.protocolClasses = [Fixture.self]
+    return c
 }
 func baseRequest() throws -> FixedModelRequest {
-    try FixedModelRequest(model: .deepSeekFlash, protocol: .anthropic, messages: [FixedMessage(role: .user, content: "weather")], maxOutputTokens: 32)
+    try FixedModelRequest(
+        model: .deepSeekFlash, protocol: .anthropic, messages: [FixedMessage(role: .user, content: "weather")],
+        maxOutputTokens: 32)
 }
-let toolReply = #"{"id":"msg_1","type":"message","role":"assistant","model":"deepseek-flash","content":[{"type":"tool_use","id":"tool_1","name":"weather","input":{"city":"北京"}}],"stop_reason":"tool_use","usage":{"input_tokens":12,"output_tokens":9}}"#
+let toolReply =
+    #"{"id":"msg_1","type":"message","role":"assistant","model":"deepseek-flash","content":[{"type":"tool_use","id":"tool_1","name":"weather","input":{"city":"北京"}}],"stop_reason":"tool_use","usage":{"input_tokens":12,"output_tokens":9}}"#
 func toolOnlyRegression() async throws {
     Fixture.install([[Data(toolReply.utf8)]])
     let credential = Credential()
-    let result = try await ModelTransport(credentialProvider: credential, configuration: configuration()).complete(baseRequest())
+    let result = try await ModelTransport(credentialProvider: credential, configuration: configuration()).complete(
+        baseRequest())
     // The initial RED used reflection against the old DTO; now assert exact data.
-    try check(result.blocks == [.toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))] && result.metadata.stopReason == "tool_use", "tool-only Anthropic reply silently became empty-text success")
+    try check(
+        result.blocks == [.toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))]
+            && result.metadata.stopReason == "tool_use", "tool-only Anthropic reply silently became empty-text success")
     try check(credential.reads == 1 && Fixture.requests.count == 1, "one fake credential read and synthetic dispatch")
 }
 final class Audit: SynchronousAuditSink, @unchecked Sendable {
-    let lock = NSLock(); var events: [SecurityEvent] = []; var fail = false
+    let lock = NSLock()
+    var events: [SecurityEvent] = []
+    var fail = false
     var snapshot: [SecurityEvent] { lock.withLock { events } }
     var barrier: AuditBarrier?
     func append(_ event: SecurityEvent) throws {
@@ -62,30 +85,51 @@ final class Audit: SynchronousAuditSink, @unchecked Sendable {
         }
     }
 }
-func gateway(_ credential: any ModelCredentialProvider, _ audit: Audit, streaming: Bool = false, messageBytes: Int = 65_536, kind: FixedProtocol = .anthropic) async throws -> (HostModelGateway, HostModelRunHandle, UUID) {
+func gateway(
+    _ credential: any ModelCredentialProvider, _ audit: Audit, streaming: Bool = false, messageBytes: Int = 65_536,
+    kind: FixedProtocol = .anthropic
+) async throws -> (HostModelGateway, HostModelRunHandle, UUID) {
     let id = UUID()
-    let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash, protocol: kind, credentialProvider: credential, configuration: configuration())
+    let connection = HostModelConnection(
+        connectionID: id, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash,
+        protocol: kind, credentialProvider: credential, configuration: configuration())
     let g = try HostModelGateway(connections: [connection], auditSink: audit)
-    let scope = try ResourceScope(service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
-    let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: Date().addingTimeInterval(-10), expiresAt: Date().addingTimeInterval(600), workloadImageDigest: String(repeating: "a", count: 64), agentAdapterVersion: "fixture", workspaceSnapshotID: UUID(), policyDigest: String(repeating: "b", count: 64), approvalSnapshotID: UUID(), connections: [ConnectionGrant(connectionID: id, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])], explicitDenies: [], resourceLimits: ResourceLimits(cpuCount: 1, memoryBytes: 1, diskBytes: 1, messageBytes: messageBytes, concurrentRequests: 2))
+    let scope = try ResourceScope(
+        service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
+    let grant = try RunGrant(
+        runID: UUID(), epoch: 1, createdAt: Date().addingTimeInterval(-10), expiresAt: Date().addingTimeInterval(600),
+        workloadImageDigest: String(repeating: "a", count: 64), agentAdapterVersion: "fixture",
+        workspaceSnapshotID: UUID(), policyDigest: String(repeating: "b", count: 64), approvalSnapshotID: UUID(),
+        connections: [ConnectionGrant(connectionID: id, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])],
+        explicitDenies: [],
+        resourceLimits: ResourceLimits(
+            cpuCount: 1, memoryBytes: 1, diskBytes: 1, messageBytes: messageBytes, concurrentRequests: 2))
     return (g, try await g.install(grant: grant), id)
 }
 func gatewayToolRegression() async throws {
     Fixture.install([[Data(toolReply.utf8)]])
-    let credentials = Credential(); let audit = Audit()
+    let credentials = Credential()
+    let audit = Audit()
     let (g, h, id) = try await gateway(credentials, audit)
     let p = try await g.propose(handle: h, connectionID: id, request: baseRequest(), streaming: false)
     let a = try await g.hostApprove(handle: h, proposal: p)
     let result = try await g.execute(handle: h, approval: a)
-    try check(result.blocks == [.toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))], "gateway must preserve structured tool reply")
+    try check(
+        result.blocks == [.toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))],
+        "gateway must preserve structured tool reply")
     try check(result.metadata.messageID == "msg_1" && result.metadata.stopReason == "tool_use", "gateway metadata")
-    try check(credentials.reads == 1 && Fixture.requests.count == 1 && audit.snapshot.last?.outcome == .completed, "audited actual transport")
+    try check(
+        credentials.reads == 1 && Fixture.requests.count == 1 && audit.snapshot.last?.outcome == .completed,
+        "audited actual transport")
 }
 func structuredRequestRegression() async throws {
-    let raw = #"{"model":"deepseek-flash","protocol":"anthropic","messages":[{"role":"user","content":[{"type":"text","text":"weather"}]}],"maxOutputTokens":32,"tools":[{"name":"weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],"tool_choice":{"type":"tool","name":"weather"}}"#
+    let raw =
+        #"{"model":"deepseek-flash","protocol":"anthropic","messages":[{"role":"user","content":[{"type":"text","text":"weather"}]}],"maxOutputTokens":32,"tools":[{"name":"weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],"tool_choice":{"type":"tool","name":"weather"}}"#
     let request = try JSONDecoder().decode(FixedModelRequest.self, from: Data(raw.utf8))
     let roundtrip = try ModelJSON.parse(JSONEncoder().encode(request))
-    try check(roundtrip["tools"]?.array?.count == 1 && roundtrip["tool_choice"]?["name"]?.string == "weather", "tools and tool choice survive canonical encoding")
+    try check(
+        roundtrip["tools"]?.array?.count == 1 && roundtrip["tool_choice"]?["name"]?.string == "weather",
+        "tools and tool choice survive canonical encoding")
 }
 func toolEvents() -> [String] {
     [
@@ -95,7 +139,7 @@ func toolEvents() -> [String] {
         #"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"北京\"}"}}"#,
         #"{"type":"content_block_stop","index":0}"#,
         #"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":9}}"#,
-        #"{"type":"message_stop"}"#
+        #"{"type":"message_stop"}"#,
     ]
 }
 func sse(_ events: [String]) -> [Data] { events.map { "data: \($0)\r\n\r\n" }.joined().utf8.map { Data([$0]) } }
@@ -104,8 +148,13 @@ func structuredStreamRegression() async throws {
     var chunks: [ModelStreamChunk] = []
     let transport = ModelTransport(credentialProvider: Credential(), configuration: configuration())
     for try await chunk in transport.stream(try baseRequest()) { chunks.append(chunk) }
-    try check(chunks.last?.completion?.blocks == [.toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))], "stateful SSE retains fragmented tool JSON")
-    try check(chunks.last?.completion?.metadata.usage?.outputTokens == 9 && chunks.filter(\.isTerminal).count == 2, "retain message_delta and message_stop")
+    try check(
+        chunks.last?.completion?.blocks == [
+            .toolUse(id: "tool_1", name: "weather", input: .object(["city": .string("北京")]))
+        ], "stateful SSE retains fragmented tool JSON")
+    try check(
+        chunks.last?.completion?.metadata.usage?.outputTokens == 9 && chunks.filter(\.isTerminal).count == 2,
+        "retain message_delta and message_stop")
 }
 func malformedStreamRegression() async throws {
     Fixture.install([sse([#"{"type":"message_stop"}"#])])
@@ -113,7 +162,7 @@ func malformedStreamRegression() async throws {
     do {
         for try await _ in t.stream(try baseRequest()) {}
         throw Failure.check("bare message_stop accepted")
-    } catch is ModelTransportError { }
+    } catch is ModelTransportError {}
 }
 @main struct StructuredModelChecks {
     static func main() async {
@@ -128,7 +177,10 @@ func malformedStreamRegression() async throws {
             ("CR01 primitive nonstream reflection", { try await primitiveReflectionTransport(streaming: false) }),
             ("CR01 primitive SSE reflection", { try await primitiveReflectionTransport(streaming: true) }),
             ("CR01 primitive gateway unknown outcome", { try await primitiveReflectionGateway(failedAudit: false) }),
-            ("CR01 primitive gateway pre-failed-audit emission", { try await primitiveReflectionGateway(failedAudit: true) }),
+            (
+                "CR01 primitive gateway pre-failed-audit emission",
+                { try await primitiveReflectionGateway(failedAudit: true) }
+            ),
             ("CR01 ordinary typed and raw positives", primitiveReflectionPositiveControls),
             ("active credential reflection", activeCredentialReflection),
             ("reflection pending audit gate", { try await reflectionPendingAudit(kind: .anthropic) }),
@@ -187,12 +239,17 @@ func malformedStreamRegression() async throws {
             ("usage strict rejection matrix", usageStrictRejections),
             ("usage tier cumulative merge controls", usageMergeControls),
             ("usage tier conflicts and counter rollback", usageMergeRejections),
-            ("usage gateway preservation and audit gate", usageGatewayAudit)
+            ("usage gateway preservation and audit gate", usageGatewayAudit),
         ]
         var failures = 0
         for (name, run) in checks {
-            do { try await run(); print("PASS \(name)") }
-            catch { failures += 1; print("FAIL \(name): \(error)") }
+            do {
+                try await run()
+                print("PASS \(name)")
+            } catch {
+                failures += 1
+                print("FAIL \(name): \(error)")
+            }
         }
         print("StructuredModelChecks: PASS \(checks.count - failures); FAIL \(failures); TOTAL \(checks.count)")
         if failures > 0 { Foundation.exit(1) }

@@ -33,42 +33,59 @@ package struct ClaudeModelAdmission: Sendable {
     package let selectors: ClaudeRequestSelectors
     package let request: AnthropicNativeRequest
 
-    package static func prepare(ingress: BusinessHTTPIngress, authority: RunAuthorizationController,
-                                handle: HostRunHandle, connection: HostModelConnection) throws -> Self {
+    package static func prepare(
+        ingress: BusinessHTTPIngress, authority: RunAuthorizationController,
+        handle: HostRunHandle, connection: HostModelConnection
+    ) throws -> Self {
         let grant = try authority.installedGrantForOwnership(of: handle)
         let observation = handle.lifecycle.observeAndReduce(reason: "claude-business-admission")
-        guard observation.status == .active, observation.generation == grant.epoch else { throw HostModelGatewayError.revoked }
+        guard observation.status == .active, observation.generation == grant.epoch else {
+            throw HostModelGatewayError.revoked
+        }
         guard grant.createdAt <= observation.wallTime else { throw AuthorizationError.grantNotYetValid }
         let request = try ingress.claudeRequest()
         let selectors = try ingress.claudeSelectors
         guard connection.model == request.model, connection.protocol == .anthropic,
-              let installed = grant.connections.first(where: { $0.connectionID == connection.connectionID }),
-              installed.accountBindingVersion == connection.accountBindingVersion,
-              installed.routeVersion == connection.routeVersion else { throw HostModelGatewayError.invalidConnection }
-        let scope = try ResourceScope(service: "model", resource: request.model.rawValue, operation: request.streaming ? "stream" : "complete")
+            let installed = grant.connections.first(where: { $0.connectionID == connection.connectionID }),
+            installed.accountBindingVersion == connection.accountBindingVersion,
+            installed.routeVersion == connection.routeVersion
+        else { throw HostModelGatewayError.invalidConnection }
+        let scope = try ResourceScope(
+            service: "model", resource: request.model.rawValue, operation: request.streaming ? "stream" : "complete")
         guard handle.lifecycle.permitsConnection(connection.connectionID),
-              grant.decision(for: scope, connectionID: connection.connectionID, at: observation.effectiveTime) == .allowed else {
+            grant.decision(for: scope, connectionID: connection.connectionID, at: observation.effectiveTime) == .allowed
+        else {
             throw HostModelGatewayError.denied
         }
-        let envelope = Envelope(schemaVersion: 4, runID: grant.runID, epoch: grant.epoch,
+        let envelope = Envelope(
+            schemaVersion: 4, runID: grant.runID, epoch: grant.epoch,
             connectionID: connection.connectionID, accountID: connection.accountID,
             accountBindingVersion: connection.accountBindingVersion, routeVersion: connection.routeVersion,
             claudeSelectors: selectors, nativeBody: request.body, streaming: request.streaming)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let canonical = try encoder.encode(envelope)
-        guard canonical.count <= min(grant.resourceLimits.messageBytes, ModelJSON.maxBytes) else { throw HostModelGatewayError.messageTooLarge }
-        let schema = SHA256.hash(data: Data("host-model-claude-envelope-v4".utf8)).map { String(format: "%02x", $0) }.joined()
-        let binding = try ActionBinding(runID: grant.runID, epoch: grant.epoch,
+        guard canonical.count <= min(grant.resourceLimits.messageBytes, ModelJSON.maxBytes) else {
+            throw HostModelGatewayError.messageTooLarge
+        }
+        let schema = SHA256.hash(data: Data("host-model-claude-envelope-v4".utf8)).map { String(format: "%02x", $0) }
+            .joined()
+        let binding = try ActionBinding(
+            runID: grant.runID, epoch: grant.epoch,
             grantDigest: RunAuthorizationController.grantDigest(for: grant), connectionID: connection.connectionID,
-            operation: scope.operation, schemaDigest: schema, resolvedResource: scope.resource, canonicalRequest: canonical)
+            operation: scope.operation, schemaDigest: schema, resolvedResource: scope.resource,
+            canonicalRequest: canonical)
         let messages = request.body["messages"]?.array ?? []
         let results = messages.flatMap { $0["content"]?.array ?? [] }.filter { $0["type"]?.string == "tool_result" }
         let resultBytes = try results.reduce(0) { try $0 + encoder.encode($1).count }
-        return Self(binding: binding, measurements: Measurements(httpBytes: ingress.wireBytes,
-            headerBytes: ingress.headerBytes, bodyBytes: ingress.body.count,
-            canonicalBodyBytes: request.canonicalBody.count, approvalEnvelopeBytes: canonical.count,
-            historyMessages: messages.count, toolDefinitions: request.body["tools"]?.array?.count ?? 0,
-            toolResultBytes: resultBytes),
+        return Self(
+            binding: binding,
+            measurements: Measurements(
+                httpBytes: ingress.wireBytes,
+                headerBytes: ingress.headerBytes, bodyBytes: ingress.body.count,
+                canonicalBodyBytes: request.canonicalBody.count, approvalEnvelopeBytes: canonical.count,
+                historyMessages: messages.count, toolDefinitions: request.body["tools"]?.array?.count ?? 0,
+                toolResultBytes: resultBytes),
             selectors: selectors, request: request)
     }
 }

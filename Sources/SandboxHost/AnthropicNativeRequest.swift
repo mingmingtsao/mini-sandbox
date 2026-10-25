@@ -12,8 +12,9 @@ package struct AnthropicNativeRequest: Sendable {
     package var model: FixedModel { .deepSeekFlash }
 
     package static func decodeValidated(_ bytes: Data, streaming: Bool) throws -> Self {
-        do { return try Self(root: ModelJSON.parse(bytes), streaming: streaming) }
-        catch { throw ModelTransportError.invalidRequest("native request") }
+        do { return try Self(root: ModelJSON.parse(bytes), streaming: streaming) } catch {
+            throw ModelTransportError.invalidRequest("native request")
+        }
     }
 
     /// DeepSeek's documented Messages dialect accepts text system messages in
@@ -21,17 +22,24 @@ package struct AnthropicNativeRequest: Sendable {
     /// below is validation-only, never the body sent to the provider.
     package static func decodeClaude(_ bytes: Data, streaming: Bool, selectors: ClaudeRequestSelectors) throws -> Self {
         try selectors.validate()
-        do { return try Self(root: ModelJSON.parse(bytes), streaming: streaming, allowMidSystem: true) }
-        catch { throw ModelTransportError.invalidRequest("claude native request") }
+        do { return try Self(root: ModelJSON.parse(bytes), streaming: streaming, allowMidSystem: true) } catch {
+            throw ModelTransportError.invalidRequest("claude native request")
+        }
     }
 
     private init(root: ModelJSON, streaming: Bool, allowMidSystem: Bool = false) throws {
-        var object = try Self.keys(root, ["model", "max_tokens", "stream", "system", "messages", "tools", "tool_choice", "thinking", "metadata", "output_config"])
+        var object = try Self.keys(
+            root,
+            [
+                "model", "max_tokens", "stream", "system", "messages", "tools", "tool_choice", "thinking", "metadata",
+                "output_config",
+            ])
         guard object["model"]?.string == FixedModel.deepSeekFlash.rawValue,
-              let tokens = object["max_tokens"]?.integer, (1...Int64(FixedModelRequest.maxOutputTokens)).contains(tokens),
-              object["stream"] == .bool(streaming),
-              let messages = object["messages"]?.array, !messages.isEmpty,
-              messages.count <= FixedModelRequest.maxMessages else { throw Self.invalid }
+            let tokens = object["max_tokens"]?.integer, (1...Int64(FixedModelRequest.maxOutputTokens)).contains(tokens),
+            object["stream"] == .bool(streaming),
+            let messages = object["messages"]?.array, !messages.isEmpty,
+            messages.count <= FixedModelRequest.maxMessages
+        else { throw Self.invalid }
         // Host policy is explicit in approved bytes. Omission is NOT treated as
         // evidence of the upstream default. Incoming adaptive/enabled are denied.
         let disabled = ModelJSON.object(["type": .string("disabled")])
@@ -39,13 +47,16 @@ package struct AnthropicNativeRequest: Sendable {
         object["thinking"] = disabled
         if let config = object["output_config"] {
             let fields = try Self.keys(config, ["effort"])
-            guard let effort = fields["effort"]?.string, ["low", "high", "max"].contains(effort) else { throw Self.invalid }
+            guard let effort = fields["effort"]?.string, ["low", "high", "max"].contains(effort) else {
+                throw Self.invalid
+            }
             // Retain the documented setting verbatim. It neither enables thinking
             // nor promises active reasoning under the explicit disabled policy.
         }
         if let system = object["system"] {
-            if let text = system.string { _ = try FixedMessage(role: .system, content: text) }
-            else {
+            if let text = system.string {
+                _ = try FixedMessage(role: .system, content: text)
+            } else {
                 guard let blocks = system.array, !blocks.isEmpty, blocks.count <= 128 else { throw Self.invalid }
                 for block in blocks { _ = try Self.textBlock(block) }
             }
@@ -53,7 +64,8 @@ package struct AnthropicNativeRequest: Sendable {
         if let metadata = object["metadata"] {
             let fields = try Self.keys(metadata, ["user_id"])
             guard let user = fields["user_id"]?.string, !user.isEmpty, user.utf8.count <= 256,
-                  !user.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Self.invalid }
+                !user.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else { throw Self.invalid }
         }
         var tools: [ModelToolDefinition] = []
         if let value = object["tools"] {
@@ -70,33 +82,41 @@ package struct AnthropicNativeRequest: Sendable {
         if let value = object["tool_choice"] {
             // Parallelism enforcement is not established for this upstream.
             let c = try Self.keys(value, ["type", "name"])
-            guard let raw = c["type"]?.string, let kind = ModelToolChoice.Kind(rawValue: raw) else { throw Self.invalid }
+            guard let raw = c["type"]?.string, let kind = ModelToolChoice.Kind(rawValue: raw) else {
+                throw Self.invalid
+            }
             if let name = c["name"], name.string == nil { throw Self.invalid }
             choice = try ModelToolChoice(type: kind, name: c["name"]?.string)
         }
         let projection: [FixedMessage] = try messages.map { message in
             let m = try Self.keys(message, ["role", "content"])
             guard let role = m["role"]?.string,
-                  role == "user" || role == "assistant" || (allowMidSystem && role == "system"),
-                  let content = m["content"] else { throw Self.invalid }
+                role == "user" || role == "assistant" || (allowMidSystem && role == "system"),
+                let content = m["content"]
+            else { throw Self.invalid }
             let kind: FixedMessageRole = role == "user" ? .user : (role == "system" ? .system : .assistant)
             if let text = content.string {
                 _ = try FixedMessage(role: kind, content: text)
                 return try FixedMessage(role: kind, blocks: [.text(text)])
             }
             guard let array = content.array, !array.isEmpty, array.count <= 128 else { throw Self.invalid }
-            return try FixedMessage(role: kind, blocks: array.map { kind == .system ? try Self.textBlock($0) : try Self.messageBlock($0) })
+            return try FixedMessage(
+                role: kind, blocks: array.map { kind == .system ? try Self.textBlock($0) : try Self.messageBlock($0) })
         }
         if allowMidSystem {
             try ModelConversationValidation.validateClaude(messages: projection, tools: tools, choice: choice)
         } else {
-            try ModelConversationValidation.validate(messages: projection, tools: tools, choice: choice, protocol: .anthropic)
+            try ModelConversationValidation.validate(
+                messages: projection, tools: tools, choice: choice, protocol: .anthropic)
         }
         let body = ModelJSON.object(object)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let canonical = try encoder.encode(body)
-        _ = try ModelJSON.parse(canonical) // policy expansion must also fit unchanged bounds
-        self.body = body; canonicalBody = canonical; self.streaming = streaming
+        _ = try ModelJSON.parse(canonical)  // policy expansion must also fit unchanged bounds
+        self.body = body
+        canonicalBody = canonical
+        self.streaming = streaming
         dialect = allowMidSystem ? .claude : .native
     }
 
@@ -123,14 +143,22 @@ package struct AnthropicNativeRequest: Sendable {
         case "tool_use":
             let fields = try keys(value, ["type", "id", "name", "input", "cache_control"])
             try cache(fields["cache_control"])
-            var plain = fields; plain.removeValue(forKey: "cache_control")
+            var plain = fields
+            plain.removeValue(forKey: "cache_control")
             return try ModelBlock(wire: .object(plain))
         case "tool_result":
             let fields = try keys(value, ["type", "tool_use_id", "content", "is_error", "cache_control"])
             try cache(fields["cache_control"])
-            guard let id = fields["tool_use_id"]?.string, ModelBlock.validID(id), let content = fields["content"] else { throw invalid }
+            guard let id = fields["tool_use_id"]?.string, ModelBlock.validID(id), let content = fields["content"] else {
+                throw invalid
+            }
             let error: Bool
-            if let value = fields["is_error"] { guard case .bool(let b) = value else { throw invalid }; error = b } else { error = false }
+            if let value = fields["is_error"] {
+                guard case .bool(let b) = value else { throw invalid }
+                error = b
+            } else {
+                error = false
+            }
             if content.string == nil {
                 guard let blocks = content.array, blocks.count <= 128 else { throw invalid }
                 for block in blocks { _ = try textBlock(block) }

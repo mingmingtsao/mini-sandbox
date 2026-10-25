@@ -9,9 +9,12 @@ import time
 BODY_CAP = 1048576
 HEADER_CAP = 8192
 FRAME_CAP = 4096
-PATHS = {b'/v1/messages': 'messages', b'/v1/messages?beta=true': 'messages_beta',
-         b'/v1/messages/count_tokens': 'count_tokens',
-         b'/v1/messages/count_tokens?beta=true': 'count_tokens_beta'}
+PATHS = {
+    b'/v1/messages': 'messages',
+    b'/v1/messages?beta=true': 'messages_beta',
+    b'/v1/messages/count_tokens': 'count_tokens',
+    b'/v1/messages/count_tokens?beta=true': 'count_tokens_beta',
+}
 
 
 class Rejected(Exception):
@@ -23,7 +26,16 @@ class CaptureServer(socketserver.TCPServer):
     allow_reuse_address = False
     request_queue_size = 4
 
-    def __init__(self, address=('127.0.0.1', 4061), *, lifetime=35.0, clock=None, structural_metrics_enabled=False, restricted_profile=False, coding_profile=False):
+    def __init__(
+        self,
+        address=('127.0.0.1', 4061),
+        *,
+        lifetime=35.0,
+        clock=None,
+        structural_metrics_enabled=False,
+        restricted_profile=False,
+        coding_profile=False,
+    ):
         if address[0] != '127.0.0.1':
             raise ValueError('loopback_only')
         if coding_profile and restricted_profile:
@@ -74,8 +86,7 @@ class CaptureHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
         status, record = 400, {'status': 400}
-        self.deadline = min(self.server.clock() + self.server.request_deadline,
-                            self.server.lifetime_deadline)
+        self.deadline = min(self.server.clock() + self.server.request_deadline, self.server.lifetime_deadline)
         self.server.connections += 1
         try:
             self.remaining_ingress()
@@ -112,7 +123,10 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                 raise Rejected(413)
             host = headers.get(b'host', b'')
             allowed_host = (b'127.0.0.1', ('127.0.0.1:%d' % self.server.server_address[1]).encode())
-            if host not in allowed_host or headers.get(b'content-type') not in (b'application/json', b'application/json; charset=utf-8'):
+            if host not in allowed_host or headers.get(b'content-type') not in (
+                b'application/json',
+                b'application/json; charset=utf-8',
+            ):
                 raise Rejected(400)
             body = bytearray()
             frames = 0
@@ -140,11 +154,17 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             shape = inspect_json(body)
             self.remaining_ingress()
             status = 503
-            record = {'status': status, 'endpoint': PATHS[start[1]],
-                      'method': 'POST', 'body_bytes': size, 'body_frames': frames,
-                      'header_bytes': len(header), 'shape': shape,
-                      'authentication_present': any(k in headers for k in (b'authorization', b'x-api-key')),
-                      'sse_accept': headers.get(b'accept') == b'text/event-stream'}
+            record = {
+                'status': status,
+                'endpoint': PATHS[start[1]],
+                'method': 'POST',
+                'body_bytes': size,
+                'body_frames': frames,
+                'header_bytes': len(header),
+                'shape': shape,
+                'authentication_present': any(k in headers for k in (b'authorization', b'x-api-key')),
+                'sse_accept': headers.get(b'accept') == b'text/event-stream',
+            }
             if metrics is not None:
                 record['metrics'] = metrics
             if self.server.restricted_profile or self.server.coding_profile:
@@ -163,7 +183,10 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             status, record = 408, {'status': 408}
         response_timeout = min(1.0, remaining) if remaining > 0 else 1.0
         payload = b'{"error":"probe_unsupported"}'
-        response = ('HTTP/1.1 %d Probe\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n' % (status, len(payload))).encode() + payload
+        response = (
+            'HTTP/1.1 %d Probe\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n'
+            % (status, len(payload))
+        ).encode() + payload
         try:
             self.request.settimeout(response_timeout)
             self.request.sendall(response)
@@ -171,7 +194,10 @@ class CaptureHandler(socketserver.BaseRequestHandler):
             pass
         # Opt-in output stays within the existing supervisor's 16 KiB pipe cap.
         # Reserve room for all remaining fixed omission records and the wrapper.
-        if self.server.structural_metrics_enabled and len(json.dumps(self.server.records + [record], separators=(',', ':')).encode()) > 15000:
+        if (
+            self.server.structural_metrics_enabled
+            and len(json.dumps(self.server.records + [record], separators=(',', ':')).encode()) > 15000
+        ):
             record = {'status': record['status'], 'metrics_omitted': True}
         # Recheck at retention, including time spent sending/serializing.
         if status == 503 and self.server.clock() >= min(self.deadline, self.server.lifetime_deadline):
@@ -179,9 +205,26 @@ class CaptureHandler(socketserver.BaseRequestHandler):
         if len(self.server.records) < self.server.max_connections:
             self.server.records.append(record)
 
-FIELDS = frozenset(('model', 'messages', 'system', 'tools', 'tool_choice', 'stream',
-                    'max_tokens', 'temperature', 'thinking', 'metadata', 'betas',
-                    'context_management', 'output_config', 'stop_sequences'))
+
+FIELDS = frozenset(
+    (
+        'model',
+        'messages',
+        'system',
+        'tools',
+        'tool_choice',
+        'stream',
+        'max_tokens',
+        'temperature',
+        'thinking',
+        'metadata',
+        'betas',
+        'context_management',
+        'output_config',
+        'stop_sequences',
+    )
+)
+
 
 def _pairs(items):
     result = {}
@@ -205,12 +248,21 @@ def inspect_json(body):
         raise ValueError('invalid_json') from None
     if not isinstance(value, dict) or any(k in value and not isinstance(value[k], list) for k in ('messages', 'tools')):
         raise ValueError('invalid_json')
-    types = {dict: 'object', list: 'array', str: 'string', bool: 'boolean',
-             int: 'number', float: 'number', type(None): 'null'}
-    return {'fields': {k: types[type(v)] for k, v in value.items() if k in FIELDS},
-            'unknown_field_count': sum(k not in FIELDS for k in value),
-            'message_count': len(value.get('messages', [])),
-            'tool_count': len(value.get('tools', []))}
+    types = {
+        dict: 'object',
+        list: 'array',
+        str: 'string',
+        bool: 'boolean',
+        int: 'number',
+        float: 'number',
+        type(None): 'null',
+    }
+    return {
+        'fields': {k: types[type(v)] for k, v in value.items() if k in FIELDS},
+        'unknown_field_count': sum(k not in FIELDS for k in value),
+        'message_count': len(value.get('messages', [])),
+        'tool_count': len(value.get('tools', [])),
+    }
 
 
 METRICS_NODE_CAP = 32768
@@ -236,7 +288,19 @@ def _string_bytes(value):
         n = ord(char)
         if 0xD800 <= n <= 0xDFFF:
             raise ValueError('invalid_json')
-        size += 2 if char in '"\\\b\f\n\r\t' else 6 if n < 32 else 1 if n < 128 else 2 if n < 2048 else 3 if n < 65536 else 4
+        size += (
+            2
+            if char in '"\\\b\f\n\r\t'
+            else 6
+            if n < 32
+            else 1
+            if n < 128
+            else 2
+            if n < 2048
+            else 3
+            if n < 65536
+            else 4
+        )
     return size
 
 
@@ -296,9 +360,16 @@ def _metric_load(body):
         elif byte in (93, 125):
             level -= 1
     try:
-        value = json.loads(body, object_pairs_hook=_pairs, parse_constant=_constant,
-                           parse_int=_metric_integer, parse_float=_NumericToken)
-        if not isinstance(value, dict) or any(k in value and not isinstance(value[k], list) for k in ('messages', 'tools')):
+        value = json.loads(
+            body,
+            object_pairs_hook=_pairs,
+            parse_constant=_constant,
+            parse_int=_metric_integer,
+            parse_float=_NumericToken,
+        )
+        if not isinstance(value, dict) or any(
+            k in value and not isinstance(value[k], list) for k in ('messages', 'tools')
+        ):
             raise ValueError('invalid_json')
         _metric_stats(value)
         return value
@@ -315,20 +386,38 @@ def structural_metrics(body, *, expected_model=None, coding_tools=False):
     if expected_model not in (None, 'deepseek-flash'):
         raise ValueError('unsupported_profile')
     value = _metric_load(body)
+
     def integer(v):
         return v if type(v) is int and 0 <= v <= SAFE_INTEGER else 'invalid'
+
     def enum(v, allowed):
         return v if type(v) is str and v in allowed else 'unknown'
+
     def typename(v):
-        return {dict: 'object', list: 'array', str: 'string', bool: 'boolean',
-                int: 'number', _NumericToken: 'number', type(None): 'null'}[type(v)]
+        return {
+            dict: 'object',
+            list: 'array',
+            str: 'string',
+            bool: 'boolean',
+            int: 'number',
+            _NumericToken: 'number',
+            type(None): 'null',
+        }[type(v)]
+
     thinking = value.get('thinking', {})
     output = value.get('output_config', {})
     system = value.get('system', [])
     items = system if isinstance(system, list) else [system]
-    sysmetrics = {'type': typename(system) if 'system' in value else 'absent', 'count': len(items),
-                  'text_count': 0, 'text_bytes': 0, 'text_bytes_max': 0,
-                  'cache_control_present': 0, 'unknown_type_count': 0, 'unknown_field_count': 0}
+    sysmetrics = {
+        'type': typename(system) if 'system' in value else 'absent',
+        'count': len(items),
+        'text_count': 0,
+        'text_bytes': 0,
+        'text_bytes_max': 0,
+        'cache_control_present': 0,
+        'unknown_type_count': 0,
+        'unknown_field_count': 0,
+    }
     for item in items:
         if isinstance(item, dict):
             sysmetrics['unknown_field_count'] += sum(k not in ('type', 'text', 'cache_control') for k in item)
@@ -345,10 +434,24 @@ def structural_metrics(body, *, expected_model=None, coding_tools=False):
             sysmetrics['text_bytes_max'] = max(sysmetrics['text_bytes_max'], n)
     tools = value.get('tools', [])
     fields = ('name', 'description', 'input_schema', 'type', 'cache_control')
-    metrics: dict[str, int] = dict.fromkeys(('count', 'name_max', 'name_invalid_count', 'duplicate_name_count',
-                            'description_max', 'schema_bytes_max', 'schema_depth_max', 'schema_nodes_max',
-                            'schema_noninteger_count', 'schema_unsafe_integer_count', 'schema_nonobject_count',
-                            'unknown_field_count', 'nonobject_count'), 0)
+    metrics: dict[str, int] = dict.fromkeys(
+        (
+            'count',
+            'name_max',
+            'name_invalid_count',
+            'duplicate_name_count',
+            'description_max',
+            'schema_bytes_max',
+            'schema_depth_max',
+            'schema_nodes_max',
+            'schema_noninteger_count',
+            'schema_unsafe_integer_count',
+            'schema_nonobject_count',
+            'unknown_field_count',
+            'nonobject_count',
+        ),
+        0,
+    )
     metrics.update({k + '_present': 0 for k in fields})
     metrics['count'] = len(tools)
     names = set()
@@ -376,53 +479,75 @@ def structural_metrics(body, *, expected_model=None, coding_tools=False):
             metrics['schema_noninteger_count'] += noninteger
             metrics['schema_unsafe_integer_count'] += unsafe
             metrics['schema_nonobject_count'] += type(schema) is not dict
-    result = {'stream': value.get('stream') if type(value.get('stream')) is bool else 'invalid',
-              'max_tokens': integer(value.get('max_tokens')),
-              'thinking': enum(thinking.get('type'), ('enabled', 'disabled', 'adaptive')) if isinstance(thinking, dict) else 'invalid',
-              'thinking_budget': integer(thinking.get('budget_tokens')) if isinstance(thinking, dict) else 'invalid',
-              'effort': enum(output.get('effort'), ('low', 'medium', 'high', 'max')) if isinstance(output, dict) else 'invalid',
-              'system': sysmetrics, 'tools': metrics, 'mismatches': []}
+    result = {
+        'stream': value.get('stream') if type(value.get('stream')) is bool else 'invalid',
+        'max_tokens': integer(value.get('max_tokens')),
+        'thinking': enum(thinking.get('type'), ('enabled', 'disabled', 'adaptive'))
+        if isinstance(thinking, dict)
+        else 'invalid',
+        'thinking_budget': integer(thinking.get('budget_tokens')) if isinstance(thinking, dict) else 'invalid',
+        'effort': enum(output.get('effort'), ('low', 'medium', 'high', 'max'))
+        if isinstance(output, dict)
+        else 'invalid',
+        'system': sysmetrics,
+        'tools': metrics,
+        'mismatches': [],
+    }
     if 'thinking' not in value:
         result['thinking'] = 'absent'
     if isinstance(thinking, dict) and 'budget_tokens' not in thinking:
         result['thinking_budget'] = 'absent'
     if isinstance(output, dict) and 'effort' not in output:
         result['effort'] = 'absent'
-    result['thinking_unknown_field_count'] = sum(k not in ('type', 'budget_tokens') for k in thinking) if isinstance(thinking, dict) else 0
+    result['thinking_unknown_field_count'] = (
+        sum(k not in ('type', 'budget_tokens') for k in thinking) if isinstance(thinking, dict) else 0
+    )
     result['output_unknown_field_count'] = sum(k != 'effort' for k in output) if isinstance(output, dict) else 0
-    checks = {'max_tokens': type(result['max_tokens']) is not int or not 1 <= result['max_tokens'] <= 8192,
-              'tool_description_bytes': metrics['description_max'] > 4096,
-              'thinking': 'thinking' in value and result['thinking'] != 'disabled',
-              'messages': len(value.get('messages', [])) > 128, 'tools': len(tools) > 64,
-              'tool_name': metrics['name_invalid_count'] > 0 or metrics['duplicate_name_count'] > 0,
-              'schema_bytes': metrics['schema_bytes_max'] > 65536,
-              'schema_depth': metrics['schema_depth_max'] > 32,
-              'schema_nodes': metrics['schema_nodes_max'] > 8192,
-              'schema_numeric_domain': metrics['schema_noninteger_count'] > 0 or metrics['schema_unsafe_integer_count'] > 0,
-              'schema_root': metrics['schema_nonobject_count'] > 0,
-              'system_blocks': isinstance(system, list) and len(system) > 0}
+    checks = {
+        'max_tokens': type(result['max_tokens']) is not int or not 1 <= result['max_tokens'] <= 8192,
+        'tool_description_bytes': metrics['description_max'] > 4096,
+        'thinking': 'thinking' in value and result['thinking'] != 'disabled',
+        'messages': len(value.get('messages', [])) > 128,
+        'tools': len(tools) > 64,
+        'tool_name': metrics['name_invalid_count'] > 0 or metrics['duplicate_name_count'] > 0,
+        'schema_bytes': metrics['schema_bytes_max'] > 65536,
+        'schema_depth': metrics['schema_depth_max'] > 32,
+        'schema_nodes': metrics['schema_nodes_max'] > 8192,
+        'schema_numeric_domain': metrics['schema_noninteger_count'] > 0 or metrics['schema_unsafe_integer_count'] > 0,
+        'schema_root': metrics['schema_nonobject_count'] > 0,
+        'system_blocks': isinstance(system, list) and len(system) > 0,
+    }
     checks.update({key: key in value for key in ('metadata', 'context_management', 'output_config')})
     result['mismatches'] = [key for key, mismatch in checks.items() if mismatch]
     if expected_model is not None:
         result['model_matches_profile'] = type(value.get('model')) is str and value['model'] == expected_model
     if coding_tools:
         # Only these fixed labels escape; never serialize request-supplied names.
-        labels = {'Bash': 'bash_count', 'Read': 'read_count', 'Edit': 'edit_count',
-                  'Write': 'write_count', 'Glob': 'glob_count', 'Grep': 'grep_count',
-                  'EndConversation': 'end_conversation_count'}
+        labels = {
+            'Bash': 'bash_count',
+            'Read': 'read_count',
+            'Edit': 'edit_count',
+            'Write': 'write_count',
+            'Glob': 'glob_count',
+            'Grep': 'grep_count',
+            'EndConversation': 'end_conversation_count',
+        }
         counts = dict.fromkeys((*labels.values(), 'other_count'), 0)
         for tool in tools:
             name = tool.get('name') if isinstance(tool, dict) else None
             label = labels.get(name, 'other_count') if type(name) is str else 'other_count'
             counts[label] += 1
         counts['within_selected_set'] = counts['other_count'] == 0
-        counts['all_six_present'] = all(counts[k] > 0 for k in ('bash_count', 'read_count', 'edit_count', 'write_count', 'glob_count', 'grep_count'))
+        counts['all_six_present'] = all(
+            counts[k] > 0 for k in ('bash_count', 'read_count', 'edit_count', 'write_count', 'glob_count', 'grep_count')
+        )
         result['coding_toolset'] = counts
     return result
 
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description='Local-only metadata capture, never a model emulator')
     parser.add_argument('--duration', type=int, choices=range(1, 36), default=35)
     parser.add_argument('--structural-metrics', action='store_true', help='bounded fixed-label measurements only')
@@ -431,17 +556,24 @@ def main():
     profiles.add_argument('--coding-profile', choices=('claude-broker-coding-v1',))
     options = parser.parse_args()
     try:
-        with CaptureServer(lifetime=options.duration, structural_metrics_enabled=options.structural_metrics,
-                           restricted_profile=options.restricted_profile is not None,
-                           coding_profile=options.coding_profile is not None) as server:
+        with CaptureServer(
+            lifetime=options.duration,
+            structural_metrics_enabled=options.structural_metrics,
+            restricted_profile=options.restricted_profile is not None,
+            coding_profile=options.coding_profile is not None,
+        ) as server:
             while server.connections < server.max_connections and server.wire_bytes < server.max_wire:
                 remaining = server.lifetime_deadline - server.clock()
                 if remaining <= 0:
                     break
                 server.timeout = min(0.1, remaining)
                 server.handle_request()
-            print(json.dumps({'schema': 1, 'fixture_only': True, 'records': server.records,
-                              'ingress_bytes': server.wire_bytes}, separators=(',', ':')))
+            print(
+                json.dumps(
+                    {'schema': 1, 'fixture_only': True, 'records': server.records, 'ingress_bytes': server.wire_bytes},
+                    separators=(',', ':'),
+                )
+            )
     except OSError:
         print('{"error":"capture_unavailable"}')
         return 1

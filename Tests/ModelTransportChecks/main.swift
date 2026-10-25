@@ -1,10 +1,14 @@
 import Foundation
-import Security
 import SandboxHost
+import Security
 
 private enum CheckFailure: Error, CustomStringConvertible {
     case failed(String)
-    var description: String { switch self { case .failed(let message): return "check failed: " + message } }
+    var description: String {
+        switch self {
+        case .failed(let message): return "check failed: " + message
+        }
+    }
 }
 
 private func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -25,7 +29,10 @@ private struct FixtureResponse {
     let finish: Bool
     let delayBeforeFinish: UInt64
 
-    init(status: Int = 200, headers: [String: String] = ["Content-Type": "application/json"], bodyChunks: [Data] = [], redirect: URL? = nil, finish: Bool = true, delayBeforeFinish: UInt64 = 0) {
+    init(
+        status: Int = 200, headers: [String: String] = ["Content-Type": "application/json"], bodyChunks: [Data] = [],
+        redirect: URL? = nil, finish: Bool = true, delayBeforeFinish: UInt64 = 0
+    ) {
         self.status = status
         self.headers = headers
         self.bodyChunks = bodyChunks
@@ -46,19 +53,22 @@ private final class FixtureURLProtocol: URLProtocol {
     static let state = FixtureState()
 
     static func install(_ handler: @escaping (URLRequest) -> FixtureResponse?) {
-        state.lock.lock(); defer { state.lock.unlock() }
+        state.lock.lock()
+        defer { state.lock.unlock() }
         state.handler = handler
         state.requests = []
         state.stopCount = 0
     }
 
     static func snapshotRequests() -> [URLRequest] {
-        state.lock.lock(); defer { state.lock.unlock() }
+        state.lock.lock()
+        defer { state.lock.unlock() }
         return state.requests
     }
 
     static func snapshotStopCount() -> Int {
-        state.lock.lock(); defer { state.lock.unlock() }
+        state.lock.lock()
+        defer { state.lock.unlock() }
         return state.stopCount
     }
 
@@ -97,7 +107,9 @@ private final class FixtureURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        Self.state.lock.lock(); Self.state.stopCount += 1; Self.state.lock.unlock()
+        Self.state.lock.lock()
+        Self.state.stopCount += 1
+        Self.state.lock.unlock()
     }
 }
 
@@ -118,7 +130,8 @@ private func makeTransport(_ response: @escaping (URLRequest) -> FixtureResponse
 private func requestBody(_ request: URLRequest) throws -> [String: Any] {
     var data = request.httpBody ?? Data()
     if data.isEmpty, let stream = request.httpBodyStream {
-        stream.open(); defer { stream.close() }
+        stream.open()
+        defer { stream.close() }
         var buffer = [UInt8](repeating: 0, count: 4096)
         while stream.hasBytesAvailable {
             let count = stream.read(&buffer, maxLength: buffer.count)
@@ -141,7 +154,9 @@ private func baseRequest(protocol protocolKind: FixedProtocol = .openAI) throws 
         maxOutputTokens: 32)
 }
 
-private func expectTransportError(_ operation: () async throws -> Void, _ predicate: (ModelTransportError) -> Bool, _ message: String) async throws {
+private func expectTransportError(
+    _ operation: () async throws -> Void, _ predicate: (ModelTransportError) -> Bool, _ message: String
+) async throws {
     do {
         try await operation()
         throw CheckFailure.failed("expected error: \(message)")
@@ -156,7 +171,11 @@ private func testUnsupportedModelAndBounds() async throws {
     try check(FixedModel(rawValue: "other-model") == nil, "unsupported model must be rejected")
     try check(FixedModelRequest.maxOutputTokens == 8192, "output bound must be finite")
     try expectRequestFailure {
-        _ = try FixedModelRequest(model: .deepSeekFlash, protocol: .openAI, messages: [FixedMessage(role: .user, content: String(repeating: "x", count: FixedModelRequest.maxMessageBytes + 1))], maxOutputTokens: 1)
+        _ = try FixedModelRequest(
+            model: .deepSeekFlash, protocol: .openAI,
+            messages: [
+                FixedMessage(role: .user, content: String(repeating: "x", count: FixedModelRequest.maxMessageBytes + 1))
+            ], maxOutputTokens: 1)
     }
     try expectRequestFailure {
         _ = try FixedModelRequest(model: .deepSeekFlash, protocol: .openAI, messages: [], maxOutputTokens: 0)
@@ -167,10 +186,14 @@ private func testDecodedRequestCannotBypassBounds() async throws {
     let valid = try JSONEncoder().encode(baseRequest())
     var object = try JSONSerialization.jsonObject(with: valid) as! [String: Any]
     object["maxOutputTokens"] = 0
-    try expectRequestFailure { _ = try JSONDecoder().decode(FixedModelRequest.self, from: JSONSerialization.data(withJSONObject: object)) }
+    try expectRequestFailure {
+        _ = try JSONDecoder().decode(FixedModelRequest.self, from: JSONSerialization.data(withJSONObject: object))
+    }
     object["maxOutputTokens"] = 32
     object["messages"] = [["role": "user", "content": ""]]
-    try expectRequestFailure { _ = try JSONDecoder().decode(FixedModelRequest.self, from: JSONSerialization.data(withJSONObject: object)) }
+    try expectRequestFailure {
+        _ = try JSONDecoder().decode(FixedModelRequest.self, from: JSONSerialization.data(withJSONObject: object))
+    }
 }
 
 private func expectRequestFailure(_ operation: () throws -> Void) throws {
@@ -198,24 +221,32 @@ private func testOpenAIRequestPathModelAndBody() async throws {
     try check(request.url?.absoluteString == "https://api.deepseek.com/chat/completions", "OpenAI URL must be fixed")
     try check(body["model"] as? String == "deepseek-flash", "allowlisted model encoded")
     try check(body["stream"] as? Bool == false, "completion must be nonstreaming")
-    try check((body["thinking"] as? [String: String])?["type"] == "disabled", "text-only transport explicitly disables thinking")
+    try check(
+        (body["thinking"] as? [String: String])?["type"] == "disabled",
+        "text-only transport explicitly disables thinking")
     try check(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + fixtureCredential, "host auth")
     try check(request.value(forHTTPHeaderField: "X-Caller-Auth") == nil, "no caller auth")
 }
 
 private func testProviderFailure(_ reason: String, streaming: Bool) async throws {
     let secret = "provider-private-body-" + fixtureCredential
-    let completion = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": secret], "finish_reason": reason]]])
-    let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n" +
-        "data: {\"choices\":[{\"delta\":{\"content\":\"\(secret)\"},\"finish_reason\":\"\(reason)\"}]}\n\n" +
-        "data: [DONE]\n\n"
+    let completion = try JSONSerialization.data(withJSONObject: [
+        "choices": [["message": ["content": secret], "finish_reason": reason]]
+    ])
+    let payload =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+        + "data: {\"choices\":[{\"delta\":{\"content\":\"\(secret)\"},\"finish_reason\":\"\(reason)\"}]}\n\n"
+        + "data: [DONE]\n\n"
     let transport = makeTransport { _ in FixtureResponse(bodyChunks: [streaming ? Data(payload.utf8) : completion]) }
     var chunks: [ModelStreamChunk] = []
-    try await expectTransportError({
-        if streaming {
-            for try await chunk in transport.stream(try baseRequest()) { chunks.append(chunk) }
-        } else { _ = try await transport.complete(baseRequest()) }
-    }, { String(describing: $0) == "upstream generation failed" }, "provider failure must be sanitized")
+    try await expectTransportError(
+        {
+            if streaming {
+                for try await chunk in transport.stream(try baseRequest()) { chunks.append(chunk) }
+            } else {
+                _ = try await transport.complete(baseRequest())
+            }
+        }, { String(describing: $0) == "upstream generation failed" }, "provider failure must be sanitized")
     if streaming {
         try check(chunks.map(\.text) == ["partial"], "failed event must not emit its text")
         try check(!chunks.contains(where: \.isFinal), "failed stream must not emit success final")
@@ -227,8 +258,11 @@ private func testAnthropicTrustedPath() async throws {
         let response = try? JSONSerialization.data(withJSONObject: ["content": [["type": "text", "text": "anthropic"]]])
         return FixtureResponse(bodyChunks: [response!])
     }
-    let input = try FixedModelRequest(model: .deepSeekFlash, protocol: .anthropic,
-        messages: [FixedMessage(role: .system, content: "Keep instructions"), FixedMessage(role: .user, content: "hello")], maxOutputTokens: 32)
+    let input = try FixedModelRequest(
+        model: .deepSeekFlash, protocol: .anthropic,
+        messages: [
+            FixedMessage(role: .system, content: "Keep instructions"), FixedMessage(role: .user, content: "hello"),
+        ], maxOutputTokens: 32)
     let result = try await transport.complete(input)
     try check(result.text == "anthropic", "Anthropic completion text")
     let sent = FixtureURLProtocol.snapshotRequests()[0]
@@ -244,28 +278,35 @@ private func testAnthropicInvalidTextBlocks() async throws {
     for block in ["{\"type\":\"text\"}", "{\"type\":\"text\",\"text\":null}", "{\"type\":\"text\",\"text\":42}"] {
         let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"valid prefix\"},\(block)]}"
         let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
-        try await expectTransportError({ _ = try await transport.complete(baseRequest(protocol: .anthropic)) },
+        try await expectTransportError(
+            { _ = try await transport.complete(baseRequest(protocol: .anthropic)) },
             { $0 == .invalidResponse }, "every text block requires string text")
     }
 }
 
 private func testAnthropicMixedBlocks() async throws {
-    let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
+    let payload =
+        "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
     let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
     let result = try await transport.complete(baseRequest(protocol: .anthropic))
     try check(result.text == "hello world", "valid text blocks are joined in order")
-    try check(result.blocks == [.text("hello"), .text(""), .text(" world")], "empty and ordered text blocks are preserved")
+    try check(
+        result.blocks == [.text("hello"), .text(""), .text(" world")], "empty and ordered text blocks are preserved")
     try await testAnthropicUnsupportedThinkingRejected()
 }
 
 private func testAnthropicUnsupportedThinkingRejected() async throws {
     // Preserve the exact pre-v2 mixed-block payload as a rejection regression.
-    let payload = "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"thinking\",\"thinking\":\"metadata\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
-    for rejected in [payload,
+    let payload =
+        "{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"thinking\",\"thinking\":\"metadata\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"text\",\"text\":\" world\"}]}"
+    for rejected in [
+        payload,
         "{\"content\":[{\"type\":\"thinking\",\"thinking\":\"metadata\"}]}",
-        "{\"content\":[{\"type\":\"text\",\"text\":\"valid prefix\"},{\"type\":\"redacted_thinking\",\"data\":\"metadata\"}]}"] {
+        "{\"content\":[{\"type\":\"text\",\"text\":\"valid prefix\"},{\"type\":\"redacted_thinking\",\"data\":\"metadata\"}]}",
+    ] {
         let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(rejected.utf8)]) }
-        try await expectTransportError({ _ = try await transport.complete(baseRequest(protocol: .anthropic)) },
+        try await expectTransportError(
+            { _ = try await transport.complete(baseRequest(protocol: .anthropic)) },
             { $0 == .invalidResponse }, "unsupported thinking must not be silently dropped")
     }
 }
@@ -274,8 +315,10 @@ private func testDecodingErrorsAreInvalidResponse() async throws {
     for kind in [FixedProtocol.openAI, .anthropic] {
         for payload in ["not JSON " + fixtureCredential, "{}"] {
             let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
-            try await expectTransportError({ _ = try await transport.complete(baseRequest(protocol: kind)) },
-                { $0 == .invalidResponse && String(describing: $0) == "invalid upstream response" }, "decode failure is not network failure")
+            try await expectTransportError(
+                { _ = try await transport.complete(baseRequest(protocol: kind)) },
+                { $0 == .invalidResponse && String(describing: $0) == "invalid upstream response" },
+                "decode failure is not network failure")
         }
     }
 }
@@ -286,11 +329,14 @@ private func testLegitimateFinishReasons() async throws {
         let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(completion.utf8)]) }
         let result = try await transport.complete(baseRequest())
         try check(result.text == "text", "legitimate finish reason preserves text")
-        let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"text\"},\"finish_reason\":\"\(reason)\"}]}\n\ndata: [DONE]\n\n"
+        let payload =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"text\"},\"finish_reason\":\"\(reason)\"}]}\n\ndata: [DONE]\n\n"
         let stream = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
         var chunks: [ModelStreamChunk] = []
         for try await chunk in stream.stream(try baseRequest()) { chunks.append(chunk) }
-        try check(chunks.map(\.text).joined() == "text" && chunks.filter(\.isFinal).count == 1, "legitimate finish still requires DONE")
+        try check(
+            chunks.map(\.text).joined() == "text" && chunks.filter(\.isFinal).count == 1,
+            "legitimate finish still requires DONE")
     }
 }
 
@@ -299,11 +345,13 @@ private func testStatusErrorIsSanitized() async throws {
     let transport = makeTransport { _ in
         FixtureResponse(status: 401, headers: ["Content-Type": "text/plain"], bodyChunks: [Data(secret.utf8)])
     }
-    try await expectTransportError({ _ = try await transport.complete(try baseRequest()) }, { error in
-        guard case .httpStatus(401) = error else { return false }
-        let rendered = String(describing: error)
-        return !rendered.contains(secret) && !rendered.contains(fixtureCredential)
-    }, "status error must not expose response body or key")
+    try await expectTransportError(
+        { _ = try await transport.complete(try baseRequest()) },
+        { error in
+            guard case .httpStatus(401) = error else { return false }
+            let rendered = String(describing: error)
+            return !rendered.contains(secret) && !rendered.contains(fixtureCredential)
+        }, "status error must not expose response body or key")
 }
 
 private func testRedirectIsRejected() async throws {
@@ -312,11 +360,15 @@ private func testRedirectIsRejected() async throws {
         if request.url == target { return FixtureResponse(bodyChunks: [Data("forwarded".utf8)]) }
         return FixtureResponse(status: 302, redirect: target)
     }
-    try await expectTransportError({ _ = try await transport.complete(try baseRequest()) }, { error in
-        if case .redirectRejected = error { return true }
-        return false
-    }, "redirect must be rejected")
-    try check(FixtureURLProtocol.snapshotRequests().allSatisfy { $0.url != target }, "redirect target must not receive a request")
+    try await expectTransportError(
+        { _ = try await transport.complete(try baseRequest()) },
+        { error in
+            if case .redirectRejected = error { return true }
+            return false
+        }, "redirect must be rejected")
+    try check(
+        FixtureURLProtocol.snapshotRequests().allSatisfy { $0.url != target },
+        "redirect target must not receive a request")
 }
 
 private func testFragmentedUTF8SSEAndDone() async throws {
@@ -326,7 +378,9 @@ private func testFragmentedUTF8SSEAndDone() async throws {
     let bytes = event1 + event2 + done
     // One byte per fragment splits every multibyte UTF-8 code point.
     let chunks = bytes.map { Data([$0]) }
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: chunks) }
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: chunks)
+    }
     var values: [String] = []
     var finalCount = 0
     for try await chunk in transport.stream(try baseRequest()) {
@@ -338,39 +392,58 @@ private func testFragmentedUTF8SSEAndDone() async throws {
 
 private func testOversizedResponseAndOversizedSSELine() async throws {
     let oversized = Data(repeating: 0x61, count: ModelTransport.maxResponseBytes + 1)
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "application/json"], bodyChunks: [oversized]) }
-    try await expectTransportError({ _ = try await transport.complete(try baseRequest()) }, { error in
-        if case .responseTooLarge = error { return true }
-        return false
-    }, "oversized response")
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "application/json"], bodyChunks: [oversized])
+    }
+    try await expectTransportError(
+        { _ = try await transport.complete(try baseRequest()) },
+        { error in
+            if case .responseTooLarge = error { return true }
+            return false
+        }, "oversized response")
 
     let longLine = Data(("data: " + String(repeating: "a", count: ModelTransport.maxSSELineBytes) + "\n\n").utf8)
-    let lineTransport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [longLine]) }
-    try await expectTransportError({
-        for try await _ in lineTransport.stream(try baseRequest()) { }
-    }, { error in
-        if case .sseLineTooLarge = error { return true }
-        return false
-    }, "oversized SSE line")
+    let lineTransport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [longLine])
+    }
+    try await expectTransportError(
+        {
+            for try await _ in lineTransport.stream(try baseRequest()) {}
+        },
+        { error in
+            if case .sseLineTooLarge = error { return true }
+            return false
+        }, "oversized SSE line")
 }
 
 private final class ObservedFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var stored = false
-    func set() { lock.lock(); stored = true; lock.unlock() }
-    func get() -> Bool { lock.lock(); defer { lock.unlock() }; return stored }
+    func set() {
+        lock.lock()
+        stored = true
+        lock.unlock()
+    }
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
 }
 
 private func testIncrementalBeforeEOF() async throws {
     let received = ObservedFlag()
     let transport = makeTransport { _ in
-        FixtureResponse(headers: ["Content-Type": "text/event-stream"],
+        FixtureResponse(
+            headers: ["Content-Type": "text/event-stream"],
             bodyChunks: [Data("data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n".utf8)], finish: false)
     }
     let consumer = Task {
-        do { for try await chunk in transport.stream(try baseRequest()) {
-            if chunk.text == "first" { received.set() }
-        } } catch { }
+        do {
+            for try await chunk in transport.stream(try baseRequest()) {
+                if chunk.text == "first" { received.set() }
+            }
+        } catch {}
     }
     for _ in 0..<50 {
         if received.get() { break }
@@ -382,53 +455,68 @@ private func testIncrementalBeforeEOF() async throws {
 }
 
 private func testAnthropicSSELifecycle() async throws {
-    let payload = anthropicMessageStart +
-        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
-        "event: content_block_delta\r\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\r\n\r\n" +
-        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" 世界\"}}\n\n" +
-        "event: content_block_stop\r\ndata: {\"type\":\"content_block_stop\",\"index\":0}\r\n\r\n" + anthropicMessageEnd
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) }) }
+    let payload =
+        anthropicMessageStart
+        + "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+        + "event: content_block_delta\r\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\r\n\r\n"
+        + "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" 世界\"}}\n\n"
+        + "event: content_block_stop\r\ndata: {\"type\":\"content_block_stop\",\"index\":0}\r\n\r\n"
+        + anthropicMessageEnd
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) })
+    }
     var chunks: [ModelStreamChunk] = []
     for try await chunk in transport.stream(try baseRequest(protocol: .anthropic)) { chunks.append(chunk) }
-    try check(chunks.filter { !$0.text.isEmpty }.map(\.text) == ["hi", " 世界"], "fragmented text deltas retain order and UTF8")
+    try check(
+        chunks.filter { !$0.text.isEmpty }.map(\.text) == ["hi", " 世界"], "fragmented text deltas retain order and UTF8")
     try check(chunks.filter(\.isFinal).count == 1 && chunks.last?.isFinal == true, "exactly one terminal final")
     try check(chunks.last?.completion?.blocks == [.text("hi 世界")], "final assembled text block")
     try checkAnthropicMetadata(chunks)
 }
 
-private let anthropicMessageStart = ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-flash\",\"content\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":0},\"stop_reason\":null,\"stop_sequence\":null}}\r\n\r\n"
-private let anthropicMessageEnd = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
-    "event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
+private let anthropicMessageStart =
+    ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-flash\",\"content\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":0},\"stop_reason\":null,\"stop_sequence\":null}}\r\n\r\n"
+private let anthropicMessageEnd =
+    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n"
+    + "event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
 
 private func checkAnthropicMetadata(_ chunks: [ModelStreamChunk]) throws {
     guard case .messageStart(let start) = chunks.first?.event,
-          let completion = chunks.last?.completion else { throw CheckFailure.failed("missing lifecycle metadata") }
+        let completion = chunks.last?.completion
+    else { throw CheckFailure.failed("missing lifecycle metadata") }
     try check(start.messageID == "msg_fixture" && start.model == "deepseek-flash", "message start identity")
-    try check(start.usage?.inputTokens == 7 && start.usage?.outputTokens == 0 && start.stopReason == nil, "initial usage and no premature stop")
+    try check(
+        start.usage?.inputTokens == 7 && start.usage?.outputTokens == 0 && start.stopReason == nil,
+        "initial usage and no premature stop")
     let final = completion.metadata
     try check(final.messageID == start.messageID && final.model == start.model, "final identity preserved")
     try check(final.stopReason == "end_turn" && final.stopSequence == nil, "final stop metadata")
     try check(final.usage?.inputTokens == 7 && final.usage?.outputTokens == 2, "merged terminal usage")
     let deltas = chunks.compactMap { chunk -> ModelMetadata? in
-        if case .messageDelta(let metadata) = chunk.event { return metadata }; return nil
+        if case .messageDelta(let metadata) = chunk.event { return metadata }
+        return nil
     }
     try check(deltas == [final], "message delta metadata retained before final")
 }
 
 private func expectRejectedAnthropicStream(_ payload: String) async throws {
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) }) }
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: payload.utf8.map { Data([$0]) })
+    }
     var chunks: [ModelStreamChunk] = []
-    try await expectTransportError({
-        for try await chunk in transport.stream(try baseRequest(protocol: .anthropic)) { chunks.append(chunk) }
-    }, { $0 == .malformedSSE }, "incomplete lifecycle rejected")
+    try await expectTransportError(
+        {
+            for try await chunk in transport.stream(try baseRequest(protocol: .anthropic)) { chunks.append(chunk) }
+        }, { $0 == .malformedSSE }, "incomplete lifecycle rejected")
     try check(!chunks.contains(where: \.isFinal), "malformed stream must never emit success final")
 }
 
 private func testAnthropicIncompleteLegacyLifecycleRejected() async throws {
     // Exact former success payload, now an explicit negative fixture.
-    let payload = ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\"}\r\n\r\n" +
-        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n" +
-        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    let payload =
+        ": ping\r\nevent: message_start\r\ndata: {\"type\":\"message_start\"}\r\n\r\n"
+        + "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"
+        + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
     try await expectRejectedAnthropicStream(payload)
 }
 
@@ -438,27 +526,37 @@ private func testAnthropicBareLegacyStopRejected() async throws {
 
 private func testSSELoneCRAndInvalidUTF8() async throws {
     let valid = "data: {\"choices\":[{\"delta\":{\"content\":\"CR\"}}]}\r\rdata: [DONE]\r\r"
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [Data(valid.utf8)]) }
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [Data(valid.utf8)])
+    }
     var text = ""
     for try await chunk in transport.stream(try baseRequest()) { text += chunk.text }
     try check(text == "CR", "lone CR must delimit SSE lines")
     let invalid = Data("data: ".utf8) + Data([0xff, 0x0a, 0x0a])
-    let bad = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [invalid]) }
-    try await expectTransportError({ for try await _ in bad.stream(try baseRequest()) {} }, { $0 == .malformedSSE }, "invalid UTF8 is rejected")
+    let bad = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [invalid])
+    }
+    try await expectTransportError(
+        { for try await _ in bad.stream(try baseRequest()) {} }, { $0 == .malformedSSE }, "invalid UTF8 is rejected")
 }
 
 private func testTruncatedStreamRejected() async throws {
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [Data("data: [DONE]".utf8)]) }
-    try await expectTransportError({ for try await _ in transport.stream(try baseRequest()) {} },
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [Data("data: [DONE]".utf8)])
+    }
+    try await expectTransportError(
+        { for try await _ in transport.stream(try baseRequest()) {} },
         { $0 == .invalidResponse || $0 == .malformedSSE }, "unterminated event is not a completed stream")
 }
 
 private func testCancellationStopsTask() async throws {
-    let transport = makeTransport { _ in FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [], finish: false) }
+    let transport = makeTransport { _ in
+        FixtureResponse(headers: ["Content-Type": "text/event-stream"], bodyChunks: [], finish: false)
+    }
     let consumer = Task {
         do {
-            for try await _ in transport.stream(try baseRequest()) { }
-        } catch { }
+            for try await _ in transport.stream(try baseRequest()) {}
+        } catch {}
     }
     try await Task.sleep(nanoseconds: 100_000_000)
     consumer.cancel()
@@ -469,33 +567,49 @@ private func testCancellationStopsTask() async throws {
 }
 
 private func testInvalidCredentialRejectedBeforeDispatch() async throws {
-    FixtureURLProtocol.install { _ in FixtureResponse(bodyChunks: [Data("{\"choices\":[{\"message\":{\"content\":\"bad\"}}]}".utf8)]) }
+    FixtureURLProtocol.install { _ in
+        FixtureResponse(bodyChunks: [Data("{\"choices\":[{\"message\":{\"content\":\"bad\"}}]}".utf8)])
+    }
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [FixtureURLProtocol.self]
-    let transport = ModelTransport(credentialProvider: InMemoryCredentialProvider("bad\r\nheader"), configuration: configuration)
-    try await expectTransportError({ _ = try await transport.complete(baseRequest()) }, { $0 == .credential(.invalid) }, "invalid credential rejected")
+    let transport = ModelTransport(
+        credentialProvider: InMemoryCredentialProvider("bad\r\nheader"), configuration: configuration)
+    try await expectTransportError(
+        { _ = try await transport.complete(baseRequest()) }, { $0 == .credential(.invalid) },
+        "invalid credential rejected")
     try check(FixtureURLProtocol.snapshotRequests().isEmpty, "invalid credential must never dispatch")
 }
 
 private func testEncodedRequestSizeLimit() async throws {
     let transport = makeTransport { _ in FixtureResponse() }
-    let message = try FixedMessage(role: .user, content: String(repeating: "a", count: FixedModelRequest.maxMessageBytes))
-    let request = try FixedModelRequest(model: .deepSeekFlash, protocol: .openAI, messages: Array(repeating: message, count: 18), maxOutputTokens: 1)
-    try await expectTransportError({ _ = try await transport.complete(request) }, { $0 == .requestTooLarge }, "encoded request bound")
+    let message = try FixedMessage(
+        role: .user, content: String(repeating: "a", count: FixedModelRequest.maxMessageBytes))
+    let request = try FixedModelRequest(
+        model: .deepSeekFlash, protocol: .openAI, messages: Array(repeating: message, count: 18), maxOutputTokens: 1)
+    try await expectTransportError(
+        { _ = try await transport.complete(request) }, { $0 == .requestTooLarge }, "encoded request bound")
     try check(FixtureURLProtocol.snapshotRequests().isEmpty, "oversized request never dispatched")
 }
 
 private func testConcurrencyBoundAndReuse() async throws {
     let transport = makeTransport { _ in FixtureResponse(bodyChunks: [], finish: false) }
-    let active = (0..<ModelTransport.maxConcurrentRequests).map { _ in Task { try await transport.complete(baseRequest()) } }
+    let active = (0..<ModelTransport.maxConcurrentRequests).map { _ in
+        Task { try await transport.complete(baseRequest()) }
+    }
     for _ in 0..<100 {
         if FixtureURLProtocol.snapshotRequests().count == ModelTransport.maxConcurrentRequests { break }
         try await Task.sleep(nanoseconds: 5_000_000)
     }
     let resultSeen = ObservedFlag()
     let overflow = Task { () -> String in
-        do { _ = try await transport.complete(baseRequest()); resultSeen.set(); return "allowed" }
-        catch { resultSeen.set(); return String(describing: error) }
+        do {
+            _ = try await transport.complete(baseRequest())
+            resultSeen.set()
+            return "allowed"
+        } catch {
+            resultSeen.set()
+            return String(describing: error)
+        }
     }
     for _ in 0..<40 {
         if resultSeen.get() { break }
@@ -506,8 +620,12 @@ private func testConcurrencyBoundAndReuse() async throws {
     for task in active { task.cancel() }
     for task in active { _ = await task.result }
     let overflowResult = await overflow.value
-    try check(rejectedPromptly && overflowResult == "model transport busy", "excess concurrency must fail fast without unbounded waiters")
-    FixtureURLProtocol.install { _ in FixtureResponse(bodyChunks: [Data("{\"choices\":[{\"message\":{\"content\":\"reused\"}}]}".utf8)]) }
+    try check(
+        rejectedPromptly && overflowResult == "model transport busy",
+        "excess concurrency must fail fast without unbounded waiters")
+    FixtureURLProtocol.install { _ in
+        FixtureResponse(bodyChunks: [Data("{\"choices\":[{\"message\":{\"content\":\"reused\"}}]}".utf8)])
+    }
     for _ in 0..<6 {
         let result = try await transport.complete(baseRequest())
         try check(result.text == "reused", "cancelled requests release slots")
@@ -516,7 +634,9 @@ private func testConcurrencyBoundAndReuse() async throws {
 
 private func testDirectCompletionCancellationResult() async throws {
     let transport = makeTransport { _ in FixtureResponse(finish: false) }
-    var cancelled = 0; var successes = 0; var other = 0
+    var cancelled = 0
+    var successes = 0
+    var other = 0
     for iteration in 0..<50 {
         let task = Task { try await transport.complete(baseRequest()) }
         for _ in 0..<1000 {
@@ -524,7 +644,8 @@ private func testDirectCompletionCancellationResult() async throws {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
         guard FixtureURLProtocol.snapshotRequests().count == iteration + 1 else {
-            task.cancel(); _ = await task.result
+            task.cancel()
+            _ = await task.result
             throw CheckFailure.failed("hanging completion never dispatched")
         }
         try await Task.sleep(nanoseconds: 1_000_000)
@@ -540,7 +661,9 @@ private func testDirectCompletionCancellationResult() async throws {
 }
 private func testValidEmptyFinishedText() async throws {
     for kind in [FixedProtocol.openAI, .anthropic] {
-        let payload = kind == .openAI ? "{\"choices\":[{\"message\":{\"content\":\"\"}}]}" : "{\"content\":[{\"type\":\"text\",\"text\":\"\"}]}"
+        let payload =
+            kind == .openAI
+            ? "{\"choices\":[{\"message\":{\"content\":\"\"}}]}" : "{\"content\":[{\"type\":\"text\",\"text\":\"\"}]}"
         let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
         let result = try await transport.complete(baseRequest(protocol: kind))
         try check(result.text.isEmpty, "genuinely completed empty text remains valid")
@@ -549,10 +672,16 @@ private func testValidEmptyFinishedText() async throws {
         var chunks: [ModelStreamChunk] = []
         for try await chunk in stream.stream(try baseRequest(protocol: kind)) { chunks.append(chunk) }
         if kind == .openAI {
-            try check(chunks.count == 1 && chunks[0].isFinal && chunks[0].text.isEmpty, "empty finished stream preserves genuine terminal")
+            try check(
+                chunks.count == 1 && chunks[0].isFinal && chunks[0].text.isEmpty,
+                "empty finished stream preserves genuine terminal")
         } else {
-            try check(chunks.count == 3 && chunks.allSatisfy { $0.text.isEmpty }, "empty lifecycle includes start, delta, stop metadata")
-            try check(chunks.filter(\.isFinal).count == 1 && chunks.last?.isFinal == true, "empty lifecycle has exactly one final")
+            try check(
+                chunks.count == 3 && chunks.allSatisfy { $0.text.isEmpty },
+                "empty lifecycle includes start, delta, stop metadata")
+            try check(
+                chunks.filter(\.isFinal).count == 1 && chunks.last?.isFinal == true,
+                "empty lifecycle has exactly one final")
             try check(chunks.last?.completion?.blocks == [], "no-block empty completion preserved")
             try checkAnthropicMetadata(chunks)
         }
@@ -560,20 +689,31 @@ private func testValidEmptyFinishedText() async throws {
 }
 private func checkPreparedCapacity(_ transport: ModelTransport) throws {
     var held: [ModelPreparedOperation] = []
-    defer { held.forEach { $0.cancel(); $0.cancel() } }
+    defer {
+        held.forEach {
+            $0.cancel()
+            $0.cancel()
+        }
+    }
     for _ in 0..<4 { held.append(try transport.prepare(baseRequest(), streaming: false)) }
-    do { _ = try transport.prepare(baseRequest(), streaming: false); throw CheckFailure.failed("fifth held reservation accepted") }
-    catch ModelTransportError.busy {}
+    do {
+        _ = try transport.prepare(baseRequest(), streaming: false)
+        throw CheckFailure.failed("fifth held reservation accepted")
+    } catch ModelTransportError.busy {}
 }
 private func testPreparedCancellationBeforeStart() async throws {
     let transport = makeTransport { _ in FixtureResponse(finish: false) }
     for _ in 0..<20 {
         let operation = try transport.prepare(baseRequest(), streaming: false)
         operation.cancel()
-        do { try operation.start(); throw CheckFailure.failed("cancelled prepared task started") }
-        catch ModelTransportError.cancelled {}
-        do { for try await _ in operation.chunks {} ; throw CheckFailure.failed("cancelled operation finished successfully") }
-        catch ModelTransportError.cancelled {}
+        do {
+            try operation.start()
+            throw CheckFailure.failed("cancelled prepared task started")
+        } catch ModelTransportError.cancelled {}
+        do {
+            for try await _ in operation.chunks {}
+            throw CheckFailure.failed("cancelled operation finished successfully")
+        } catch ModelTransportError.cancelled {}
     }
     try checkPreparedCapacity(transport)
     try check(FixtureURLProtocol.snapshotRequests().isEmpty, "cancel before start has zero dispatch")
@@ -588,18 +728,25 @@ private func testPreparedRepeatedCancellationExactOnce() async throws {
     let transport = makeTransport { _ in FixtureResponse(finish: false) }
     for _ in 0..<20 {
         let operation = try transport.prepare(baseRequest(), streaming: false)
-        operation.cancel(); operation.cancel(); operation.cancel()
+        operation.cancel()
+        operation.cancel()
+        operation.cancel()
     }
     // Each cycle also exercises repeated cancellation followed by deinit of all four.
     for _ in 0..<8 { try checkPreparedCapacity(transport) }
-    try check(FixtureURLProtocol.snapshotRequests().isEmpty, "repeated cancel/deinit never dispatches or over-releases limiter")
+    try check(
+        FixtureURLProtocol.snapshotRequests().isEmpty,
+        "repeated cancel/deinit never dispatches or over-releases limiter")
 }
 
 private func testInvalidKeychainInputBeforeStorage() throws {
-    let store = KeychainModelCredentialProvider(service: "dev.mini-sandbox.invalid-input." + UUID().uuidString, account: UUID().uuidString)
+    let store = KeychainModelCredentialProvider(
+        service: "dev.mini-sandbox.invalid-input." + UUID().uuidString, account: UUID().uuidString)
     for value in ["", "line\nbreak", "null\0byte", "delete\u{7f}", String(repeating: "a", count: 16 * 1024 + 1)] {
-        do { try store.setCredential(value); throw CheckFailure.failed("invalid credential entered storage") }
-        catch CredentialProviderError.invalid {}
+        do {
+            try store.setCredential(value)
+            throw CheckFailure.failed("invalid credential entered storage")
+        } catch CredentialProviderError.invalid {}
     }
 }
 
@@ -627,9 +774,11 @@ private struct NamedCheck: Sendable {
 }
 
 private let checks: [NamedCheck] = [
-    NamedCheck(name: "invalid Keychain input rejected before OS storage", run: { try testInvalidKeychainInputBeforeStorage() }),
+    NamedCheck(
+        name: "invalid Keychain input rejected before OS storage", run: { try testInvalidKeychainInputBeforeStorage() }),
     NamedCheck(name: "Anthropic unsupported thinking rejected", run: testAnthropicUnsupportedThinkingRejected),
-    NamedCheck(name: "Anthropic incomplete legacy lifecycle rejected", run: testAnthropicIncompleteLegacyLifecycleRejected),
+    NamedCheck(
+        name: "Anthropic incomplete legacy lifecycle rejected", run: testAnthropicIncompleteLegacyLifecycleRejected),
     NamedCheck(name: "Anthropic bare legacy stop rejected", run: testAnthropicBareLegacyStopRejected),
     NamedCheck(name: "direct completion cancellation result", run: testDirectCompletionCancellationResult),
     NamedCheck(name: "valid empty finished text", run: testValidEmptyFinishedText),
@@ -640,10 +789,17 @@ private let checks: [NamedCheck] = [
     NamedCheck(name: "Anthropic mixed blocks", run: testAnthropicMixedBlocks),
     NamedCheck(name: "decoding errors are invalid response", run: testDecodingErrorsAreInvalidResponse),
     NamedCheck(name: "legitimate finish reasons", run: testLegitimateFinishReasons),
-    NamedCheck(name: "provider failure insufficient completion", run: { try await testProviderFailure("insufficient_system_resource", streaming: false) }),
-    NamedCheck(name: "provider failure aborted completion", run: { try await testProviderFailure("aborted", streaming: false) }),
-    NamedCheck(name: "provider failure insufficient SSE", run: { try await testProviderFailure("insufficient_system_resource", streaming: true) }),
-    NamedCheck(name: "provider failure aborted SSE", run: { try await testProviderFailure("aborted", streaming: true) }),
+    NamedCheck(
+        name: "provider failure insufficient completion",
+        run: { try await testProviderFailure("insufficient_system_resource", streaming: false) }),
+    NamedCheck(
+        name: "provider failure aborted completion", run: { try await testProviderFailure("aborted", streaming: false) }
+    ),
+    NamedCheck(
+        name: "provider failure insufficient SSE",
+        run: { try await testProviderFailure("insufficient_system_resource", streaming: true) }),
+    NamedCheck(
+        name: "provider failure aborted SSE", run: { try await testProviderFailure("aborted", streaming: true) }),
     NamedCheck(name: "SSE CR and invalid UTF8", run: testSSELoneCRAndInvalidUTF8),
     NamedCheck(name: "invalid credential", run: testInvalidCredentialRejectedBeforeDispatch),
     NamedCheck(name: "encoded request limit", run: testEncodedRequestSizeLimit),
@@ -660,7 +816,7 @@ private let checks: [NamedCheck] = [
     NamedCheck(name: "fragmented UTF8 SSE", run: testFragmentedUTF8SSEAndDone),
     NamedCheck(name: "response limits", run: testOversizedResponseAndOversizedSSELine),
     NamedCheck(name: "cancellation", run: testCancellationStopsTask),
-    NamedCheck(name: "isolated Keychain CRUD", run: { try testKeychainCRUDIsolated() })
+    NamedCheck(name: "isolated Keychain CRUD", run: { try testKeychainCRUDIsolated() }),
 ]
 
 private func runLiveSmoke() async {
@@ -672,18 +828,22 @@ private func runLiveSmoke() async {
     var passed = 0
     for kind in [FixedProtocol.openAI, .anthropic] {
         do {
-            let request = try FixedModelRequest(model: .deepSeekFlash, protocol: kind,
+            let request = try FixedModelRequest(
+                model: .deepSeekFlash, protocol: kind,
                 messages: [FixedMessage(role: .user, content: "Reply with exactly OK.")], maxOutputTokens: 32)
             let completion = try await transport.complete(request)
             try check(!completion.text.isEmpty, "live nonstream returned text")
-            passed += 1; print("PASS live \(kind.rawValue) completion")
-            var text = ""; var finals = 0
+            passed += 1
+            print("PASS live \(kind.rawValue) completion")
+            var text = ""
+            var finals = 0
             for try await chunk in transport.stream(request) {
                 text += chunk.text
                 if chunk.isFinal { finals += 1 }
             }
             try check(!text.isEmpty && finals == 1, "live stream text and terminal marker")
-            passed += 1; print("PASS live \(kind.rawValue) stream")
+            passed += 1
+            print("PASS live \(kind.rawValue) stream")
         } catch {
             print("FAIL live \(kind.rawValue): \(error)")
         }
@@ -700,12 +860,15 @@ private struct ModelTransportChecks {
             print("USAGE: ModelTransportChecks [--offline | --live | selector]")
             Foundation.exit(64)
         }
-        if CommandLine.arguments.contains("--live") { await runLiveSmoke(); return }
+        if CommandLine.arguments.contains("--live") {
+            await runLiveSmoke()
+            return
+        }
         var failures = 0
         var blocked = 0
         let selected = checks.filter {
-            arguments == ["--offline"] ? $0.name != "isolated Keychain CRUD" :
-                (arguments.isEmpty || $0.name.contains(arguments[0]))
+            arguments == ["--offline"]
+                ? $0.name != "isolated Keychain CRUD" : (arguments.isEmpty || $0.name.contains(arguments[0]))
         }
         guard !selected.isEmpty else {
             print("ERROR: no tests matched the selector")
@@ -715,7 +878,9 @@ private struct ModelTransportChecks {
             do {
                 try await check.run()
                 print("PASS \(check.name)")
-            } catch CredentialProviderError.storageUnavailable(let status) where [-60008, -25308, -25291].contains(status) && check.name == "isolated Keychain CRUD" {
+            } catch CredentialProviderError.storageUnavailable(let status)
+                where [-60008, -25308, -25291].contains(status) && check.name == "isolated Keychain CRUD"
+            {
                 blocked += 1
                 print("BLOCKED \(check.name): host Keychain authorization unavailable (\(status))")
             } catch {
@@ -723,7 +888,9 @@ private struct ModelTransportChecks {
                 print("FAIL \(check.name): \(error)")
             }
         }
-        print("PASS \(selected.count - failures - blocked); FAIL \(failures); BLOCKED \(blocked); TOTAL \(selected.count)")
+        print(
+            "PASS \(selected.count - failures - blocked); FAIL \(failures); BLOCKED \(blocked); TOTAL \(selected.count)"
+        )
         if failures > 0 { Foundation.exit(1) }
         if blocked > 0 { Foundation.exit(2) }
     }

@@ -9,7 +9,9 @@ public final class SharedHostClock: @unchecked Sendable {
     public func arm(_ position: Int) { source.arm(at: position, wall: base.addingTimeInterval(900)) }
     public func now() -> Date { source.now() }
     public func monotonic() -> Duration { source.elapsed }
-    public func set(wall: TimeInterval, elapsed: Duration) { source.set(wall: base.addingTimeInterval(wall), elapsed: elapsed) }
+    public func set(wall: TimeInterval, elapsed: Duration) {
+        source.set(wall: base.addingTimeInterval(wall), elapsed: elapsed)
+    }
     public var observation: (Int, Bool) { source.observation }
     public var observed: Bool { observation.1 }
 }

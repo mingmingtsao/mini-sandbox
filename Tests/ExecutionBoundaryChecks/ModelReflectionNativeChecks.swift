@@ -1,7 +1,8 @@
-import Foundation
 import Darwin
-@testable import SandboxHost
+import Foundation
 import SandboxContracts
+
+@testable import SandboxHost
 
 /// Test-only fixed loopback forwarding; production endpoint selection is unchanged.
 /// The same active synthetic header is consumed by the real HTTP fixture. No
@@ -21,7 +22,8 @@ private final class ReflectionLoopbackProtocol: URLProtocol {
     override func startLoading() {
         do {
             guard request.url?.absoluteString == "https://api.deepseek.com/anthropic/v1/messages",
-                  request.httpMethod == "POST", (1...65535).contains(Self.settings.port) else { throw Failure(message: "fixed relay input") }
+                request.httpMethod == "POST", (1...65535).contains(Self.settings.port)
+            else { throw Failure(message: "fixed relay input") }
             var forwarded = request
             forwarded.url = URL(string: "http://127.0.0.1:\(Self.settings.port)/reflection")!
             let configuration = URLSessionConfiguration.ephemeral
@@ -31,21 +33,30 @@ private final class ReflectionLoopbackProtocol: URLProtocol {
             configuration.connectionProxyDictionary = [:]
             configuration.timeoutIntervalForRequest = 5
             configuration.timeoutIntervalForResource = 10
-            let session = URLSession(configuration: configuration, delegate: ReflectionRelayDelegate(self), delegateQueue: nil)
+            let session = URLSession(
+                configuration: configuration, delegate: ReflectionRelayDelegate(self), delegateQueue: nil)
             ownerLock.withLock { forwarding = session }
             session.dataTask(with: forwarded).resume()
-        } catch { client?.urlProtocol(self, didFailWithError: ModelTransportError.invalidRequest("fixed fixture relay")) }
+        } catch {
+            client?.urlProtocol(self, didFailWithError: ModelTransportError.invalidRequest("fixed fixture relay"))
+        }
     }
     override func stopLoading() {
-        let session = ownerLock.withLock { let value = forwarding; forwarding = nil; return value }
+        let session = ownerLock.withLock {
+            let value = forwarding
+            forwarding = nil
+            return value
+        }
         session?.invalidateAndCancel()
     }
 }
 private final class ReflectionRelayDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     let owner: ReflectionLoopbackProtocol
     init(_ owner: ReflectionLoopbackProtocol) { self.owner = owner }
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
         owner.client?.urlProtocol(owner, didReceive: response, cacheStoragePolicy: .notAllowed)
         completionHandler(.allow)
     }
@@ -53,12 +64,17 @@ private final class ReflectionRelayDelegate: NSObject, URLSessionDataDelegate, @
         owner.client?.urlProtocol(owner, didLoad: data)
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if error != nil { owner.client?.urlProtocol(owner, didFailWithError: ModelTransportError.network) }
-        else { owner.client?.urlProtocolDidFinishLoading(owner) }
+        if error != nil {
+            owner.client?.urlProtocol(owner, didFailWithError: ModelTransportError.network)
+        } else {
+            owner.client?.urlProtocolDidFinishLoading(owner)
+        }
         session.finishTasksAndInvalidate()
     }
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
         completionHandler(nil)
         owner.client?.urlProtocol(owner, didFailWithError: ModelTransportError.redirectRejected)
         session.invalidateAndCancel()
@@ -68,7 +84,10 @@ private final class NativeReflectionCredential: ModelCredentialProvider, @unchec
     private let lock = NSLock()
     private var count = 0
     let value = "sk-native-canary-" + UUID().uuidString
-    func credential(for model: FixedModel) throws -> String { lock.withLock { count += 1 }; return value }
+    func credential(for model: FixedModel) throws -> String {
+        lock.withLock { count += 1 }
+        return value
+    }
     var reads: Int { lock.withLock { count } }
 }
 private final class NativeReflectionResult: @unchecked Sendable {
@@ -80,39 +99,59 @@ private final class NativeReflectionResult: @unchecked Sendable {
 
 func nativeModelReflectionLoopback() async throws {
     guard let input = readLine(), input.utf8.count < 128,
-          let data = input.data(using: .utf8), let fields = try JSONSerialization.jsonObject(with: data) as? [String: Int],
-          fields.count == 1, let port = fields["port"], (1...65535).contains(port) else { throw Failure(message: "fixture port") }
+        let data = input.data(using: .utf8),
+        let fields = try JSONSerialization.jsonObject(with: data) as? [String: Int],
+        fields.count == 1, let port = fields["port"], (1...65535).contains(port)
+    else { throw Failure(message: "fixture port") }
     ReflectionLoopbackProtocol.settings.install(port)
-    let modes = ["plain", "escaped", "adjacent", "tool", "tool-escaped", "sse-split", "sse-escaped", "sse-tool-escaped", "error", "ordinary", "ordinary-sse", "ordinary-tool", "prefix-sse"]
+    let modes = [
+        "plain", "escaped", "adjacent", "tool", "tool-escaped", "sse-split", "sse-escaped", "sse-tool-escaped", "error",
+        "ordinary", "ordinary-sse", "ordinary-tool", "prefix-sse",
+    ]
     for mode in modes { try await nativeReflectionCase(mode) }
 }
 
 private func nativeReflectionCase(_ mode: String) async throws {
     let streaming = mode.contains("sse")
     let positive = mode.hasPrefix("ordinary") || mode == "prefix-sse"
-    let credential = NativeReflectionCredential(), audit = Audit(), pair = try NativeSocketPair(), id = UUID()
+    let credential = NativeReflectionCredential()
+    let audit = Audit()
+    let pair = try NativeSocketPair()
+    let id = UUID()
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ReflectionLoopbackProtocol.self]
-    let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 1,
-        routeVersion: 1, model: .deepSeekFlash, protocol: .anthropic, credentialProvider: credential, configuration: configuration)
+    let connection = HostModelConnection(
+        connectionID: id, accountID: UUID(), accountBindingVersion: 1,
+        routeVersion: 1, model: .deepSeekFlash, protocol: .anthropic, credentialProvider: credential,
+        configuration: configuration)
     let gateway = try HostModelGateway(connections: [connection], auditSink: audit)
-    let scope = try ResourceScope(service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
+    let scope = try ResourceScope(
+        service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
     let now = Date()
-    let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: now.addingTimeInterval(-1), expiresAt: now.addingTimeInterval(60),
+    let grant = try RunGrant(
+        runID: UUID(), epoch: 1, createdAt: now.addingTimeInterval(-1), expiresAt: now.addingTimeInterval(60),
         workloadImageDigest: String(repeating: "a", count: 64), agentAdapterVersion: "native-reflection-loopback",
         workspaceSnapshotID: UUID(), policyDigest: String(repeating: "b", count: 64), approvalSnapshotID: UUID(),
-        connections: [ConnectionGrant(connectionID: id, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])], explicitDenies: [],
-        resourceLimits: ResourceLimits(cpuCount: 1, memoryBytes: 1024 * 1024, diskBytes: 1024 * 1024, messageBytes: 65536, concurrentRequests: 1))
+        connections: [ConnectionGrant(connectionID: id, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])],
+        explicitDenies: [],
+        resourceLimits: ResourceLimits(
+            cpuCount: 1, memoryBytes: 1024 * 1024, diskBytes: 1024 * 1024, messageBytes: 65536, concurrentRequests: 1))
     let handle = try await gateway.install(grant: grant)
-    let body = try JSONSerialization.data(withJSONObject: ["model": "deepseek-flash", "max_tokens": 32, "stream": streaming,
-        "messages": [["role": "user", "content": mode]]], options: [.sortedKeys])
+    let body = try JSONSerialization.data(
+        withJSONObject: [
+            "model": "deepseek-flash", "max_tokens": 32, "stream": streaming,
+            "messages": [["role": "user", "content": mode]],
+        ], options: [.sortedKeys])
     let proposal = try await gateway.proposeNative(handle: handle, connectionID: id, body: body, streaming: streaming)
     let approval = try await gateway.hostApprove(handle: handle, proposal: proposal)
-    let output = try await gateway.makeNativeOutput(handle: handle, approval: approval, takingAcceptedSocket: pair.takeWriter())
+    let output = try await gateway.makeNativeOutput(
+        handle: handle, approval: approval, takingAcceptedSocket: pair.takeWriter())
     let result = NativeReflectionResult()
     let task = Task {
-        do { try await gateway.execute(handle: handle, approval: approval, output: output); result.finish(.success(())) }
-        catch { result.finish(.failure(error)) }
+        do {
+            try await gateway.execute(handle: handle, approval: approval, output: output)
+            result.finish(.success(()))
+        } catch { result.finish(.failure(error)) }
     }
     var bytes = Data()
     // Pump the actual consumer while the upstream is still producing; otherwise
@@ -141,27 +180,42 @@ private func nativeReflectionCase(_ mode: String) async throws {
     // Reconstruct semantic text and tool fragments from actual emitted HTTP/SSE,
     // independently of the host's in-memory completion or summary counters.
     let payload = text.components(separatedBy: "\r\n\r\n").dropFirst().joined(separator: "\r\n\r\n")
-    var textValues = "", toolValues = ""
+    var textValues = ""
+    var toolValues = ""
     if streaming {
         for line in payload.components(separatedBy: "\n") where line.hasPrefix("data: ") {
             let value = try JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as! [String: Any]
-            if let block = value["content_block"] as? [String: Any], let value = block["text"] as? String { textValues += value }
+            if let block = value["content_block"] as? [String: Any], let value = block["text"] as? String {
+                textValues += value
+            }
             if let delta = value["delta"] as? [String: Any] {
                 if let value = delta["text"] as? String { textValues += value }
                 if let value = delta["partial_json"] as? String { toolValues += value }
             }
         }
     }
-    try check(!textValues.contains(credential.value) && !toolValues.contains(credential.value) && !toolValues.contains(escaped), "native-reflection reconstructed leak")
-    try check(succeeded == positive && output.nativeProgress!.acceptedFinals == (positive ? 1 : 0), "native-reflection final result")
+    try check(
+        !textValues.contains(credential.value) && !toolValues.contains(credential.value)
+            && !toolValues.contains(escaped), "native-reflection reconstructed leak")
+    try check(
+        succeeded == positive && output.nativeProgress!.acceptedFinals == (positive ? 1 : 0),
+        "native-reflection final result")
     let resumes = try await gateway.resumedTaskCount(handle: handle)
     try check(credential.reads == 1 && resumes == 1, "native-reflection read/resume count")
     try check(output.nativeProgress!.committedBytes == bytes.count, "native-reflection peer byte accounting")
     let expected: DispatchOutcome = positive ? .completed : .unknown
-    try check(audit.completions.count == 1 && audit.completions[0].outcome == expected, "native-reflection audit outcome")
+    try check(
+        audit.completions.count == 1 && audit.completions[0].outcome == expected, "native-reflection audit outcome")
     if positive {
         try check(text.contains("ordinary"), "native-reflection positive payload missing")
-        if mode == "prefix-sse" { try check(textValues == "ordinary " + credential.value.prefix(12), "native-reflection harmless suffix omitted") }
-    } else if !streaming { try check(bytes.isEmpty, "native-reflection JSON/error output released") }
-    print("PASS native-reflection \(mode) peer_bytes=\(bytes.count) secret_occurrences=0 reads=1 resumes=1 audit=\(positive ? "completed" : "unknown")")
+        if mode == "prefix-sse" {
+            try check(
+                textValues == "ordinary " + credential.value.prefix(12), "native-reflection harmless suffix omitted")
+        }
+    } else if !streaming {
+        try check(bytes.isEmpty, "native-reflection JSON/error output released")
+    }
+    print(
+        "PASS native-reflection \(mode) peer_bytes=\(bytes.count) secret_occurrences=0 reads=1 resumes=1 audit=\(positive ? "completed" : "unknown")"
+    )
 }

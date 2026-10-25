@@ -27,15 +27,19 @@ package final class AnthropicStreamDecoder: @unchecked Sendable {
         switch type {
         case "message_start":
             guard !started, let message = root["message"],
-                  message["content"]?.array == [] else { throw ModelTransportError.malformedSSE }
+                message["content"]?.array == []
+            else { throw ModelTransportError.malformedSSE }
             let m = try AnthropicResponse.metadata(message)
             guard AnthropicResponse.validMessageMetadata(message, m),
-                  m.stopReason == nil, m.stopSequence == nil else { throw ModelTransportError.malformedSSE }
-            metadata = m; started = true
+                m.stopReason == nil, m.stopSequence == nil
+            else { throw ModelTransportError.malformedSSE }
+            metadata = m
+            started = true
             return ModelStreamChunk(event: .messageStart(m))
         case "content_block_start":
             guard started, !deltaPhase, active == nil, blocks.count < 128,
-                  root["index"]?.integer == Int64(blocks.count), let wire = root["content_block"] else { throw ModelTransportError.malformedSSE }
+                root["index"]?.integer == Int64(blocks.count), let wire = root["content_block"]
+            else { throw ModelTransportError.malformedSSE }
             let block = try ModelBlock(wire: wire)
             switch block {
             case .toolUse(let id, _, let input):
@@ -43,33 +47,48 @@ package final class AnthropicStreamDecoder: @unchecked Sendable {
             case .toolResult: throw ModelTransportError.malformedSSE
             case .text: break
             }
-            active = block; partialJSON = ""; sawJSONDelta = false
+            active = block
+            partialJSON = ""
+            sawJSONDelta = false
             return ModelStreamChunk(text: block.text, event: .blockStart(index: blocks.count, block: block))
         case "content_block_delta":
-            guard started, !deltaPhase, let block = active, root["index"]?.integer == Int64(blocks.count), let delta = root["delta"] else { throw ModelTransportError.malformedSSE }
+            guard started, !deltaPhase, let block = active, root["index"]?.integer == Int64(blocks.count),
+                let delta = root["delta"]
+            else { throw ModelTransportError.malformedSSE }
             switch (block, delta["type"]?.string) {
             case (.text(let text), "text_delta"):
-                guard let part = delta["text"]?.string, part.utf8.count <= ModelJSON.maxBytes - text.utf8.count else { throw ModelTransportError.malformedSSE }
+                guard let part = delta["text"]?.string, part.utf8.count <= ModelJSON.maxBytes - text.utf8.count else {
+                    throw ModelTransportError.malformedSSE
+                }
                 active = .text(text + part)
                 return ModelStreamChunk(text: part, event: .textDelta(index: blocks.count, text: part))
             case (.toolUse, "input_json_delta"):
-                guard let part = delta["partial_json"]?.string, part.utf8.count <= ModelJSON.maxBytes - partialJSON.utf8.count else { throw ModelTransportError.malformedSSE }
-                partialJSON += part; sawJSONDelta = true
+                guard let part = delta["partial_json"]?.string,
+                    part.utf8.count <= ModelJSON.maxBytes - partialJSON.utf8.count
+                else { throw ModelTransportError.malformedSSE }
+                partialJSON += part
+                sawJSONDelta = true
                 return ModelStreamChunk(event: .inputJSONDelta(index: blocks.count, partialJSON: part))
             default: throw ModelTransportError.malformedSSE
             }
         case "content_block_stop":
-            guard started, !deltaPhase, var block = active, root["index"]?.integer == Int64(blocks.count) else { throw ModelTransportError.malformedSSE }
+            guard started, !deltaPhase, var block = active, root["index"]?.integer == Int64(blocks.count) else {
+                throw ModelTransportError.malformedSSE
+            }
             if case .toolUse(let id, let name, _) = block {
                 let input = sawJSONDelta ? try ModelJSON.parse(Data(partialJSON.utf8)) : .object([:])
                 guard input.object != nil else { throw ModelTransportError.malformedSSE }
                 block = .toolUse(id: id, name: name, input: input)
             }
-            let index = blocks.count; blocks.append(block); active = nil; partialJSON = ""
+            let index = blocks.count
+            blocks.append(block)
+            active = nil
+            partialJSON = ""
             return ModelStreamChunk(event: .blockStop(index: index, block: block))
         case "message_delta":
             guard started, active == nil, deltaCount < 128, let delta = root["delta"], let d = delta.object,
-                  Set(d.keys).isSubset(of: ["stop_reason", "stop_sequence"]) else { throw ModelTransportError.malformedSSE }
+                Set(d.keys).isSubset(of: ["stop_reason", "stop_sequence"])
+            else { throw ModelTransportError.malformedSSE }
             let m = try AnthropicResponse.metadata(delta)
             // Missing and explicit null fields are no-update, never a reset.
             // Compatible non-null terminal metadata may repeat until message_stop.
@@ -94,13 +113,17 @@ package final class AnthropicStreamDecoder: @unchecked Sendable {
             }
             var mergedUsage = usage.mapValues { ModelJSON.integer($0) }
             if let serviceTier { mergedUsage["service_tier"] = .string(serviceTier.rawValue) }
-            metadata = try ModelMetadata(messageID: metadata.messageID, model: metadata.model,
+            metadata = try ModelMetadata(
+                messageID: metadata.messageID, model: metadata.model,
                 usage: ModelUsage(wire: .object(mergedUsage)),
                 stopReason: m.stopReason ?? metadata.stopReason, stopSequence: m.stopSequence ?? metadata.stopSequence)
-            deltaPhase = true; deltaCount += 1
+            deltaPhase = true
+            deltaCount += 1
             return ModelStreamChunk(event: .messageDelta(metadata))
         case "message_stop":
-            guard started, deltaPhase, active == nil, let reason = metadata.stopReason, !reason.isEmpty else { throw ModelTransportError.malformedSSE }
+            guard started, deltaPhase, active == nil, let reason = metadata.stopReason, !reason.isEmpty else {
+                throw ModelTransportError.malformedSSE
+            }
             if !ids.isEmpty && reason != "tool_use" { throw ModelTransportError.malformedSSE }
             if reason == "tool_use" && ids.isEmpty { throw ModelTransportError.malformedSSE }
             ended = true

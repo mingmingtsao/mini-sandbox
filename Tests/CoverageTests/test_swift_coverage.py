@@ -36,13 +36,23 @@ class CoverageTests(unittest.TestCase):
                 obj = binary_dir / "Module.build/Unit.swift.o"
                 obj.parent.mkdir(parents=True)
                 obj.touch()
-                (binary_dir / "description.json").write_text('{"swiftCommands":{"host":{"moduleName":"SandboxHost","otherArguments":["-package-name","fixture"]}}}')
+                (binary_dir / "description.json").write_text(
+                    '{"swiftCommands":{"host":{"moduleName":"SandboxHost","otherArguments":["-package-name","fixture"]}}}'
+                )
                 output = root / "report"
                 output.mkdir()
                 marker = output / "coverage.json"
                 marker.write_text("previous successful report")
                 args = SimpleNamespace(scratch_path=root / "build", output=output, skip_build=True)
-                with patch.object(coverage, "ROOT", root), patch.object(coverage.subprocess, "check_output", return_value=str(binary_dir)), patch.object(coverage.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "check") if failure else None):
+                with (
+                    patch.object(coverage, "ROOT", root),
+                    patch.object(coverage.subprocess, "check_output", return_value=str(binary_dir)),
+                    patch.object(
+                        coverage.subprocess,
+                        "run",
+                        side_effect=subprocess.CalledProcessError(1, "check") if failure else None,
+                    ),
+                ):
                     with self.assertRaises(subprocess.CalledProcessError if failure else ValueError):
                         coverage.run(args)
                 self.assertEqual(marker.read_text(), "previous successful report")
@@ -54,16 +64,42 @@ class CoverageTests(unittest.TestCase):
             path = root / "Sources/File.swift"
             for count, covered in [(0, 0), (10, -1), (10, 11), (True, 1), (10, False), (10.0, 1)]:
                 with self.subTest(count=count, covered=covered), self.assertRaises(ValueError):
-                    coverage.source_totals({"data": [{"files": [{"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}]}]}, root, [path])
+                    coverage.source_totals(
+                        {
+                            "data": [
+                                {
+                                    "files": [
+                                        {
+                                            "filename": str(path),
+                                            "summary": {"lines": {"count": count, "covered": covered}},
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        root,
+                        [path],
+                    )
 
     def test_unexecuted_source_stays_in_denominator_and_tests_are_excluded(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             paths = [root / "Sources/Used.swift", root / "Sources/Unused.swift"]
+
             def entry(path, count, covered):
                 return {"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}
-            export = {"data": [{"files": [entry(paths[0], 10, 8), entry(paths[1], 90, 0),
-                                            entry(root / "Tests/Checks.swift", 1000, 1000)]}]}
+
+            export = {
+                "data": [
+                    {
+                        "files": [
+                            entry(paths[0], 10, 8),
+                            entry(paths[1], 90, 0),
+                            entry(root / "Tests/Checks.swift", 1000, 1000),
+                        ]
+                    }
+                ]
+            }
             result = coverage.source_totals(export, root, paths)
             self.assertEqual((result["covered"], result["lines"], result["percent"]), (8, 100, 8.0))
             self.assertEqual(len(result["files"]), 2)
@@ -72,10 +108,13 @@ class CoverageTests(unittest.TestCase):
     def test_empty_baseline_keeps_nonexecutable_files_without_shrinking_denominator(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            paths = [root / "Sources" / name for name in
-                     ("Used.swift", "Unused.swift", "Constant.swift", "Disabled.swift")]
+            paths = [
+                root / "Sources" / name for name in ("Used.swift", "Unused.swift", "Constant.swift", "Disabled.swift")
+            ]
+
             def entry(path, count, covered):
                 return {"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}
+
             export = {"data": [{"files": [entry(paths[0], 10, 8), entry(paths[1], 90, 0)]}]}
             baseline = {"data": [{"files": [entry(paths[0], 10, 0), entry(paths[1], 90, 0)]}]}
             result = coverage.source_totals(export, root, paths, baseline=baseline)
@@ -89,8 +128,9 @@ class CoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             path = root / "Sources/Missing.swift"
-            baseline = {"data": [{"files": [{"filename": str(path),
-                         "summary": {"lines": {"count": 10, "covered": 0}}}]}]}
+            baseline = {
+                "data": [{"files": [{"filename": str(path), "summary": {"lines": {"count": 10, "covered": 0}}}]}]
+            }
             with self.assertRaisesRegex(ValueError, "missing"):
                 coverage.source_totals({"data": [{"files": []}]}, root, [path], baseline=baseline)
 
@@ -98,11 +138,19 @@ class CoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             path = root / "Sources/Used.swift"
+
             def export(count, covered):
-                return {"data": [{"files": [{"filename": str(path),
-                        "summary": {"lines": {"count": count, "covered": covered}}}]}]}
-            for baseline, message in [(export(9, 0), "differs"), (export(10, 1), "execution"),
-                                      ({"data": [{"files": []}]}, "differs")]:
+                return {
+                    "data": [
+                        {"files": [{"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}]}
+                    ]
+                }
+
+            for baseline, message in [
+                (export(9, 0), "differs"),
+                (export(10, 1), "execution"),
+                ({"data": [{"files": []}]}, "differs"),
+            ]:
                 with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                     coverage.source_totals(export(10, 8), root, [path], baseline=baseline)
 

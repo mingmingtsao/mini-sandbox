@@ -111,11 +111,12 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     }
     func releaseForAcceptance() {
         let fd = cleanupDescriptor, finish = cleanupOwner
+        let retire = retireAfterFrame || offset != bytes.count
         cleanupDescriptor = -1; cleanupOwner = false
         connection.releaseFrameEffect()
         lock.unlock()
         if fd >= 0 { Darwin.close(fd) }
-        if finish { connection.finishFrame(retire: retireAfterFrame || offset != bytes.count) }
+        if finish { connection.finishFrame(retire: retire) }
     }
     package func cancel() {
         lock.lock(); detachLocked()

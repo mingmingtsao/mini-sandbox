@@ -8,6 +8,8 @@ from inspect_runtime import inventory
 
 def main():
     root=pathlib.Path(sys.argv[1]);base=pathlib.Path(sys.argv[2]);out=pathlib.Path(sys.argv[3])
+    flags=sys.argv[4:]
+    if flags not in ([],['--agent-probe'],['--workspace']):raise ValueError('unknown or combined profile')
     image.legacy.reserve_output(out,pathlib.Path(__file__).resolve().parents[2])
     kernel,base_entries=validated_base(base)
     entries={n:(v['mode'],v['data'],5 if n=='dev/console' else 1 if n=='dev/null' else 0,1 if n=='dev/console' else 3 if n=='dev/null' else 0) for n,v in base_entries.items()}
@@ -73,6 +75,10 @@ hold
 /bin/busybox ip link set lo up || hold
 /usr/bin/python3 -B /runtime/agent_supervisor.py --materialize || hold
 /usr/bin/python3 -B /runtime/guest.py''')
+    if '--workspace' in flags:
+        entries['runtime/workspace_guest.py']=(stat.S_IFREG|0o644,image.read_regular(here/'workspace_guest.py',65536),0,0)
+        init=init.replace('/bin/busybox cp /fixture/* /work/project/ || hold','')
+        init=init.replace('/usr/bin/python3 -B /runtime/guest.py','/usr/bin/python3 -B /runtime/workspace_guest.py')
     entries['init']=(stat.S_IFREG|0o755,init.encode(),0,0)
     for n in ('usr/bin/node','usr/bin/python3.14','usr/bin/git'):image.legacy.validate_elf(entries[n][1])
     entries=image.finalized_entries(entries)
@@ -86,6 +92,7 @@ hold
     manifest={'schema':1,'kind':'agent-runtime-increment-not-full-agent','kernelSHA256':hashlib.sha256(kernel).hexdigest(),'initramfsSHA256':hashlib.sha256(compressed).hexdigest(),'uncompressedBytes':len(raw),'compressedBytes':len(compressed),'limits':{'uncompressed':image.MAX_RAW,'file':image.MAX_FILE,'entries':image.MAX_ENTRIES,'disk':67108864,'RAM':1073741824,'CPUs':2,'frame':16384,'output':262144},'dependencies':lock,'entries':actual}
     if '--agent-probe' in sys.argv[4:]:
         manifest['agentProbeProfile']={'name':'pinned-cli-local-capture-v1','vendorBytes':285493120,'vendorSHA256':'028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332','vendorDiskBytes':285493248,'vendorDiskSHA256':'c4e512ea944c420c80285b4c4bd817098d9845ac6aa6e423bbbb58b8d3a9bf43','vendorReadOnly':True,'materializationTmpfsBytes':285499392,'homeTmpfsBytes':16777216,'commandSeconds':55,'guestSeconds':75,'hostSeconds':95,'stopSeconds':10,'outerSeconds':112,'CPUSeconds':20,'FSIZE':67108864,'NOFILE':64,'loaderClosure':closure,'captureSHA256':hashlib.sha256(entries['runtime/capture.py'][1]).hexdigest()}
+    if '--workspace' in flags:manifest['workspaceProfile']='workspace-fixture-v1'
     image.legacy.exclusive_write(out/'runtime.json',(json.dumps(manifest,indent=2)+'\n').encode())
     print(json.dumps({k:v for k,v in manifest.items() if k not in ('dependencies','entries')}))
 if __name__=='__main__':main()

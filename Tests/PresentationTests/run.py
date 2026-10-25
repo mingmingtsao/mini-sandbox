@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 
 EXPECTED = {
+    "PASS business task selection consent agent gates and MCP metadata projection; production route stays disabled",
     "PASS unavailable workbench pixels expose authority failure and no pending actions",
     "PASS workbench renders granted scopes and pending snapshot; real Review and Deny controls update authority",
     "PASS approval/cancel never dispatch; Save/Check controls, deletion projection and emergency Stop bind actual state",

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build/sign only the diagnostic executable. Never launch a VM or delete outputs."""
+
 import argparse
 import hashlib
 import json
@@ -47,35 +48,74 @@ def main():
     args = parser.parse_args()
     root_id = safe_directory(ROOT)
     dist = ROOT / 'dist'
-    if not os.path.lexists(dist): dist.mkdir(mode=0o755)
+    if not os.path.lexists(dist):
+        dist.mkdir(mode=0o755)
     dist_id = safe_directory(dist)
     output = dist / 'VMProbe'
     old_id = check_existing(output)
     subprocess.run(['swift', 'build', '-c', args.configuration, '--product', 'VMProbe'], cwd=ROOT, check=True)
-    binary_dir = Path(subprocess.check_output(['swift', 'build', '-c', args.configuration, '--show-bin-path'], cwd=ROOT, text=True).strip())
+    binary_dir = Path(
+        subprocess.check_output(
+            ['swift', 'build', '-c', args.configuration, '--show-bin-path'], cwd=ROOT, text=True
+        ).strip()
+    )
     binary = binary_dir / 'VMProbe'
-    if binary.is_symlink() or not binary.is_file(): raise RuntimeError('Unsafe build binary')
-    if safe_directory(ROOT) != root_id or safe_directory(dist) != dist_id: raise RuntimeError('Directory changed')
+    if binary.is_symlink() or not binary.is_file():
+        raise RuntimeError('Unsafe build binary')
+    if safe_directory(ROOT) != root_id or safe_directory(dist) != dist_id:
+        raise RuntimeError('Directory changed')
     staging = Path(tempfile.mkdtemp(prefix='.VMProbe-build-', dir=dist))
     stage_id = safe_directory(staging)
     executable = staging / 'VMProbe'
-    shutil.copy2(binary, executable); executable.chmod(0o755)
+    shutil.copy2(binary, executable)
+    executable.chmod(0o755)
     (staging / MARKER).write_text(json.dumps(ownership(output), sort_keys=True))
-    subprocess.run(['codesign', '--force', '--sign', '-', '--entitlements', str(ROOT / 'scripts/vm-probe.entitlements'), str(executable)], check=True)
+    subprocess.run(
+        [
+            'codesign',
+            '--force',
+            '--sign',
+            '-',
+            '--entitlements',
+            str(ROOT / 'scripts/vm-probe.entitlements'),
+            str(executable),
+        ],
+        check=True,
+    )
     subprocess.run(['codesign', '--verify', '--strict', '--verbose=2', str(executable)], check=True)
     subprocess.run(['codesign', '--display', '--entitlements', '-', '--xml', str(executable)], check=True)
-    if safe_directory(ROOT) != root_id or safe_directory(dist) != dist_id or safe_directory(staging) != stage_id or check_existing(output) != old_id:
+    if (
+        safe_directory(ROOT) != root_id
+        or safe_directory(dist) != dist_id
+        or safe_directory(staging) != stage_id
+        or check_existing(output) != old_id
+    ):
         raise RuntimeError('Output changed; staging preserved')
     backup = None
     if old_id is not None:
         backup = Path(tempfile.mkdtemp(prefix='.VMProbe-backup-', dir=dist)) / 'VMProbe'
         output.rename(backup)
     try:
-        if os.path.lexists(output): raise RuntimeError('Output appeared; preserved')
+        if os.path.lexists(output):
+            raise RuntimeError('Output appeared; preserved')
         staging.rename(output)
     except Exception:
-        if backup is not None and not os.path.lexists(output): backup.rename(output)
+        if backup is not None and not os.path.lexists(output):
+            backup.rename(output)
         raise
-    print(json.dumps({'executable': str(output / 'VMProbe'), 'sha256': hashlib.sha256((output / 'VMProbe').read_bytes()).hexdigest(), 'signing': 'ad-hoc-local-only', 'vmBoot': 'NOT_RUN', 'previous': str(backup) if backup else None}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                'executable': str(output / 'VMProbe'),
+                'sha256': hashlib.sha256((output / 'VMProbe').read_bytes()).hexdigest(),
+                'signing': 'ad-hoc-local-only',
+                'vmBoot': 'NOT_RUN',
+                'previous': str(backup) if backup else None,
+            },
+            sort_keys=True,
+        )
+    )
 
-if __name__ == '__main__': main()
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,19 @@
+# Python lint/format settings for build scripts, guest runtime and test drivers.
+target-version = "py39"
+line-length = 120
+extend-exclude = [
+    # Byte-exact fixtures: SHA-256 pinned by Tests/Fixtures/coding-task-manifest.json.
+    "Tests/Fixtures/coding-task",
+    # Intentionally broken guest task that the Agent is expected to repair.
+    "Tools/AgentRuntime/fixture",
+]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# Test drivers extend sys.path to load repository tools before importing them.
+"Tests/**/*.py" = ["E402"]
+
+[format]
+quote-style = "preserve"

@@ -1,4 +1,5 @@
 """Guest-only bounded workspace copy; no fixture task or host execution."""
+
 import base64
 import json
 import os
@@ -47,8 +48,9 @@ class FramedSocket:
         length = struct.unpack('>I', self.exact(4))[0]
         if not 0 < length <= self.maximum:
             raise ValueError('frame bound')
-        return json.loads(self.exact(length), object_pairs_hook=wire.pairs,
-                          parse_float=wire.no_float, parse_constant=wire.no_float)
+        return json.loads(
+            self.exact(length), object_pairs_hook=wire.pairs, parse_float=wire.no_float, parse_constant=wire.no_float
+        )
 
 
 def receive_workspace(channel):
@@ -61,11 +63,20 @@ def receive_workspace(channel):
     channel.send(dict(v=1, type='ready'))
     while True:
         value = channel.receive()
-        if type(value) is not dict or wire.integer(value.get('v'), 1) != 1 or wire.integer(value.get('seq'), 8191) != seq:
+        if (
+            type(value) is not dict
+            or wire.integer(value.get('v'), 1) != 1
+            or wire.integer(value.get('seq'), 8191) != seq
+        ):
             raise ValueError('sequence')
         kind = value.get('type')
-        fields = {'begin': {'count', 'total'}, 'file': {'path', 'size', 'sha256'},
-                  'chunk': {'offset', 'data'}, 'end': set(), 'complete': {'sha256'}}
+        fields = {
+            'begin': {'count', 'total'},
+            'file': {'path', 'size', 'sha256'},
+            'chunk': {'offset', 'data'},
+            'end': set(),
+            'complete': {'sha256'},
+        }
         if kind not in fields or set(value) != fields[kind] | {'v', 'type', 'seq'}:
             raise ValueError('fields')
         if kind == 'begin':
@@ -89,7 +100,9 @@ def receive_workspace(channel):
             size = wire.integer(value['size'], wire.MAX_FILE)
             if size > total - received:
                 raise ValueError('total bound')
-            current = value['path']; digest = value['sha256']; data = bytearray()
+            current = value['path']
+            digest = value['sha256']
+            data = bytearray()
         elif kind == 'chunk':
             if current is None or wire.integer(value['offset'], wire.MAX_FILE) != len(data):
                 raise ValueError('chunk order')
@@ -100,11 +113,19 @@ def receive_workspace(channel):
         elif kind == 'end':
             if current is None or len(data) != size or wire.sha(data) != digest:
                 raise ValueError('file digest')
-            files[current] = bytes(data); received += len(data); current = None
+            files[current] = bytes(data)
+            received += len(data)
+            current = None
         elif kind == 'complete':
-            if current is not None or count != len(files) or received != total or wire.treehash(files) != value['sha256']:
+            if (
+                current is not None
+                or count != len(files)
+                or received != total
+                or wire.treehash(files) != value['sha256']
+            ):
                 raise ValueError('tree digest')
-        channel.send(dict(v=1, type='ack', seq=seq)); seq += 1
+        channel.send(dict(v=1, type='ack', seq=seq))
+        seq += 1
         if kind == 'complete':
             break
     ROOT.mkdir(mode=0o700, exist_ok=True)
@@ -128,13 +149,16 @@ def frozen_result():
 
 def send_workspace(channel, files):
     seq = 0
+
     def emit(kind, **fields):
         nonlocal seq
-        channel.send(dict(v=1, type=kind, seq=seq, **fields)); seq += 1
+        channel.send(dict(v=1, type=kind, seq=seq, **fields))
+        seq += 1
+
     emit('begin', count=len(files), total=sum(map(len, files.values())))
     for path, data in sorted(files.items()):
         emit('file', path=path, size=len(data), sha256=wire.sha(data))
         for offset in range(0, len(data), 4096):
-            emit('chunk', offset=offset, data=base64.b64encode(data[offset:offset + 4096]).decode())
+            emit('chunk', offset=offset, data=base64.b64encode(data[offset : offset + 4096]).decode())
         emit('end')
     emit('complete', sha256=wire.treehash(files))

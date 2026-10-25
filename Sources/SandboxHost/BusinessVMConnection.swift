@@ -1,10 +1,14 @@
-import Foundation
 import Darwin
+import Foundation
 import SandboxContracts
 @preconcurrency import Virtualization
 
 package enum BusinessVMService: UInt32, CaseIterable, Sendable {
-    case control = 4060, workspace = 4062, model = 4064, permission = 4065, mcp = 4066
+    case control = 4060
+    case workspace = 4062
+    case model = 4064
+    case permission = 4065
+    case mcp = 4066
 }
 
 package enum BusinessVMError: Error, Equatable, Sendable {
@@ -37,22 +41,31 @@ package final class BusinessVMConnection: @unchecked Sendable {
     private let deadline: ContinuousClock.Instant
     private let retired: @Sendable (UUID) -> Void
 
-    fileprivate init(connection: VZVirtioSocketConnection, session: BusinessVMSession,
-                     service: BusinessVMService, queue: DispatchQueue,
-                     retired: @escaping @Sendable (UUID) -> Void) throws {
-        self.runtimeID = session.id; self.service = service
-        lifecycle = session.handle.lifecycle; runID = session.grant.runID; epoch = session.grant.epoch
-        self.queue = queue; original = connection; descriptor = connection.fileDescriptor
+    fileprivate init(
+        connection: VZVirtioSocketConnection, session: BusinessVMSession,
+        service: BusinessVMService, queue: DispatchQueue,
+        retired: @escaping @Sendable (UUID) -> Void
+    ) throws {
+        self.runtimeID = session.id
+        self.service = service
+        lifecycle = session.handle.lifecycle
+        runID = session.grant.runID
+        epoch = session.grant.epoch
+        self.queue = queue
+        original = connection
+        descriptor = connection.fileDescriptor
         self.retired = retired
         byteLimit = service == .workspace ? 32 * 1024 * 1024 : service == .control ? 2 * 1024 * 1024 : 81_920
         deadline = .now.advanced(by: .seconds(service == .workspace || service == .control ? 900 : 300))
-        var type: Int32 = 0, length = socklen_t(MemoryLayout<Int32>.size), yes: Int32 = 1
+        var type: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        var yes: Int32 = 1
         let flags = fcntl(descriptor, F_GETFL)
         guard descriptor >= 0, flags >= 0,
-              getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &type, &length) == 0, type == SOCK_STREAM,
-              fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
-              fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0,
-              setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0
+            getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &type, &length) == 0, type == SOCK_STREAM,
+            fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
+            fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0,
+            setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0
         else { throw BusinessVMError.io }
     }
 
@@ -92,7 +105,8 @@ package final class BusinessVMConnection: @unchecked Sendable {
     package func takeDescriptor() throws -> Int32 {
         try lock.withLock {
             guard !closed, !claimed, !frameClaimed, !readPending, descriptor >= 0,
-                  service == .model || service == .mcp else { throw BusinessVMError.alreadyClaimed }
+                service == .model || service == .mcp
+            else { throw BusinessVMError.alreadyClaimed }
             guard ContinuousClock.now < deadline else { throw BusinessVMError.timeout }
             let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw BusinessVMError.io }
@@ -106,12 +120,14 @@ package final class BusinessVMConnection: @unchecked Sendable {
             let byteCap = service == .workspace ? 32 * 1024 * 1024 : service == .control ? 16_388 : 16_384
             let frameCap = service == .workspace ? 8192 : 1
             guard !closed, !claimed, !frameClaimed, descriptor >= 0,
-                  [.control, .workspace, .permission].contains(service),
-                  bytes > 0, bytes <= byteCap - outboundBytes, outboundFrames < frameCap,
-                  ContinuousClock.now < deadline else { throw BusinessVMError.alreadyClaimed }
+                [.control, .workspace, .permission].contains(service),
+                bytes > 0, bytes <= byteCap - outboundBytes, outboundFrames < frameCap,
+                ContinuousClock.now < deadline
+            else { throw BusinessVMError.alreadyClaimed }
             let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw BusinessVMError.io }
-            outboundBytes += bytes; outboundFrames += 1
+            outboundBytes += bytes
+            outboundFrames += 1
             frameClaimed = true
             return duplicate
         }
@@ -122,7 +138,9 @@ package final class BusinessVMConnection: @unchecked Sendable {
     }
     func acquireFrameEffect() -> Bool { lock.try() }
     func validateFrameEffectLocked() throws {
-        guard !closed, frameClaimed, descriptor >= 0, ContinuousClock.now < deadline else { throw BusinessVMError.closed }
+        guard !closed, frameClaimed, descriptor >= 0, ContinuousClock.now < deadline else {
+            throw BusinessVMError.closed
+        }
     }
     func releaseFrameEffect() { lock.unlock() }
     package func acquireNativeEffect() -> Bool { lock.try() }
@@ -139,12 +157,14 @@ package final class BusinessVMConnection: @unchecked Sendable {
     package func retire() {
         let changed = lock.withLock { () -> Bool in
             guard !closed else { return false }
-            closed = true; descriptor = -1
+            closed = true
+            descriptor = -1
             return true
         }
         guard changed else { return }
         queue.async { [self] in
-            original?.close(); original = nil
+            original?.close()
+            original = nil
             retired(id)
         }
     }
@@ -158,24 +178,38 @@ package final class BusinessVMConnection: @unchecked Sendable {
 
 // Keep the only constructor and authenticated acceptance in the same source file.
 extension BusinessVMSession {
-    func accepted(_ connection: VZVirtioSocketConnection, from device: VZVirtioSocketDevice,
-                  listener: VZVirtioSocketListener) -> Bool {
+    func accepted(
+        _ connection: VZVirtioSocketConnection, from device: VZVirtioSocketDevice,
+        listener: VZVirtioSocketListener
+    ) -> Bool {
         guard !closing, socketDevice === device,
-              let service = listeners.first(where: { $0.value === listener })?.key,
-              connections.count < 8,
-              connections.values.filter({ $0.service == service }).count < (service == .model || service == .mcp ? min(2, grant.resourceLimits.concurrentRequests) : 1),
-              admittedConnections[service, default: 0] < (service == .control || service == .workspace ? 1 : 64),
-              handle.lifecycle.observeAndReduce(reason: "business-vm-accept").status == .active,
-              handle.lifecycle.currentGeneration == grant.epoch else {
-            connection.close(); return false
+            let service = listeners.first(where: { $0.value === listener })?.key,
+            connections.count < 8,
+            connections.values.filter({ $0.service == service }).count
+                < (service == .model || service == .mcp ? min(2, grant.resourceLimits.concurrentRequests) : 1),
+            admittedConnections[service, default: 0] < (service == .control || service == .workspace ? 1 : 64),
+            handle.lifecycle.observeAndReduce(reason: "business-vm-accept").status == .active,
+            handle.lifecycle.currentGeneration == grant.epoch
+        else {
+            connection.close()
+            return false
         }
         do {
-            let owner = try BusinessVMConnection(connection: connection, session: self,
-                service: service, queue: queue) { [weak self] id in self?.removeConnection(id) }
+            let owner = try BusinessVMConnection(
+                connection: connection, session: self,
+                service: service, queue: queue
+            ) { [weak self] id in self?.removeConnection(id) }
             connections[owner.id] = owner
             admittedConnections[service, default: 0] += 1
-            guard publish(owner) else { owner.retire(); requestStop(); return false }
+            guard publish(owner) else {
+                owner.retire()
+                requestStop()
+                return false
+            }
             return true
-        } catch { connection.close(); return false }
+        } catch {
+            connection.close()
+            return false
+        }
     }
 }

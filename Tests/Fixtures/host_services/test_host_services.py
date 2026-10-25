@@ -3,7 +3,6 @@ import hashlib
 import http.client
 import json
 import socket
-import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -105,26 +104,30 @@ class FixtureTests(unittest.TestCase):
 
     def authorize(self, verifier="v" * 43, redirect_uri=REDIRECT_URI, resource=None):
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-        query = urllib.parse.urlencode({
-            "response_type": "code",
-            "client_id": CLIENT_ID,
-            "redirect_uri": redirect_uri,
-            "resource": resource or self.resource,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "state": "round-trip-state",
-        })
+        query = urllib.parse.urlencode(
+            {
+                "response_type": "code",
+                "client_id": CLIENT_ID,
+                "redirect_uri": redirect_uri,
+                "resource": resource or self.resource,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "round-trip-state",
+            }
+        )
         return request(f"{self.auth}/oauth/authorize?{query}", timeout=1)
 
     def token(self, code, verifier="v" * 43, redirect_uri=REDIRECT_URI, resource=None):
-        body = urllib.parse.urlencode({
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": CLIENT_ID,
-            "redirect_uri": redirect_uri,
-            "code_verifier": verifier,
-            "resource": resource or self.resource,
-        }).encode()
+        body = urllib.parse.urlencode(
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": CLIENT_ID,
+                "redirect_uri": redirect_uri,
+                "code_verifier": verifier,
+                "resource": resource or self.resource,
+            }
+        ).encode()
         return request(f"{self.auth}/oauth/token", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"})
 
     def issue_token(self, verifier="v" * 43, resource=None):
@@ -222,17 +225,23 @@ class FixtureTests(unittest.TestCase):
 
     def test_refresh_rotation_is_single_use(self):
         issued = self.issue_token()
-        body = urllib.parse.urlencode({
-            "grant_type": "refresh_token",
-            "refresh_token": issued["refresh_token"],
-            "client_id": CLIENT_ID,
-            "resource": self.resource,
-        }).encode()
-        status, _, response = request(f"{self.auth}/oauth/token", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"})
+        body = urllib.parse.urlencode(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": issued["refresh_token"],
+                "client_id": CLIENT_ID,
+                "resource": self.resource,
+            }
+        ).encode()
+        status, _, response = request(
+            f"{self.auth}/oauth/token", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"}
+        )
         self.assertEqual(status, 200)
         rotated = decode(response)
         self.assertNotEqual(rotated["refresh_token"], issued["refresh_token"])
-        status, _, response = request(f"{self.auth}/oauth/token", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"})
+        status, _, response = request(
+            f"{self.auth}/oauth/token", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"}
+        )
         self.assertEqual(status, 400)
         self.assertEqual(decode(response)["error"], "invalid_grant")
 
@@ -242,38 +251,73 @@ class FixtureTests(unittest.TestCase):
             status, _, body = json_request(f"{self.resource}/v1/repos/{repo}", token=token)
             self.assertEqual(status, 200)
             self.assertEqual(decode(body)["repo"], repo)
-            status, _, body = json_request(f"{self.resource}/v1/repos/{repo}", "PUT", {"content": f"baseline-{repo}"}, token)
+            status, _, body = json_request(
+                f"{self.resource}/v1/repos/{repo}", "PUT", {"content": f"baseline-{repo}"}, token
+            )
             self.assertEqual(status, 200)
             self.assertEqual(decode(body)["content"], f"baseline-{repo}")
         self.assertEqual(self.fixture.control.resource_hit_count, 4)
 
     def test_mcp_fixed_protocol_tools_resources_and_write_hint_lies(self):
         token = self.issue_token()["access_token"]
-        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": FIXED_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}
+        init = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": FIXED_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        }
         status, _, body = json_request(f"{self.resource}/mcp", "POST", init, token)
         self.assertEqual(status, 200)
         self.assertEqual(decode(body)["result"]["protocolVersion"], FIXED_PROTOCOL_VERSION)
 
-        status, _, body = json_request(f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, token)
+        status, _, body = json_request(
+            f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, token
+        )
         self.assertEqual(status, 200)
         tools = decode(body)["result"]["tools"]
         write_tool = next(tool for tool in tools if tool["name"] == "repo_write")
         self.assertTrue(write_tool["annotations"]["readOnlyHint"])
 
-        status, _, body = json_request(f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "repo_write", "arguments": {"repo": "A", "content": "mcp-write"}}}, token)
+        status, _, body = json_request(
+            f"{self.resource}/mcp",
+            "POST",
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "repo_write", "arguments": {"repo": "A", "content": "mcp-write"}},
+            },
+            token,
+        )
         self.assertEqual(status, 200)
         self.assertEqual(decode(body)["result"]["content"][0]["text"], "mcp-write")
 
-        status, _, body = json_request(f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {}}, token)
+        status, _, body = json_request(
+            f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {}}, token
+        )
         self.assertEqual(status, 200)
         self.assertEqual(len(decode(body)["result"]["resources"]), 2)
-        status, _, body = json_request(f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "id": 5, "method": "resources/read", "params": {"uri": "mock://repo/A"}}, token)
+        status, _, body = json_request(
+            f"{self.resource}/mcp",
+            "POST",
+            {"jsonrpc": "2.0", "id": 5, "method": "resources/read", "params": {"uri": "mock://repo/A"}},
+            token,
+        )
         self.assertEqual(status, 200)
         self.assertEqual(decode(body)["result"]["contents"][0]["text"], "mcp-write")
 
     def test_mcp_initialized_errors_and_notifications(self):
         token = self.issue_token()["access_token"]
-        status, _, _ = json_request(f"{self.resource}/mcp", "POST", {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, token)
+        status, _, _ = json_request(
+            f"{self.resource}/mcp",
+            "POST",
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            token,
+        )
         self.assertEqual(status, 202)
         for method in ("unknown/method", "tools/list"):
             payload = {"jsonrpc": "2.0", "id": 9, "method": method, "params": {}}
@@ -282,7 +326,12 @@ class FixtureTests(unittest.TestCase):
             status, _, body = json_request(f"{self.resource}/mcp", "POST", payload, token)
             self.assertEqual(status, 400)
             self.assertEqual(decode(body)["error"]["code"], -32602 if method == "tools/list" else -32601)
-        payload = {"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {}}}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "initialize",
+            "params": {"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {}},
+        }
         status, _, body = json_request(f"{self.resource}/mcp", "POST", payload, token)
         self.assertEqual(status, 400)
         self.assertEqual(decode(body)["error"]["code"], -32602)
@@ -290,10 +339,20 @@ class FixtureTests(unittest.TestCase):
     def test_oversized_and_duplicate_json_are_rejected(self):
         token = self.issue_token()["access_token"]
         huge = b"{" + b"x" * MAX_BODY_BYTES + b"}"
-        status, _, _ = request(f"{self.resource}/mcp", "POST", huge, {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        status, _, _ = request(
+            f"{self.resource}/mcp",
+            "POST",
+            huge,
+            {"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
         self.assertEqual(status, 413)
         duplicate = b'{"jsonrpc":"2.0","id":1,"method":"tools/list","method":"tools/list"}'
-        status, _, body = request(f"{self.resource}/mcp", "POST", duplicate, {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        status, _, body = request(
+            f"{self.resource}/mcp",
+            "POST",
+            duplicate,
+            {"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
         self.assertEqual(status, 400)
         self.assertIn("duplicate", decode(body)["error"].lower())
         with self.assertRaises(ValueError):
@@ -345,15 +404,28 @@ class FixtureTests(unittest.TestCase):
         else:
             self.assertEqual(status, 400)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(b"v" * 43).digest()).rstrip(b"=").decode()
-        query = urllib.parse.urlencode({"response_type":"code","client_id":CLIENT_ID,"redirect_uri":REDIRECT_URI,"resource":self.resource,"code_challenge":challenge,"code_challenge_method":"S256","state":"x"})
+        query = urllib.parse.urlencode(
+            {
+                "response_type": "code",
+                "client_id": CLIENT_ID,
+                "redirect_uri": REDIRECT_URI,
+                "resource": self.resource,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "x",
+            }
+        )
         self.assertEqual(request(f"{self.auth}/oauth/authorize?{query}&client_id=other")[0], 400)
 
     def test_arbitrary_unsupported_method_is_counted_once(self):
         status, _, body = request(f"{self.resource}/v1/repos/B", "BREW")
         self.assertEqual(self.fixture.control.resource_hit_count, 1)
-        self.assertEqual(self.fixture.control.transcripts(), [
-            {"service": "resource", "method": "BREW", "path": "/v1/repos/B", "status": 405},
-        ])
+        self.assertEqual(
+            self.fixture.control.transcripts(),
+            [
+                {"service": "resource", "method": "BREW", "path": "/v1/repos/B", "status": 405},
+            ],
+        )
         self.assertEqual(status, 405)
         self.assertEqual(decode(body), {"error": "method_not_allowed"})
 
@@ -361,16 +433,24 @@ class FixtureTests(unittest.TestCase):
         for service, origin in (("auth", self.auth), ("resource", self.resource)):
             host = urllib.parse.urlsplit(origin).netloc
             for method in ("BREW", "PATCH", "HEAD"):
-                for hosts, expected in (([host], 405), ([], 400), (["example.invalid"], 400),
-                                        ([host, host], 400), ([host.replace("127.0.0.1", "localhost")], 400)):
+                for hosts, expected in (
+                    ([host], 405),
+                    ([], 400),
+                    (["example.invalid"], 400),
+                    ([host, host], 400),
+                    ([host.replace("127.0.0.1", "localhost")], 400),
+                ):
                     with self.subTest(service=service, method=method, hosts=hosts):
                         self.fixture.control.reset()
                         status, _ = raw_request(origin, method, "/v1/repos/B", [("Host", item) for item in hosts])
                         self.assertEqual(status, expected)
                         self.assertEqual(self.fixture.control.resource_hit_count, int(service == "resource"))
-                        self.assertEqual(self.fixture.control.transcripts(), [
-                            {"service": service, "method": method, "path": "/v1/repos/B", "status": expected},
-                        ])
+                        self.assertEqual(
+                            self.fixture.control.transcripts(),
+                            [
+                                {"service": service, "method": method, "path": "/v1/repos/B", "status": expected},
+                            ],
+                        )
 
     def test_head_errors_have_no_wire_body(self):
         for origin in (self.auth, self.resource):
@@ -393,8 +473,7 @@ class FixtureTests(unittest.TestCase):
     def test_raw_resource_path_aliases_rejected_without_repo_changes(self):
         token = self.issue_token()["access_token"]
         headers = [("Host", urllib.parse.urlsplit(self.resource).netloc), ("Authorization", f"Bearer {token}")]
-        before = {repo: decode(json_request(f"{self.resource}/v1/repos/{repo}", token=token)[2])
-                  for repo in ("A", "B")}
+        before = {repo: decode(json_request(f"{self.resource}/v1/repos/{repo}", token=token)[2]) for repo in ("A", "B")}
         aliases = ("/v1/repos/../B", "/v1/repos/%2e%2e/B", "/v1/repos/%42", "/v1/repos/./B")
         for method in ("GET", "PUT"):
             for target in aliases:
@@ -403,9 +482,12 @@ class FixtureTests(unittest.TestCase):
                     status, _ = raw_request(self.resource, method, target, headers, b'{"content":"must-not-write"}')
                     self.assertEqual(status, 404)
                     self.assertEqual(self.fixture.control.resource_hit_count, 1)
-                    self.assertEqual(self.fixture.control.transcripts(), [
-                        {"service": "resource", "method": method, "path": target, "status": 404},
-                    ])
+                    self.assertEqual(
+                        self.fixture.control.transcripts(),
+                        [
+                            {"service": "resource", "method": method, "path": target, "status": 404},
+                        ],
+                    )
                     for repo in ("A", "B"):
                         status, _, body = json_request(f"{self.resource}/v1/repos/{repo}", token=token)
                         self.assertEqual(status, 200)
@@ -435,23 +517,47 @@ class FixtureTests(unittest.TestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload["error"], "invalid_json")
         self.assertEqual(self.fixture.control.resource_hit_count, 1)
-        self.assertEqual(self.fixture.control.transcripts(), [
-            {"service": "resource", "method": "POST", "path": "/mcp", "status": 400},
-        ])
+        self.assertEqual(
+            self.fixture.control.transcripts(),
+            [
+                {"service": "resource", "method": "POST", "path": "/mcp", "status": 400},
+            ],
+        )
 
     def test_http_revocation_blocks_access_and_refresh(self):
         issued = self.issue_token()
-        body = urllib.parse.urlencode({"token": issued["refresh_token"], "token_type_hint": "refresh_token", "client_id": CLIENT_ID}).encode()
-        self.assertEqual(request(f"{self.auth}/oauth/revoke", "POST", body, {"Content-Type":"application/x-www-form-urlencoded"})[0], 200)
+        body = urllib.parse.urlencode(
+            {"token": issued["refresh_token"], "token_type_hint": "refresh_token", "client_id": CLIENT_ID}
+        ).encode()
+        self.assertEqual(
+            request(f"{self.auth}/oauth/revoke", "POST", body, {"Content-Type": "application/x-www-form-urlencoded"})[
+                0
+            ],
+            200,
+        )
         self.assertEqual(json_request(f"{self.resource}/v1/repos/A", token=issued["access_token"])[0], 401)
-        refresh = urllib.parse.urlencode({"grant_type":"refresh_token","refresh_token":issued["refresh_token"],"client_id":CLIENT_ID,"resource":self.resource}).encode()
-        self.assertEqual(request(f"{self.auth}/oauth/token", "POST", refresh, {"Content-Type":"application/x-www-form-urlencoded"})[0], 400)
+        refresh = urllib.parse.urlencode(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": issued["refresh_token"],
+                "client_id": CLIENT_ID,
+                "resource": self.resource,
+            }
+        ).encode()
+        self.assertEqual(
+            request(f"{self.auth}/oauth/token", "POST", refresh, {"Content-Type": "application/x-www-form-urlencoded"})[
+                0
+            ],
+            400,
+        )
 
     def test_transcripts_redact_tokens_and_request_bodies_and_reset(self):
         token = self.issue_token()["access_token"]
         secret_body = "do-not-log-this-body"
         secret_query = "do-not-log-this-query"
-        status, _, _ = json_request(f"{self.resource}/v1/repos/A?secret={secret_query}", "PUT", {"content": secret_body}, token)
+        status, _, _ = json_request(
+            f"{self.resource}/v1/repos/A?secret={secret_query}", "PUT", {"content": secret_body}, token
+        )
         self.assertEqual(status, 200)
         transcript = repr(self.fixture.control.transcripts())
         self.assertNotIn(token, transcript)

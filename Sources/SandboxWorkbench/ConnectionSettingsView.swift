@@ -9,39 +9,44 @@ import SwiftUI
         if controller.isLocalFixture {
             GroupBox("Local fixture connection") { Text(verbatim: controller.status).padding(8) }
         } else {
-        GroupBox("Model connection") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("DeepSeek flash · Anthropic protocol").font(.headline)
-                Text("Host Keychain only. No custom endpoint, guest credential, or provider test.").foregroundStyle(.secondary)
-                SecureField("Enter replacement API key", text: $input)
-                    .privacySensitive()
-                    .disabled(controller.isBusy || controller.isClosed)
-                HStack {
-                    Button("Save to Keychain") {
-                        let value = input
-                        input = ""
-                        Task { await controller.save(value) }
-                    }.disabled(input.isEmpty)
-                    Button("Check stored credential") {
-                        input = ""
-                        Task { await controller.checkStoredCredential() }
-                    }
-                    Button("Delete stored credential", role: .destructive) {
-                        input = ""
-                        Task { await controller.deleteStoredCredential() }
-                    }
-                }.disabled(controller.isBusy || controller.isClosed)
-                Text(verbatim: controller.status).font(.callout)
-                if let configuration = controller.configuration {
-                    Text("Future-run configuration · account version \(configuration.accountBindingVersion) · route version \(configuration.routeVersion)")
+            GroupBox("Model connection") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("DeepSeek flash · Anthropic protocol").font(.headline)
+                    Text("Host Keychain only. No custom endpoint, guest credential, or provider test.").foregroundStyle(
+                        .secondary)
+                    SecureField("Enter replacement API key", text: $input)
+                        .privacySensitive()
+                        .disabled(controller.isBusy || controller.isClosed)
+                    HStack {
+                        Button("Save to Keychain") {
+                            let value = input
+                            input = ""
+                            Task { await controller.save(value) }
+                        }.disabled(input.isEmpty)
+                        Button("Check stored credential") {
+                            input = ""
+                            Task { await controller.checkStoredCredential() }
+                        }
+                        Button("Delete stored credential", role: .destructive) {
+                            input = ""
+                            Task { await controller.deleteStoredCredential() }
+                        }
+                    }.disabled(controller.isBusy || controller.isClosed)
+                    Text(verbatim: controller.status).font(.callout)
+                    if let configuration = controller.configuration {
+                        Text(
+                            "Future-run configuration · account version \(configuration.accountBindingVersion) · route version \(configuration.routeVersion)"
+                        )
                         .font(.caption)
-                }
-                Text("Save, Check and Delete retire existing model-bound runs first. Save or Check configures future runs only. Each task and model request requires separate authorization in Tasks.")
+                    }
+                    Text(
+                        "Save, Check and Delete retire existing model-bound runs first. Save or Check configures future runs only. Each task and model request requires separate authorization in Tasks."
+                    )
                     .font(.caption).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
-        }
-        .onDisappear { input = "" }
-        .onChange(of: controller.isClosed) { _, _ in input = "" }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
+            .onDisappear { input = "" }
+            .onChange(of: controller.isClosed) { _, _ in input = "" }
         }
     }
 }

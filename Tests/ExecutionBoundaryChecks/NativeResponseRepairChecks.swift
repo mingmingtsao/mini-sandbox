@@ -1,4 +1,5 @@
 import Foundation
+
 @testable import SandboxHost
 
 // Permanent local socket/codec regressions; no provider or CLI execution.
@@ -9,44 +10,61 @@ func nativeRepairChecks() throws {
         ("native-repair-receiver-contention-no-wait", nativeReceiverContention),
         ("native-repair-exact-http-frame-boundaries", nativeExactFrameBoundaries),
         ("native-repair-escaped-json-sse-boundaries", nativeEscapedSizing),
-        ("native-repair-multitool-metadata-roundtrip", nativeMultiMetadataRoundtrip)
+        ("native-repair-multitool-metadata-roundtrip", nativeMultiMetadataRoundtrip),
     ]
     var failures = 0
     for (name, body) in cases {
-        do { try body(); print("PASS \(name)") }
-        catch { failures += 1; print("FAIL \(name): \(error)") }
+        do {
+            try body()
+            print("PASS \(name)")
+        } catch {
+            failures += 1
+            print("FAIL \(name): \(error)")
+        }
     }
     try check(failures == 0, "native repair failures=\(failures)")
 }
 
 func nativeReferenceJSON(_ completion: ModelCompletion) throws -> Data {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return try encoder.encode(NativeResponseSerializer.message(completion.metadata, blocks: completion.blocks))
 }
 func nativeDrain(_ output: ControlledRunOutput, _ pair: NativeSocketPair) throws -> Data {
     var bytes = Data()
     for _ in 0..<1024 {
-        _ = try output.acceptNext(); bytes.append(try pair.readAvailable())
+        _ = try output.acceptNext()
+        bytes.append(try pair.readAvailable())
         if output.nativeProgress!.queuedEvents == 0 { return bytes }
     }
     throw Failure(message: "native bounded drain")
 }
 func nativeBelowCapReply() throws {
-    let completion = ModelCompletion(blocks: (0..<3).map { .text(String(repeating: String($0), count: 60_000)) }, metadata: try nativeMetadata())
-    let raw = try nativeReferenceJSON(completion), expected = nativeWire(String(decoding: raw, as: UTF8.self))
+    let completion = ModelCompletion(
+        blocks: (0..<3).map { .text(String(repeating: String($0), count: 60_000)) }, metadata: try nativeMetadata())
+    let raw = try nativeReferenceJSON(completion)
+    let expected = nativeWire(String(decoding: raw, as: UTF8.self))
     let decoded = try AnthropicResponse.decode(raw)
-    try check(decoded == completion && expected.count < NativeResponseChannel.maxFrameBytes, "actual upstream eligibility")
-    let pair = try NativeSocketPair(), output = try nativeOutput(pair, lifecycle(Clock()))
+    try check(
+        decoded == completion && expected.count < NativeResponseChannel.maxFrameBytes, "actual upstream eligibility")
+    let pair = try NativeSocketPair()
+    let output = try nativeOutput(pair, lifecycle(Clock()))
     try output.enqueue(.modelCompletion(decoded))
     let actual = try nativeDrain(output, pair)
-    try check(actual == expected && output.nativeProgress!.committedBytes == actual.count && output.nativeProgress!.acceptedFinals == 1, "below-cap content/socket accounting")
+    try check(
+        actual == expected && output.nativeProgress!.committedBytes == actual.count
+            && output.nativeProgress!.acceptedFinals == 1, "below-cap content/socket accounting")
     let delimiter = actual.range(of: Data("\r\n\r\n".utf8))!
-    try check(try AnthropicResponse.decode(Data(actual[delimiter.upperBound...])) == completion, "downstream production decoder equality")
+    try check(
+        try AnthropicResponse.decode(Data(actual[delimiter.upperBound...])) == completion,
+        "downstream production decoder equality")
     print("OBS below-cap json_bytes=\(raw.count) http_bytes=\(actual.count) semantic_bytes=180000")
 }
 
 func nativeField<T>(_ object: Any, _ label: String, _: T.Type) throws -> T {
-    guard let value = Mirror(reflecting: object).children.first(where: { $0.label == label })?.value as? T else { throw Failure(message: "fixture missing field \(label)") }
+    guard let value = Mirror(reflecting: object).children.first(where: { $0.label == label })?.value as? T else {
+        throw Failure(message: "fixture missing field \(label)")
+    }
     return value
 }
 func nativeReconstructionEmpty(_ channel: NativeResponseChannel) throws -> Bool {
@@ -77,30 +95,62 @@ func nativeTerminalReconstructionRelease() throws {
             let completion = ModelCompletion(blocks: blocks, metadata: end)
             try channel.enqueue(.modelChunk(ModelStreamChunk(event: .messageStop(completion), completion: completion)))
         } else {
-            try channel.enqueue(.modelChunk(ModelStreamChunk(event: .blockStart(index: 3, block: .toolUse(id: "tool_cleanup", name: "read_file", input: .object([:]))))))
-            try channel.enqueue(.modelChunk(ModelStreamChunk(event: .inputJSONDelta(index: 3, partialJSON: "{\"path\":\"retained"))))
+            try channel.enqueue(
+                .modelChunk(
+                    ModelStreamChunk(
+                        event: .blockStart(
+                            index: 3, block: .toolUse(id: "tool_cleanup", name: "read_file", input: .object([:]))))))
+            try channel.enqueue(
+                .modelChunk(ModelStreamChunk(event: .inputJSONDelta(index: 3, partialJSON: "{\"path\":\"retained"))))
         }
-        _ = try channel.acceptOne(); _ = try pair.readAvailable()
-        _ = try channel.acceptOne() // real partial frame, retained sent prefix
-        let committed = channel.committedBytes, events = channel.acceptedEvents, partials = channel.partialWriteCount
+        _ = try channel.acceptOne()
+        _ = try pair.readAvailable()
+        _ = try channel.acceptOne()  // real partial frame, retained sent prefix
+        let committed = channel.committedBytes
+        let events = channel.acceptedEvents
+        let partials = channel.partialWriteCount
         try check(committed > 0 && partials > 0, "cleanup partial OS-write setup")
         if mode == "finish" {
             for _ in 0..<1024 {
-                _ = try pair.readAvailable(); _ = try channel.acceptOne()
+                _ = try pair.readAvailable()
+                _ = try channel.acceptOne()
                 if channel.isClosed { break }
             }
             try check(channel.acceptedFinals == 1 && channel.committedBytes > committed, "finish delivery accounting")
         } else if mode == "disconnect" {
             pair.closePeer()
-            do { _ = try channel.acceptOne(); throw Failure(message: "disconnect accepted") } catch NativeResponseError.disconnected {}
-        } else { channel.detachTerminal(); channel.takeCleanup().dispose() }
+            do {
+                _ = try channel.acceptOne()
+                throw Failure(message: "disconnect accepted")
+            } catch NativeResponseError.disconnected {}
+        } else {
+            channel.detachTerminal()
+            channel.takeCleanup().dispose()
+        }
         channel.takeCleanup().dispose()
-        try check(channel.isClosed && channel.queuedEvents == 0 && channel.bufferedBytes == 0 && channel.pendingBytes == 0, "terminal frame cleanup \(mode)")
+        try check(
+            channel.isClosed && channel.queuedEvents == 0 && channel.bufferedBytes == 0 && channel.pendingBytes == 0,
+            "terminal frame cleanup \(mode)")
         try check(try nativeReconstructionEmpty(channel), "terminal retained reconstruction \(mode)")
-        if mode != "finish" { try check(channel.committedBytes == committed && channel.acceptedEvents == events && channel.partialWriteCount == partials && channel.acceptedFinals == 0, "terminal rewrote history \(mode)") }
-        let historical = [channel.committedBytes, channel.acceptedEvents, channel.acceptedFinals, channel.partialWriteCount, channel.wouldBlockCount]
-        channel.detachTerminal(); channel.takeCleanup().dispose(); channel.detachTerminal(); channel.takeCleanup().dispose()
-        try check(historical == [channel.committedBytes, channel.acceptedEvents, channel.acceptedFinals, channel.partialWriteCount, channel.wouldBlockCount], "repeated cancel rewrote counters")
+        if mode != "finish" {
+            try check(
+                channel.committedBytes == committed && channel.acceptedEvents == events
+                    && channel.partialWriteCount == partials && channel.acceptedFinals == 0,
+                "terminal rewrote history \(mode)")
+        }
+        let historical = [
+            channel.committedBytes, channel.acceptedEvents, channel.acceptedFinals, channel.partialWriteCount,
+            channel.wouldBlockCount,
+        ]
+        channel.detachTerminal()
+        channel.takeCleanup().dispose()
+        channel.detachTerminal()
+        channel.takeCleanup().dispose()
+        try check(
+            historical == [
+                channel.committedBytes, channel.acceptedEvents, channel.acceptedFinals, channel.partialWriteCount,
+                channel.wouldBlockCount,
+            ], "repeated cancel rewrote counters")
         print("OBS cleanup mode=\(mode) committed_bytes=\(channel.committedBytes) reconstruction_empty=true")
     }
 }
@@ -113,7 +163,11 @@ final class NativeRepairClock: @unchecked Sendable {
 final class NativeRepairAttempt: @unchecked Sendable {
     let done = DispatchSemaphore(value: 0), lock = NSLock()
     private var result: Result<Bool, Error>?
-    func run(_ output: ControlledRunOutput) { let value = Result { try output.acceptNext() }; lock.withLock { result = value }; done.signal() }
+    func run(_ output: ControlledRunOutput) {
+        let value = Result { try output.acceptNext() }
+        lock.withLock { result = value }
+        done.signal()
+    }
     func value() throws -> Bool { try lock.withLock { try result!.get() } }
 }
 func nativeExactFrameBoundaries() throws {
@@ -126,23 +180,37 @@ func nativeExactFrameBoundaries() throws {
         try check(lastCount > 0 && lastCount <= ModelJSON.maxBytes, "exact frame fixture block bounds")
         blocks[15] = .text(String(repeating: "y", count: lastCount))
         let completion = ModelCompletion(blocks: blocks, metadata: metadata)
-        let raw = try nativeReferenceJSON(completion), expected = nativeWire(String(decoding: raw, as: UTF8.self))
-        try check(expected.count == target && (try AnthropicResponse.decode(raw)) == completion, "exact frame decoder eligibility")
-        let pair = try NativeSocketPair(), output = try nativeOutput(pair, lifecycle(Clock()))
+        let raw = try nativeReferenceJSON(completion)
+        let expected = nativeWire(String(decoding: raw, as: UTF8.self))
+        try check(
+            expected.count == target && (try AnthropicResponse.decode(raw)) == completion,
+            "exact frame decoder eligibility")
+        let pair = try NativeSocketPair()
+        let output = try nativeOutput(pair, lifecycle(Clock()))
         if adjustment > 0 {
             for _ in 0..<2 {
-                do { try output.enqueue(.modelCompletion(completion)); throw Failure(message: "frame cap+1 admitted") }
-                catch NativeResponseError.limitExceeded {}
-                try check(output.nativeProgress!.queuedEvents == 0 && output.nativeProgress!.pendingBytes == 0 && output.nativeProgress!.committedBytes == 0, "oversize consumed state")
+                do {
+                    try output.enqueue(.modelCompletion(completion))
+                    throw Failure(message: "frame cap+1 admitted")
+                } catch NativeResponseError.limitExceeded {}
+                try check(
+                    output.nativeProgress!.queuedEvents == 0 && output.nativeProgress!.pendingBytes == 0
+                        && output.nativeProgress!.committedBytes == 0, "oversize consumed state")
             }
             try output.enqueue(.modelCompletion(nativeCompletion()))
-            try check(try !nativeDrain(output, pair).isEmpty && output.nativeProgress!.acceptedFinals == 1, "frame failure non-consuming retry")
+            try check(
+                try !nativeDrain(output, pair).isEmpty && output.nativeProgress!.acceptedFinals == 1,
+                "frame failure non-consuming retry")
         } else {
             try output.enqueue(.modelCompletion(completion))
             let actual = try nativeDrain(output, pair)
-            try check(actual == expected && output.nativeProgress!.committedBytes == target && output.nativeProgress!.acceptedFinals == 1, "exact HTTP frame boundary bytes")
+            try check(
+                actual == expected && output.nativeProgress!.committedBytes == target
+                    && output.nativeProgress!.acceptedFinals == 1, "exact HTTP frame boundary bytes")
             let delimiter = actual.range(of: Data("\r\n\r\n".utf8))!
-            try check(try AnthropicResponse.decode(Data(actual[delimiter.upperBound...])) == completion, "exact-cap downstream decode")
+            try check(
+                try AnthropicResponse.decode(Data(actual[delimiter.upperBound...])) == completion,
+                "exact-cap downstream decode")
         }
         print("OBS exact-http-frame bytes=\(target) admitted=\(adjustment <= 0)")
     }
@@ -151,27 +219,40 @@ func nativeExactFrameBoundaries() throws {
 func nativeEscapedSizing() throws {
     let controls = (0...31).map { String(UnicodeScalar($0)!) }.joined()
     let unit = controls + "\"\\/π中😀\u{2028}\u{2029}e\u{0301}"
-    let value = ModelJSON.object([unit: .array([.string(unit), .integer(-ModelJSON.maxInteger), .integer(ModelJSON.maxInteger), .integer(0), .bool(true), .bool(false), .null, .object([:]), .array([])])])
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let value = ModelJSON.object([
+        unit: .array([
+            .string(unit), .integer(-ModelJSON.maxInteger), .integer(ModelJSON.maxInteger), .integer(0), .bool(true),
+            .bool(false), .null, .object([:]), .array([]),
+        ])
+    ])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let reference = try encoder.encode(value)
     for budget in [reference.count - 1, reference.count, reference.count + 1] {
         if budget < reference.count {
-            do { _ = try NativeResponseSerializer.json(value, maxBytes: budget); throw Failure(message: "escaped JSON cap bypass") }
-            catch NativeResponseError.limitExceeded {}
+            do {
+                _ = try NativeResponseSerializer.json(value, maxBytes: budget)
+                throw Failure(message: "escaped JSON cap bypass")
+            } catch NativeResponseError.limitExceeded {}
         } else {
             let actual = try NativeResponseSerializer.json(value, maxBytes: budget)
-            try check(actual.count == reference.count && (try ModelJSON.parse(actual)) == value, "exact escape/key/number grammar")
+            try check(
+                actual.count == reference.count && (try ModelJSON.parse(actual)) == value,
+                "exact escape/key/number grammar")
         }
     }
-    do { _ = try NativeResponseSerializer.json(.integer(Int64.max)); throw Failure(message: "unsafe JSON integer") }
-    catch ModelTransportError.invalidResponse {}
+    do {
+        _ = try NativeResponseSerializer.json(.integer(Int64.max))
+        throw Failure(message: "unsafe JSON integer")
+    } catch ModelTransportError.invalidResponse {}
     // A genuinely decoded below-cap response with large escaped/multibyte strings.
     let text = String(repeating: unit, count: 700)
     try check(text.utf8.count <= ModelJSON.maxBytes, "escaped semantic bound")
     let completion = ModelCompletion(blocks: [.text(text), .text(text), .text(text)], metadata: try nativeMetadata())
     let raw = try nativeReferenceJSON(completion)
     try check(try AnthropicResponse.decode(raw) == completion, "escaped upstream production eligibility")
-    let pair = try NativeSocketPair(), output = try nativeOutput(pair, lifecycle(Clock()))
+    let pair = try NativeSocketPair()
+    let output = try nativeOutput(pair, lifecycle(Clock()))
     try output.enqueue(.modelCompletion(completion))
     let actual = try nativeDrain(output, pair)
     try check(actual == nativeWire(String(decoding: raw, as: UTF8.self)), "escaped positive real socket content")
@@ -181,11 +262,16 @@ func nativeEscapedSizing() throws {
     let fixture = try nativeStreamFixture()
     for (chunk, json) in fixture {
         let type = try ModelJSON.parse(Data(json.utf8))["type"]!.string!
-        let prefix = type == "message_start" ? "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" : ""
+        let prefix =
+            type == "message_start"
+            ? "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+            : ""
         let expected = Data((prefix + "event: \(type)\ndata: \(json)\n\n").utf8)
         var rejected = serializer
-        do { _ = try rejected.encode(.modelChunk(chunk), maxBytes: expected.count - 1); throw Failure(message: "SSE overhead omitted") }
-        catch NativeResponseError.limitExceeded {}
+        do {
+            _ = try rejected.encode(.modelChunk(chunk), maxBytes: expected.count - 1)
+            throw Failure(message: "SSE overhead omitted")
+        } catch NativeResponseError.limitExceeded {}
         let frame = try serializer.encode(.modelChunk(chunk), maxBytes: expected.count)
         try check(frame.bytes == expected, "SSE exact boundary positive")
     }
@@ -207,17 +293,23 @@ func nativeMultiMetadataRoundtrip() throws {
         #"{"type":"message_delta","delta":{"stop_sequence":null},"usage":{"output_tokens":3,"service_tier":null}}"#,
         #"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}"#,
         #"{"type":"message_delta","delta":{},"usage":{"output_tokens":5,"service_tier":"standard"}}"#,
-        #"{"type":"message_stop"}"#
+        #"{"type":"message_stop"}"#,
     ]
-    let upstream = AnthropicStreamDecoder(), downstream = AnthropicStreamDecoder()
-    let pair = try NativeSocketPair(), output = try nativeOutput(pair, lifecycle(Clock()), streaming: true)
-    var source: ModelCompletion?, actual = Data()
+    let upstream = AnthropicStreamDecoder()
+    let downstream = AnthropicStreamDecoder()
+    let pair = try NativeSocketPair()
+    let output = try nativeOutput(pair, lifecycle(Clock()), streaming: true)
+    var source: ModelCompletion?
+    var actual = Data()
     for raw in rawEvents {
         guard let chunk = try upstream.consume(raw) else { throw Failure(message: "dropped upstream fixture event") }
         if let completion = chunk.completion { source = completion }
-        try output.enqueue(.modelChunk(chunk)); actual.append(try nativeDrain(output, pair))
+        try output.enqueue(.modelChunk(chunk))
+        actual.append(try nativeDrain(output, pair))
     }
-    var decoded: ModelCompletion?, count = 0, deltas = 0
+    var decoded: ModelCompletion?
+    var count = 0
+    var deltas = 0
     for line in String(decoding: actual, as: UTF8.self).components(separatedBy: "\n") where line.hasPrefix("data: ") {
         if let chunk = try downstream.consume(String(line.dropFirst(6))) {
             count += 1
@@ -225,18 +317,26 @@ func nativeMultiMetadataRoundtrip() throws {
             if let completion = chunk.completion { decoded = completion }
         }
     }
-    try check(source != nil && decoded == source && count == rawEvents.count && deltas == 3, "multi-tool cumulative metadata lost")
-    try check(output.nativeProgress!.acceptedFinals == 1 && output.nativeProgress!.committedBytes == actual.count, "multi-tool committed accounting")
+    try check(
+        source != nil && decoded == source && count == rawEvents.count && deltas == 3,
+        "multi-tool cumulative metadata lost")
+    try check(
+        output.nativeProgress!.acceptedFinals == 1 && output.nativeProgress!.committedBytes == actual.count,
+        "multi-tool committed accounting")
     print("OBS multi-tool events=\(count) deltas=\(deltas) tool_blocks=2 socket_bytes=\(actual.count)")
 }
 
 func nativeReceiverContention() throws {
     for expires in [false, true] {
-        let clock = NativeRepairClock(), initial = clock.value
-        let authority = RunLifecycle(expiresAt: initial.addingTimeInterval(600), epoch: 1, installedAt: initial, clock: clock.source)
-        let pair = try NativeSocketPair(), output = try nativeOutput(pair, authority)
+        let clock = NativeRepairClock()
+        let initial = clock.value
+        let authority = RunLifecycle(
+            expiresAt: initial.addingTimeInterval(600), epoch: 1, installedAt: initial, clock: clock.source)
+        let pair = try NativeSocketPair()
+        let output = try nativeOutput(pair, authority)
         try output.enqueue(.modelCompletion(nativeCompletion()))
-        let mutex = try nativeField(output, "lock", NSLock.self), attempt = NativeRepairAttempt()
+        let mutex = try nativeField(output, "lock", NSLock.self)
+        let attempt = NativeRepairAttempt()
         mutex.lock()
         DispatchQueue.global().async { attempt.run(output) }
         let noWait = attempt.done.wait(timeout: .now() + 1) == .success
@@ -246,13 +346,20 @@ func nativeReceiverContention() throws {
         let finished = noWait || attempt.done.wait(timeout: .now() + 2) == .success
         try check(sampled && finished, "contention fixture barrier")
         let actual = try pair.readAvailable()
-        try check(noWait && (try attempt.value()) == false && actual.isEmpty && output.nativeProgress!.committedBytes == 0 && output.nativeProgress!.queuedEvents == 1, "receiver lock waited after sample or consumed output")
+        try check(
+            noWait && (try attempt.value()) == false && actual.isEmpty && output.nativeProgress!.committedBytes == 0
+                && output.nativeProgress!.queuedEvents == 1, "receiver lock waited after sample or consumed output")
         if expires {
-            do { _ = try output.acceptNext(); throw Failure(message: "retry reused stale authority") } catch is AuthorizationError {}
+            do {
+                _ = try output.acceptNext()
+                throw Failure(message: "retry reused stale authority")
+            } catch is AuthorizationError {}
             try check(try pair.readAvailable().isEmpty, "expiry retry wrote bytes")
         } else {
             try check(try output.acceptNext(), "contention retry failed")
-            try check(try !pair.readAvailable().isEmpty && output.nativeProgress!.acceptedFinals == 1, "fresh retry did not send")
+            try check(
+                try !pair.readAvailable().isEmpty && output.nativeProgress!.acceptedFinals == 1,
+                "fresh retry did not send")
         }
         output.cancel()
     }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Reproducible offline diagnostic guest builder; never runs guest binaries."""
+
 import hashlib
 import io
 import pathlib
@@ -20,7 +21,7 @@ def decode_zboot(data, expected, size):
         raise ValueError('unsupported zboot compression')
     try:
         decoder = zlib.decompressobj(31)
-        raw = decoder.decompress(data[offset:offset + length], size + 1)
+        raw = decoder.decompress(data[offset : offset + length], size + 1)
         if len(raw) != size or not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
             raise ValueError('invalid bounded gzip payload')
     except zlib.error as exc:
@@ -99,6 +100,7 @@ def module_order(text, wanted):
             raise ValueError('invalid module dependency map')
         dependencies[safe_name(key)] = [safe_name(x) for x in value.split()]
     active, seen, order = set(), set(), []
+
     def visit(name):
         if name in seen:
             return
@@ -110,6 +112,7 @@ def module_order(text, wanted):
         active.remove(name)
         seen.add(name)
         order.append(name)
+
     for name in wanted:
         visit(name)
     return order
@@ -154,7 +157,9 @@ def newc(entries):
         encoded = name.encode('ascii') + b'\0'
         values = [index, mode, 0, 0, 2 if stat.S_ISDIR(mode) else 1, 0, len(data), 0, 0, major, minor, len(encoded), 0]
         out.extend(b'070701' + ''.join('%08x' % v for v in values).encode('ascii') + encoded)
-        out.extend(b'\0' * (-len(out) % 4)); out.extend(data); out.extend(b'\0' * (-len(out) % 4))
+        out.extend(b'\0' * (-len(out) % 4))
+        out.extend(data)
+        out.extend(b'\0' * (-len(out) % 4))
     out.extend(b'\0' * (-len(out) % 512))
     return bytes(out)
 
@@ -182,6 +187,7 @@ def load_modules(data):
     if len(data) < 96 or data[:4] != b'hsqs':
         raise ValueError('invalid squashfs image')
     from PySquashfsImage import SquashFsImage
+
     prefix = '/modules/' + KERNEL_RELEASE + '/'
     with SquashFsImage.from_bytes(data) as image:
         entries = {}
@@ -190,8 +196,10 @@ def load_modules(data):
                 raise ValueError('duplicate squashfs entry')
             entries[entry.path] = entry
         dep = selected_squash_entry(entries[prefix + 'modules.dep'], 1024 * 1024).decode('ascii')
-        wanted = ['kernel/net/vmw_vsock/' + n + '.ko' for n in
-                  ('vsock', 'vmw_vsock_virtio_transport_common', 'vmw_vsock_virtio_transport')]
+        wanted = [
+            'kernel/net/vmw_vsock/' + n + '.ko'
+            for n in ('vsock', 'vmw_vsock_virtio_transport_common', 'vmw_vsock_virtio_transport')
+        ]
         order = module_order(dep, wanted)
         modules = {}
         for name in order:
@@ -217,10 +225,20 @@ def load_modules(data):
 
 def manifest(kernel, initramfs, probe):
     import json
-    digest = lambda b: hashlib.sha256(b).hexdigest()
-    result = {'schemaVersion': 1, 'kernelFile': 'Image', 'kernelSHA256': digest(kernel),
-              'initramfsFile': 'initramfs.cpio.gz', 'initramfsSHA256': digest(initramfs),
-              'probeSHA256': digest(probe), 'protocolVersion': 1, 'kernelRelease': KERNEL_RELEASE}
+
+    def digest(b):
+        return hashlib.sha256(b).hexdigest()
+
+    result = {
+        'schemaVersion': 1,
+        'kernelFile': 'Image',
+        'kernelSHA256': digest(kernel),
+        'initramfsFile': 'initramfs.cpio.gz',
+        'initramfsSHA256': digest(initramfs),
+        'probeSHA256': digest(probe),
+        'protocolVersion': 1,
+        'kernelRelease': KERNEL_RELEASE,
+    }
     identity = {key: result[key] for key in ('schemaVersion', 'kernelSHA256', 'initramfsSHA256', 'protocolVersion')}
     result['workloadSHA256'] = digest(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode('utf8'))
     return result
@@ -249,11 +267,19 @@ def read_source(path, expected, maximum):
 def exclusive_write(path, data):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'wb') as stream:
-        stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def build(args):
-    import gzip, json, shutil, subprocess, sys, tempfile
+    import gzip
+    import json
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+
     here = pathlib.Path(__file__).resolve().parent
     repo = here.parent.parent
     output = reserve_output(args.output, repo)
@@ -263,10 +289,14 @@ def build(args):
     read_source(args.wheel, WHEEL_HASH, 1024 * 1024)
     sys.path.insert(0, str(no_symlinks(args.wheel)))
     source = pathlib.Path(args.source_dir)
-    root = select_tar(read_source(source / 'alpine-minirootfs-3.24.3-aarch64.tar.gz', ROOTFS_HASH, 8*1024*1024),
-                      {'bin/busybox': 2*1024*1024, 'lib/ld-musl-aarch64.so.1': 2*1024*1024})
-    boot = select_tar(read_source(source / 'alpine-netboot-3.24.3-aarch64.tar.gz', NETBOOT_HASH, 512*1024*1024),
-                      {'boot/vmlinuz-virt': 32*1024*1024, 'boot/modloop-virt': 64*1024*1024})
+    root = select_tar(
+        read_source(source / 'alpine-minirootfs-3.24.3-aarch64.tar.gz', ROOTFS_HASH, 8 * 1024 * 1024),
+        {'bin/busybox': 2 * 1024 * 1024, 'lib/ld-musl-aarch64.so.1': 2 * 1024 * 1024},
+    )
+    boot = select_tar(
+        read_source(source / 'alpine-netboot-3.24.3-aarch64.tar.gz', NETBOOT_HASH, 512 * 1024 * 1024),
+        {'boot/vmlinuz-virt': 32 * 1024 * 1024, 'boot/modloop-virt': 64 * 1024 * 1024},
+    )
     kernel = decode_zboot(boot['boot/vmlinuz-virt'], RAW_HASH, RAW_SIZE)
     modules = load_modules(boot['boot/modloop-virt'])
     for blob in root.values():
@@ -276,16 +306,32 @@ def build(args):
         raise ValueError('Go 1.26.5 is required, no automatic download permitted')
     with tempfile.TemporaryDirectory(prefix='guest-build-', dir=scratch) as td:
         td = pathlib.Path(td)
-        env = {'PATH': str(pathlib.Path(go).parent) + os.pathsep + os.defpath, 'HOME': str(td),
-               'TMPDIR': str(td), 'GOCACHE': str(scratch / 'f02-go-build-cache'),
-               'GOMODCACHE': str(td / 'modcache'), 'GOPROXY': 'off', 'GOSUMDB': 'off',
-               'GOTOOLCHAIN': 'local', 'GOENV': 'off', 'GOWORK': 'off', 'CGO_ENABLED': '0',
-               'GOOS': 'linux', 'GOARCH': 'arm64', 'GOARM64': 'v8.0', 'SOURCE_DATE_EPOCH': '0'}
+        env = {
+            'PATH': str(pathlib.Path(go).parent) + os.pathsep + os.defpath,
+            'HOME': str(td),
+            'TMPDIR': str(td),
+            'GOCACHE': str(scratch / 'f02-go-build-cache'),
+            'GOMODCACHE': str(td / 'modcache'),
+            'GOPROXY': 'off',
+            'GOSUMDB': 'off',
+            'GOTOOLCHAIN': 'local',
+            'GOENV': 'off',
+            'GOWORK': 'off',
+            'CGO_ENABLED': '0',
+            'GOOS': 'linux',
+            'GOARCH': 'arm64',
+            'GOARM64': 'v8.0',
+            'SOURCE_DATE_EPOCH': '0',
+        }
         version = subprocess.check_output([go, 'version'], env=env, text=True).strip()
         if not version.startswith('go version go1.26.5 '):
             raise ValueError('requires pinned Go 1.26.5')
-        subprocess.run([go, 'build', '-trimpath', '-buildvcs=false', '-ldflags=-buildid=',
-                        '-o', str(td / 'probe'), './cmd/probe'], cwd=here, env=env, check=True)
+        subprocess.run(
+            [go, 'build', '-trimpath', '-buildvcs=false', '-ldflags=-buildid=', '-o', str(td / 'probe'), './cmd/probe'],
+            cwd=here,
+            env=env,
+            check=True,
+        )
         probe = (td / 'probe').read_bytes()
     validate_elf(probe, static=True)
     entries = {name: (stat.S_IFREG | 0o755, data, 0, 0) for name, data in root.items()}
@@ -312,11 +358,19 @@ def build(args):
     exclusive_write(output / 'initramfs.cpio.gz', initramfs)
     # Completion marker is deliberately last; failures preserve partial output for inspection.
     exclusive_write(output / 'bundle.json', (json.dumps(result, indent=2, sort_keys=True) + '\n').encode('utf8'))
-    return {'artifact_manifest': str(output / 'bundle.json'), 'manifest': result, 'modules': list(modules), 'go': version}
+    return {
+        'artifact_manifest': str(output / 'bundle.json'),
+        'manifest': result,
+        'modules': list(modules),
+        'go': version,
+    }
 
 
 def main():
-    import argparse, json, sys
+    import argparse
+    import json
+    import sys
+
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source-dir', 'wheel', 'scratch', 'output'):
         parser.add_argument('--' + name, required=True)

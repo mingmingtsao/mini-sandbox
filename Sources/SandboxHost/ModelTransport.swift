@@ -1,7 +1,6 @@
 import Foundation
 import Security
 
-
 package enum ModelTransportError: Error, Equatable, Sendable, CustomStringConvertible {
     case invalidRequest(String)
     case credential(CredentialProviderError)
@@ -47,13 +46,13 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     private let credentialProvider: any ModelCredentialProvider
     private let configuration: URLSessionConfiguration
     private let limiter: RequestLimiter
-#if SANDBOX_TEST_FIXTURES
-    private let fixtureLoopbackPort: UInt16?
-#endif
+    #if SANDBOX_TEST_FIXTURES
+        private let fixtureLoopbackPort: UInt16?
+    #endif
     package var claudeRouteEnabled: Bool {
-#if SANDBOX_TEST_FIXTURES
-        if fixtureLoopbackPort != nil { return true }
-#endif
+        #if SANDBOX_TEST_FIXTURES
+            if fixtureLoopbackPort != nil { return true }
+        #endif
         return BusinessModelActivation.credentialEgressEnabled
     }
 
@@ -68,30 +67,32 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         configuration.timeoutIntervalForResource = Self.resourceTimeout
         self.configuration = configuration.copy() as! URLSessionConfiguration
         self.limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
-#if SANDBOX_TEST_FIXTURES
-        fixtureLoopbackPort = nil
-#endif
+        #if SANDBOX_TEST_FIXTURES
+            fixtureLoopbackPort = nil
+        #endif
         super.init()
     }
 
-#if SANDBOX_TEST_FIXTURES
-    /// Test binary only. Neither a caller key, endpoint host, configuration nor
-    /// credential provider is accepted. Redirects remain unconditionally denied.
-    package init(localClaudeFixturePort port: UInt16) throws {
-        guard port > 0 else { throw ModelTransportError.invalidRequest("fixture port") }
-        credentialProvider = LocalClaudeFixtureCredential()
-        let configuration = Self.defaultConfiguration()
-        configuration.httpCookieStorage = nil; configuration.urlCache = nil
-        configuration.httpShouldSetCookies = false; configuration.httpCookieAcceptPolicy = .never
-        configuration.connectionProxyDictionary = [:]
-        configuration.timeoutIntervalForRequest = Self.requestTimeout
-        configuration.timeoutIntervalForResource = Self.resourceTimeout
-        self.configuration = configuration
-        limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
-        fixtureLoopbackPort = port
-        super.init()
-    }
-#endif
+    #if SANDBOX_TEST_FIXTURES
+        /// Test binary only. Neither a caller key, endpoint host, configuration nor
+        /// credential provider is accepted. Redirects remain unconditionally denied.
+        package init(localClaudeFixturePort port: UInt16) throws {
+            guard port > 0 else { throw ModelTransportError.invalidRequest("fixture port") }
+            credentialProvider = LocalClaudeFixtureCredential()
+            let configuration = Self.defaultConfiguration()
+            configuration.httpCookieStorage = nil
+            configuration.urlCache = nil
+            configuration.httpShouldSetCookies = false
+            configuration.httpCookieAcceptPolicy = .never
+            configuration.connectionProxyDictionary = [:]
+            configuration.timeoutIntervalForRequest = Self.requestTimeout
+            configuration.timeoutIntervalForResource = Self.resourceTimeout
+            self.configuration = configuration
+            limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
+            fixtureLoopbackPort = port
+            super.init()
+        }
+    #endif
 
     private static func defaultConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -99,10 +100,8 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         return configuration
     }
 
-
     package func complete(_ request: FixedModelRequest) async throws -> ModelCompletion {
-        do { return try await perform(request, streaming: false) }
-        catch { throw Self.sanitize(error) }
+        do { return try await perform(request, streaming: false) } catch { throw Self.sanitize(error) }
     }
 
     package func stream(_ request: FixedModelRequest) -> AsyncThrowingStream<ModelStreamChunk, Error> {
@@ -121,8 +120,10 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         }
     }
 
-    private func perform(_ request: FixedModelRequest, streaming: Bool,
-        emit: (@Sendable (ModelStreamChunk) -> Void)? = nil) async throws -> ModelCompletion {
+    private func perform(
+        _ request: FixedModelRequest, streaming: Bool,
+        emit: (@Sendable (ModelStreamChunk) -> Void)? = nil
+    ) async throws -> ModelCompletion {
         guard !Task.isCancelled else { throw ModelTransportError.cancelled }
         let operation = try prepare(request, streaming: streaming)
         defer { operation.cancel() }
@@ -141,35 +142,47 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             try Task.checkCancellation()
             guard sawFinal else { throw ModelTransportError.invalidResponse }
             return completion ?? ModelCompletion(text: text)
-        } onCancel: { operation.cancel() }
+        } onCancel: {
+            operation.cancel()
+        }
     }
 
     /// Synchronous preparation only; the URLSession task remains suspended.
     /// The owner must authorize/audit before calling this (credential access occurs here).
     package func prepare(_ request: FixedModelRequest, streaming: Bool) throws -> ModelPreparedOperation {
-        try prepareEncoded(encode(request, streaming: streaming), model: request.model, protocol: request.protocol, streaming: streaming)
+        try prepareEncoded(
+            encode(request, streaming: streaming), model: request.model, protocol: request.protocol,
+            streaming: streaming)
     }
 
     package func prepareNative(_ request: AnthropicNativeRequest) throws -> ModelPreparedOperation {
         guard request.dialect == .native else { throw HostModelGatewayError.businessRouteDisabled }
-        return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
+        return try prepareEncoded(
+            request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
     }
 
-    package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors,
-                               connection: BusinessVMConnection? = nil) throws -> ModelPreparedOperation {
+    package func prepareClaude(
+        _ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors,
+        connection: BusinessVMConnection? = nil
+    ) throws -> ModelPreparedOperation {
         // Immutable production gate, before credential preparation or URLSession.
         guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
-        guard let connection, connection.service == .model, !connection.isRetired else { throw HostModelGatewayError.invalidHandle }
+        guard let connection, connection.service == .model, !connection.isRetired else {
+            throw HostModelGatewayError.invalidHandle
+        }
         guard request.dialect == .claude else { throw ModelTransportError.invalidRequest("claude dialect") }
         try selectors.validate()
-        let operation = try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
-                                           streaming: request.streaming, claudeSelectors: selectors)
+        let operation = try prepareEncoded(
+            request.canonicalBody, model: request.model, protocol: .anthropic,
+            streaming: request.streaming, claudeSelectors: selectors)
         try operation.bindVMConnection(connection)
         return operation
     }
 
-    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
-                                claudeSelectors: ClaudeRequestSelectors? = nil) throws -> ModelPreparedOperation {
+    private func prepareEncoded(
+        _ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
+        claudeSelectors: ClaudeRequestSelectors? = nil
+    ) throws -> ModelPreparedOperation {
         if claudeSelectors != nil {
             guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
         }
@@ -177,23 +190,30 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         do {
             guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
             let credential: String
-            do { credential = try credentialProvider.credential(for: model) }
-            catch let error as CredentialProviderError { throw ModelTransportError.credential(error) }
-            catch { throw ModelTransportError.credential(.unavailable) }
+            do { credential = try credentialProvider.credential(for: model) } catch let error as CredentialProviderError
+            { throw ModelTransportError.credential(error) } catch { throw ModelTransportError.credential(.unavailable) }
             guard !credential.isEmpty, credential.utf8.count <= 16 * 1024,
-                  !credential.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                !credential.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else {
                 throw ModelTransportError.credential(.invalid)
             }
 
-            if let claudeSelectors { try claudeSelectors.validate(); guard kind == .anthropic else { throw ModelTransportError.invalidRequest("claude protocol") } }
-            // The closed host route is unreachable while activation is disabled.
-            var endpoint = claudeSelectors == nil ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
-#if SANDBOX_TEST_FIXTURES
-            if let port = fixtureLoopbackPort {
-                guard claudeSelectors != nil, kind == .anthropic else { throw ModelTransportError.invalidRequest("fixture dialect") }
-                endpoint = URL(string: "http://127.0.0.1:\(port)/anthropic/v1/messages?beta=true")!
+            if let claudeSelectors {
+                try claudeSelectors.validate()
+                guard kind == .anthropic else { throw ModelTransportError.invalidRequest("claude protocol") }
             }
-#endif
+            // The closed host route is unreachable while activation is disabled.
+            var endpoint =
+                claudeSelectors == nil
+                ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
+            #if SANDBOX_TEST_FIXTURES
+                if let port = fixtureLoopbackPort {
+                    guard claudeSelectors != nil, kind == .anthropic else {
+                        throw ModelTransportError.invalidRequest("fixture dialect")
+                    }
+                    endpoint = URL(string: "http://127.0.0.1:\(port)/anthropic/v1/messages?beta=true")!
+                }
+            #endif
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = Self.requestTimeout
@@ -205,15 +225,21 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
                 if let claudeSelectors {
                     urlRequest.setValue(claudeSelectors.beta, forHTTPHeaderField: "anthropic-beta")
-                    urlRequest.setValue(claudeSelectors.directBrowserAccess, forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
+                    urlRequest.setValue(
+                        claudeSelectors.directBrowserAccess,
+                        forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
                 }
             }
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body
             let anthropicDecoder = AnthropicStreamDecoder()
-            return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming, activeCredential: credential,
+            return ModelPreparedOperation(
+                request: urlRequest, configuration: configuration, streaming: streaming, activeCredential: credential,
                 decodeText: { try self.decodeText($0, protocol: kind) },
-                decodeEvent: { kind == .anthropic ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI) },
+                decodeEvent: {
+                    kind == .anthropic
+                        ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI)
+                },
                 release: { self.limiter.release() })
         } catch {
             limiter.release()
@@ -234,34 +260,53 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             struct Payload: Encodable {
                 let model: String
                 let messages: [FixedMessage]
+                // swift-format-ignore: AlwaysUseLowerCamelCase
                 let max_tokens: Int
                 let stream: Bool
                 let thinking = ["type": "disabled"]
             }
-            return try JSONEncoder().encode(Payload(model: request.model.rawValue, messages: request.messages, max_tokens: request.maxOutputTokens, stream: streaming))
+            return try JSONEncoder().encode(
+                Payload(
+                    model: request.model.rawValue, messages: request.messages, max_tokens: request.maxOutputTokens,
+                    stream: streaming))
         case .anthropic:
             struct Payload: Encodable {
                 let model: String
                 let messages: [FixedMessage]
                 let system: String?
                 let tools: [ModelToolDefinition]?
+                // swift-format-ignore: AlwaysUseLowerCamelCase
                 let tool_choice: ModelToolChoice?
+                // swift-format-ignore: AlwaysUseLowerCamelCase
                 let max_tokens: Int
                 let stream: Bool
                 let thinking = ["type": "disabled"]
             }
             let system = request.messages.filter { $0.role == .system }.map(\.content).joined(separator: "\n\n")
-            return try JSONEncoder().encode(Payload(model: request.model.rawValue, messages: request.messages.filter { $0.role != .system }, system: system.isEmpty ? nil : system, tools: request.tools.isEmpty ? nil : request.tools, tool_choice: request.toolChoice, max_tokens: request.maxOutputTokens, stream: streaming))
+            return try JSONEncoder().encode(
+                Payload(
+                    model: request.model.rawValue, messages: request.messages.filter { $0.role != .system },
+                    system: system.isEmpty ? nil : system, tools: request.tools.isEmpty ? nil : request.tools,
+                    tool_choice: request.toolChoice, max_tokens: request.maxOutputTokens, stream: streaming))
         }
     }
 
-
     private func decodeText(_ data: Data, protocol: FixedProtocol) throws -> ModelCompletion {
-        struct OpenAIResponse: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String? }; let message: Message; let finish_reason: String? }; let choices: [Choice] }
+        struct OpenAIResponse: Decodable {
+            struct Choice: Decodable {
+                struct Message: Decodable { let content: String? }
+                let message: Message
+                // swift-format-ignore: AlwaysUseLowerCamelCase
+                let finish_reason: String?
+            }
+            let choices: [Choice]
+        }
 
         switch `protocol` {
         case .openAI:
-            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any], let choices = root["choices"] as? [[String: Any]] else { throw ModelTransportError.invalidResponse }
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let choices = root["choices"] as? [[String: Any]]
+            else { throw ModelTransportError.invalidResponse }
             for choice in choices {
                 if let message = choice["message"] as? [String: Any] { try rejectStructuredOpenAI(message) }
             }
@@ -274,11 +319,11 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         }
     }
 
-
     private func decodeSSEEvent(_ event: String, protocol kind: FixedProtocol) throws -> ModelStreamChunk? {
         if kind == .openAI && event == "[DONE]" { return ModelStreamChunk(text: "", isFinal: true) }
         guard let object = try? JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any],
-              object["error"] == nil else { throw ModelTransportError.malformedSSE }
+            object["error"] == nil
+        else { throw ModelTransportError.malformedSSE }
         switch kind {
         case .openAI:
             guard let choices = object["choices"] as? [[String: Any]] else { throw ModelTransportError.malformedSSE }
@@ -286,7 +331,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 try rejectProviderFailure(choice["finish_reason"] as? String)
                 if let delta = choice["delta"] as? [String: Any] { try rejectStructuredOpenAI(delta) }
             }
-            if choices.isEmpty { return nil } // Optional usage-only chunk.
+            if choices.isEmpty { return nil }  // Optional usage-only chunk.
             guard let delta = choices.first?["delta"] as? [String: Any] else { throw ModelTransportError.malformedSSE }
             guard let text = delta["content"] as? String, !text.isEmpty else { return nil }
             return ModelStreamChunk(text: text, isFinal: false)
@@ -297,7 +342,9 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     }
 
     private func rejectStructuredOpenAI(_ object: [String: Any]) throws {
-        if let content = object["content"], !(content is NSNull), !(content is String) { throw ModelTransportError.invalidResponse }
+        if let content = object["content"], !(content is NSNull), !(content is String) {
+            throw ModelTransportError.invalidResponse
+        }
         for key in ["tool_calls", "function_call"] {
             if let value = object[key], !(value is NSNull) { throw ModelTransportError.invalidResponse }
         }
@@ -340,7 +387,10 @@ private struct SSEParser: Sendable {
                 eventData.removeAll(keepingCapacity: true)
                 return result.isEmpty ? [] : [result]
             }
-            if text == "data" { eventData.append(""); return [] }
+            if text == "data" {
+                eventData.append("")
+                return []
+            }
             guard text.hasPrefix("data:") else { return [] }
             var value = String(text.dropFirst(5))
             if value.first == " " { value.removeFirst() }
@@ -359,12 +409,14 @@ private final class RequestLimiter: @unchecked Sendable {
     private let lock = NSLock()
     init(limit: Int) { self.limit = limit }
     func acquire() throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard active < limit else { throw ModelTransportError.busy }
         active += 1
     }
     func release() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         active -= 1
     }
 }
@@ -386,30 +438,45 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private var vmConnection: BusinessVMConnection?
     package var resumeCalls: Int { lock.withLock { resumes } }
 
-    fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool, activeCredential: String,
+    fileprivate init(
+        request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool, activeCredential: String,
         decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
         decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?,
-        release: @escaping @Sendable () -> Void) {
+        release: @escaping @Sendable () -> Void
+    ) {
         let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
         chunks = pair.stream
         requestBodyBytes = request.httpBody?.count ?? 0
-        configuredHeaderBytes = (request.allHTTPHeaderFields ?? [:]).reduce(0) { $0 + $1.key.utf8.count + 2 + $1.value.utf8.count + 2 }
-        delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming, activeCredential: activeCredential,
+        configuredHeaderBytes = (request.allHTTPHeaderFields ?? [:]).reduce(0) {
+            $0 + $1.key.utf8.count + 2 + $1.value.utf8.count + 2
+        }
+        delegate = ModelOperationDelegate(
+            continuation: pair.continuation, streaming: streaming, activeCredential: activeCredential,
             decodeText: decodeText, decodeEvent: decodeEvent, release: release)
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         task = session.dataTask(with: request)
     }
     fileprivate func bindVMConnection(_ connection: BusinessVMConnection) throws {
         try lock.withLock {
-            guard !started, !cancelled, vmConnection == nil, connection.service == .model else { throw ModelTransportError.cancelled }
+            guard !started, !cancelled, vmConnection == nil, connection.service == .model else {
+                throw ModelTransportError.cancelled
+            }
             vmConnection = connection
         }
     }
-    func acquireForStart() { lock.lock(); vmConnection?.acquireNativeStart() }
-    func releaseForStart() { vmConnection?.releaseNativeEffect(); lock.unlock() }
+    func acquireForStart() {
+        lock.lock()
+        vmConnection?.acquireNativeStart()
+    }
+    func releaseForStart() {
+        vmConnection?.releaseNativeEffect()
+        lock.unlock()
+    }
     func validateVMOwner(scope: RunEffectScope, lifecycle: RunLifecycle) throws {
         if let vmConnection {
-            guard vmConnection.lifecycle === lifecycle, vmConnection.epoch == scope.generation else { throw AuthorizationError.wrongRun }
+            guard vmConnection.lifecycle === lifecycle, vmConnection.epoch == scope.generation else {
+                throw AuthorizationError.wrongRun
+            }
         }
     }
     func startLocked() throws {
@@ -451,32 +518,53 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
     private let reflection: ModelCredentialReflection
     private var isEnded: Bool { lock.withLock { ended } }
 
-    init(continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool, activeCredential: String,
+    init(
+        continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool,
+        activeCredential: String,
         decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
-        decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?, release: @escaping @Sendable () -> Void) {
-        self.continuation = continuation; self.streaming = streaming
+        decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?, release: @escaping @Sendable () -> Void
+    ) {
+        self.continuation = continuation
+        self.streaming = streaming
         reflection = ModelCredentialReflection(activeCredential)
-        self.decodeText = decodeText; self.decodeEvent = decodeEvent; self.release = release
+        self.decodeText = decodeText
+        self.decodeEvent = decodeEvent
+        self.release = release
     }
     func finish(_ error: Error? = nil) {
-        let first = lock.withLock { if ended { return false }; ended = true; return true }
+        let first = lock.withLock {
+            if ended { return false }
+            ended = true
+            return true
+        }
         guard first else { return }
         reflection.clear()
         release()
         if let error { continuation.finish(throwing: error) } else { continuation.finish() }
     }
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
         completionHandler(nil)
         finish(ModelTransportError.redirectRejected)
         session.invalidateAndCancel()
     }
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
         guard let http = response as? HTTPURLResponse else {
-            finish(ModelTransportError.invalidResponse); completionHandler(.cancel); return
+            finish(ModelTransportError.invalidResponse)
+            completionHandler(.cancel)
+            return
         }
         guard (200..<300).contains(http.statusCode) else {
-            finish((300..<400).contains(http.statusCode) ? ModelTransportError.redirectRejected : .httpStatus(http.statusCode))
-            completionHandler(.cancel); return
+            finish(
+                (300..<400).contains(http.statusCode)
+                    ? ModelTransportError.redirectRejected : .httpStatus(http.statusCode))
+            completionHandler(.cancel)
+            return
         }
         completionHandler(isEnded ? .cancel : .allow)
     }
@@ -494,12 +582,18 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
                                 guard !isEnded else { return }
                                 continuation.yield(safe)
                             }
-                            if chunk.isFinal { finish(); session.invalidateAndCancel(); return }
+                            if chunk.isFinal {
+                                finish()
+                                session.invalidateAndCancel()
+                                return
+                            }
                         }
                     }
                 }
             } else {
-                guard incoming.count <= ModelTransport.maxResponseBytes - data.count else { throw ModelTransportError.responseTooLarge }
+                guard incoming.count <= ModelTransport.maxResponseBytes - data.count else {
+                    throw ModelTransportError.responseTooLarge
+                }
                 data.append(incoming)
             }
         } catch {

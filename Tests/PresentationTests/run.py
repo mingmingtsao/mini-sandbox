@@ -1,4 +1,5 @@
 """Require semantic check results as well as an AppKit process's exit status."""
+
 import argparse
 from pathlib import Path
 import subprocess

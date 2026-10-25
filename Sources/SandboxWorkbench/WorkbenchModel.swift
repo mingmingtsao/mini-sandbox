@@ -1,6 +1,6 @@
-import Foundation
 import Combine
 import Darwin
+import Foundation
 import SandboxContracts
 import SandboxHost
 
@@ -20,13 +20,15 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         guard fd >= 0 else { throw JSONLAuditSinkError.openFailed(errno) }
         file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         // A real lifecycle write, not a synthetic run or SecurityEvent.
-        let startup = try JSONSerialization.data(withJSONObject: ["type": "workbenchStarted", "time": Date().timeIntervalSince1970], options: [.sortedKeys])
+        let startup = try JSONSerialization.data(
+            withJSONObject: ["type": "workbenchStarted", "time": Date().timeIntervalSince1970], options: [.sortedKeys])
         try file.write(contentsOf: startup + Data([10]))
         try file.synchronize()
     }
 
     public func append(_ event: SecurityEvent) throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard !failed else { throw AuthorizationError.auditFailed }
         do {
             let encoder = JSONEncoder()
@@ -35,11 +37,16 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
             try file.synchronize()
             events.append(event)
             if events.count > capacity { events.removeFirst(events.count - capacity) }
-        } catch { failed = true; throw error }
+        } catch {
+            failed = true
+            throw error
+        }
     }
 
     public func snapshot() -> [SecurityEvent] {
-        lock.lock(); defer { lock.unlock() }; return events
+        lock.lock()
+        defer { lock.unlock() }
+        return events
     }
 }
 
@@ -55,7 +62,9 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     public init(model: WorkbenchModel) { self.model = model }
     public var ordinaryControlsDisabled: Bool { model.isBusy || model.isClosing || !model.authorityAvailable }
     public func present(_ action: PendingAction) {
-        guard lastPresented == nil, !ordinaryControlsDisabled, model.pending.contains(where: { $0.actionID == action.actionID }) else { return }
+        guard lastPresented == nil, !ordinaryControlsDisabled,
+            model.pending.contains(where: { $0.actionID == action.actionID })
+        else { return }
         lastPresented = action
         presentation = Presentation(action: action)
     }
@@ -63,7 +72,9 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         if presentation?.id == action.actionID { presentation = nil }
     }
     public func reconcile() {
-        if let action = presentation?.action, !model.pending.contains(where: { $0.actionID == action.actionID }) { clear(action) }
+        if let action = presentation?.action, !model.pending.contains(where: { $0.actionID == action.actionID }) {
+            clear(action)
+        }
     }
     public func dismiss(_ action: PendingAction) async {
         await model.dismiss(action)
@@ -114,7 +125,8 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MiniSandbox/Audit", isDirectory: true)
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
             let model = WorkbenchModel(newAuditFileAt: directory.appendingPathComponent("unavailable/\(UUID()).jsonl"))
             model.errorMessage = "Audit directory unavailable; authority disabled: \(error)"
@@ -133,7 +145,8 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     private func finish() {
         activity = audit?.snapshot() ?? []
         isBusy = false
-        let waiters = idleWaiters; idleWaiters.removeAll()
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
         for waiter in waiters { waiter.resume() }
     }
     private func waitForIdle() async {
@@ -146,7 +159,8 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     private func clearRun(_ runID: UUID, status: String) {
         pending.removeAll { $0.binding.runID == runID }
         for (id, action) in approvedSnapshots where action.binding.runID == runID {
-            approvedActions.removeValue(forKey: id); approvedSnapshots.removeValue(forKey: id)
+            approvedActions.removeValue(forKey: id)
+            approvedSnapshots.removeValue(forKey: id)
         }
         runStatus[runID] = status
     }
@@ -160,20 +174,26 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
                 clearRun(id, status: "Revoked — audit unavailable")
             }
         } else if let runID, let failure = error as? AuthorizationError,
-                  [.runRevoked, .grantExpired].contains(failure) {
+            [.runRevoked, .grantExpired].contains(failure)
+        {
             clearRun(runID, status: "Revoked / expired")
         }
     }
 
     /// Trusted in-process ingress only. Never expose this as a guest JSON handler.
     public func installTrustedGrant(_ grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws {
-        let controller = try begin(); defer { finish() }
+        let controller = try begin()
+        defer { finish() }
         let registration = try attachmentOwner?.beginAttachment(grant: grant, existing: existing)
         defer { if let registration { attachmentOwner?.endAttachment(registration) } }
         do {
             let handle: HostRunHandle
-            if let existing { try await controller.validateAttachment(handle: existing, grant: grant); handle = existing }
-            else { handle = try await controller.install(grant: grant) }
+            if let existing {
+                try await controller.validateAttachment(handle: existing, grant: grant)
+                handle = existing
+            } else {
+                handle = try await controller.install(grant: grant)
+            }
             if let registration { try attachmentOwner?.registerAttachment(registration, grant: grant, handle: handle) }
             guard !isClosing, handle.lifecycle.currentStatus == .active else {
                 handle.lifecycle.terminate(.stopped)
@@ -183,35 +203,47 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
             handles[grant.runID] = handle
             if !grants.contains(where: { $0.runID == grant.runID }) { grants.append(grant) }
             runStatus[grant.runID] = "Authorized — runtime not connected"
-        } catch { await failed(error, runID: grant.runID); throw error }
+        } catch {
+            await failed(error, runID: grant.runID)
+            throw error
+        }
     }
     public func proposeTrustedAction(binding: ActionBinding, display: String) async throws -> PendingAction {
-        let controller = try begin(); defer { finish() }
+        let controller = try begin()
+        defer { finish() }
         do {
             let handle = try handle(binding.runID)
             let action = try await controller.propose(handle: handle, binding: binding, display: display)
             guard !isClosing, handle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
-            pending.append(action); return action
-        } catch { await failed(error, runID: binding.runID); throw error }
+            pending.append(action)
+            return action
+        } catch {
+            await failed(error, runID: binding.runID)
+            throw error
+        }
     }
     public func approveOnce(_ action: PendingAction) async throws -> ApprovedAction {
-        let controller = try begin(); defer { finish() }
+        let controller = try begin()
+        defer { finish() }
         do {
             let handle = try handle(action.binding.runID)
-            let approved = try await controller.hostApprove(handle: handle, actionID: action.actionID, nonce: action.nonce)
+            let approved = try await controller.hostApprove(
+                handle: handle, actionID: action.actionID, nonce: action.nonce)
             guard !isClosing, handle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
             pending.removeAll { $0.actionID == action.actionID }
-            approvedActions[action.actionID] = approved; approvedSnapshots[action.actionID] = action
+            approvedActions[action.actionID] = approved
+            approvedSnapshots[action.actionID] = action
             return approved
         } catch {
             pending.removeAll { $0.actionID == action.actionID }
-            await failed(error, runID: action.binding.runID); throw error
+            await failed(error, runID: action.binding.runID)
+            throw error
         }
     }
     public func deny(_ action: PendingAction) async throws {
-        let controller = try begin(); defer { finish() }
-        do { try await controller.deny(handle: handle(action.binding.runID), actionID: action.actionID) }
-        catch {
+        let controller = try begin()
+        defer { finish() }
+        do { try await controller.deny(handle: handle(action.binding.runID), actionID: action.actionID) } catch {
             if error as? AuthorizationError == .actionNotPending {
                 // F03 confirms only that this is no longer pending, not that an
                 // existing approval was revoked. Reconcile the proposal alone.
@@ -226,13 +258,13 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     public func dismiss(_ action: PendingAction) async {
         await waitForIdle()
         guard pending.contains(where: { $0.actionID == action.actionID }) else { return }
-        do { try await deny(action) }
-        catch AuthorizationError.actionNotPending { /* Already reconciled by deny. */ }
-        catch { errorMessage = String(describing: error) }
+        do { try await deny(action) } catch AuthorizationError.actionNotPending { /* Already reconciled by deny. */
+        } catch { errorMessage = String(describing: error) }
     }
     /// Called by a trusted broker, never by the view. Does not perform external I/O.
     public func consumeForTrustedHost(runID: UUID, approved: ApprovedAction) async throws -> DispatchTicket {
-        let controller = try begin(); defer { finish() }
+        let controller = try begin()
+        defer { finish() }
         let authorityHandle = try handle(runID)
         let installed = try controller.installedGrantForOwnership(of: authorityHandle)
         let registration = try attachmentOwner?.beginAttachment(grant: installed, existing: authorityHandle)
@@ -241,37 +273,52 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         do {
             let ticket: DispatchTicket
             if let registration, let attachmentOwner {
-                ticket = try await controller.consumeOwned(handle: authorityHandle, approved: approved,
+                ticket = try await controller.consumeOwned(
+                    handle: authorityHandle, approved: approved,
                     owner: attachmentOwner, registration: registration)
                 transferred = true
             } else {
                 ticket = try await controller.consume(handle: authorityHandle, approved: approved)
             }
-            approvedActions.removeValue(forKey: approved.actionID); approvedSnapshots.removeValue(forKey: approved.actionID)
+            approvedActions.removeValue(forKey: approved.actionID)
+            approvedSnapshots.removeValue(forKey: approved.actionID)
             return ticket
         } catch {
             if let failure = error as? AuthorizationError,
-               [.actionExpired, .connectionRevoked, .connectionVersionMismatch, .ticketAlreadyConsumed, .ticketInvalid].contains(failure) {
+                [
+                    .actionExpired, .connectionRevoked, .connectionVersionMismatch, .ticketAlreadyConsumed,
+                    .ticketInvalid,
+                ].contains(failure)
+            {
                 approvedActions.removeValue(forKey: approved.actionID)
                 approvedSnapshots.removeValue(forKey: approved.actionID)
             }
-            await failed(error, runID: runID); throw error
+            await failed(error, runID: runID)
+            throw error
         }
     }
     public func completeForTrustedHost(runID: UUID, ticket: DispatchTicket, outcome: DispatchOutcome) async throws {
         await waitForIdle()
         guard let controller else { throw AuthorizationError.auditFailed }
-        isBusy = true; defer { finish() }
+        isBusy = true
+        defer { finish() }
         do {
             try await controller.complete(handle: handle(runID), ticket: ticket, outcome: outcome)
         } catch {
-            await failed(error, runID: runID); throw error
+            await failed(error, runID: runID)
+            throw error
         }
     }
     public func recordGuestDiagnostic(runID: UUID, operation: String, resource: String, message: String) async throws {
-        let controller = try begin(); defer { finish() }
-        do { try await controller.recordGuestDiagnostic(runID: runID, operation: operation, resourceSummary: resource, message: message) }
-        catch { await failed(error, runID: runID); throw error }
+        let controller = try begin()
+        defer { finish() }
+        do {
+            try await controller.recordGuestDiagnostic(
+                runID: runID, operation: operation, resourceSummary: resource, message: message)
+        } catch {
+            await failed(error, runID: runID)
+            throw error
+        }
     }
     /// Retire shared authority before credential I/O, without waiting on audit.
     package func retireModelConnections(_ connectionIDs: Set<UUID>) {
@@ -299,22 +346,32 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         clearRun(runID, status: "Stopped — authorization revoked")
         await waitForIdle()
         guard let controller else { throw AuthorizationError.auditFailed }
-        isBusy = true; defer { finish() }
+        isBusy = true
+        defer { finish() }
         do {
             try await controller.stop(handle: handle(runID))
             clearRun(runID, status: "Stopped — authorization revoked")
-        } catch { await failed(error, runID: runID); throw error }
+        } catch {
+            await failed(error, runID: runID)
+            throw error
+        }
     }
     public func revokeConnection(runID: UUID, connectionID: UUID) async throws {
-        let controller = try begin(); defer { finish() }
+        let controller = try begin()
+        defer { finish() }
         do {
             try await controller.revokeConnection(handle: handle(runID), connectionID: connectionID)
             pending.removeAll { $0.binding.runID == runID && $0.binding.connectionID == connectionID }
-            for (id, action) in approvedSnapshots where action.binding.runID == runID && action.binding.connectionID == connectionID {
-                approvedActions.removeValue(forKey: id); approvedSnapshots.removeValue(forKey: id)
+            for (id, action) in approvedSnapshots
+            where action.binding.runID == runID && action.binding.connectionID == connectionID {
+                approvedActions.removeValue(forKey: id)
+                approvedSnapshots.removeValue(forKey: id)
             }
             runStatus[runID] = "Connection revoked: \(connectionID)"
-        } catch { await failed(error, runID: runID); throw error }
+        } catch {
+            await failed(error, runID: runID)
+            throw error
+        }
     }
     public func expirePending() async {
         guard !isClosing else { return }
@@ -322,13 +379,20 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
             guard let handle = handles[grant.runID] else { continue }
             let observation = handle.lifecycle.observeAndReduce(reason: "ui-projection")
             if observation.status != .active {
-                clearRun(grant.runID, status: observation.status == .expired ? "Expired — authorization revoked" : "Revoked / expired")
+                clearRun(
+                    grant.runID,
+                    status: observation.status == .expired ? "Expired — authorization revoked" : "Revoked / expired")
                 continue
             }
             if isBusy { continue }
-            for action in pending where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt { await dismiss(action) }
-            for (id, action) in approvedSnapshots where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt {
-                approvedActions.removeValue(forKey: id); approvedSnapshots.removeValue(forKey: id)
+            for action in pending
+            where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt {
+                await dismiss(action)
+            }
+            for (id, action) in approvedSnapshots
+            where action.binding.runID == grant.runID && observation.effectiveTime >= action.expiresAt {
+                approvedActions.removeValue(forKey: id)
+                approvedSnapshots.removeValue(forKey: id)
             }
         }
     }
@@ -362,7 +426,8 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     public func service(for action: PendingAction) -> String {
         grants.first { $0.runID == action.binding.runID }?.connections
             .first { $0.connectionID == action.binding.connectionID }?.scopes
-            .first { $0.resource == action.binding.resolvedResource && $0.operation == action.binding.operation }?.service ?? "Unavailable"
+            .first { $0.resource == action.binding.resolvedResource && $0.operation == action.binding.operation }?
+            .service ?? "Unavailable"
     }
     public enum WorkbenchError: Error { case busy }
 
@@ -372,12 +437,16 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         errorMessage = error
     }
     public init(audit: WorkbenchAuditSink, authority: RunAuthorizationController) {
-        self.auditURL = audit.url; self.audit = audit; self.controller = authority
+        self.auditURL = audit.url
+        self.audit = audit
+        self.controller = authority
         self.authorityAvailable = true
     }
 
-    public init(newAuditFileAt url: URL, clock: RunClock = .system(),
-                authority: RunAuthorizationController? = nil) {
+    public init(
+        newAuditFileAt url: URL, clock: RunClock = .system(),
+        authority: RunAuthorizationController? = nil
+    ) {
         auditURL = url
         do {
             let sink = try WorkbenchAuditSink(newFileAt: url)

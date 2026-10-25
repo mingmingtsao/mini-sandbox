@@ -1,6 +1,6 @@
-import SwiftUI
 import SandboxContracts
 import SandboxHost
+import SwiftUI
 
 @MainActor public struct WorkbenchView: View {
     @ObservedObject private var model: WorkbenchModel
@@ -24,7 +24,11 @@ import SandboxHost
                 Text("Authorization workbench").font(.largeTitle.bold())
                 Text("Runtime producer / VM not connected. No workload is running.").foregroundStyle(.secondary)
                 if let error = model.errorMessage {
-                    Label { Text(verbatim: error) } icon: { Image(systemName: "exclamationmark.triangle") }.foregroundStyle(.red)
+                    Label {
+                        Text(verbatim: error)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }.foregroundStyle(.red)
                 }
                 if !model.authorityAvailable { Text("Authority disabled").font(.headline) }
                 if let connectionSettings { ConnectionSettingsView(controller: connectionSettings) }
@@ -35,11 +39,21 @@ import SandboxHost
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(verbatim: "Run \(grant.runID)").font(.headline)
                                 Text(verbatim: model.runStatus[grant.runID] ?? "Unavailable")
-                                Text("Immutable granted scopes (not proof of current connection availability)").font(.caption)
+                                Text("Immutable granted scopes (not proof of current connection availability)").font(
+                                    .caption)
                                 ForEach(grant.connections, id: \.connectionID) { connection in
                                     Text(verbatim: "Connection \(connection.connectionID)").font(.caption)
-                                    ForEach(Array(connection.scopes).sorted { ($0.service, $0.resource, $0.operation) < ($1.service, $1.resource, $1.operation) }, id: \.self) { scope in
-                                        Text(verbatim: "\(scope.service) · \(scope.resource) · \(scope.operation)\(grant.explicitDenies.contains(scope) ? " — explicitly denied" : "")")
+                                    ForEach(
+                                        Array(connection.scopes).sorted {
+                                            ($0.service, $0.resource, $0.operation) < (
+                                                $1.service, $1.resource, $1.operation
+                                            )
+                                        }, id: \.self
+                                    ) { scope in
+                                        Text(
+                                            verbatim:
+                                                "\(scope.service) · \(scope.resource) · \(scope.operation)\(grant.explicitDenies.contains(scope) ? " — explicitly denied" : "")"
+                                        )
                                     }
                                 }
                                 stopControl(runID: grant.runID)
@@ -58,8 +72,10 @@ import SandboxHost
                                     .disabled(model.isBusy || model.isClosing || !model.authorityAvailable)
                             }
                         }
-                        Text("\(model.approvedActions.count) approved capability(s) awaiting trusted host integration. Nothing is automatically dispatched.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(
+                            "\(model.approvedActions.count) approved capability(s) awaiting trusted host integration. Nothing is automatically dispatched."
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
                 GroupBox("Activity · bounded to the latest 200 durable events") {
@@ -70,13 +86,18 @@ import SandboxHost
                         Text(verbatim: "Audit: \(model.auditURL.path)").font(.caption).textSelection(.enabled)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                Text("Partial native approval increment. VM execution, broker dispatch, G1/U01 and full F10 acceptance are not established.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "Partial native approval increment. VM execution, broker dispatch, G1/U01 and full F10 acceptance are not established."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
-        .sheet(item: $approval.presentation, onDismiss: {
-            Task { await approval.didDismiss() }
-        }) { value in
+        .sheet(
+            item: $approval.presentation,
+            onDismiss: {
+                Task { await approval.didDismiss() }
+            }
+        ) { value in
             approvalSheet(value.action)
         }
         .task {
@@ -94,8 +115,11 @@ import SandboxHost
             let events = model.activity.filter { $0.origin == origin }
             if events.isEmpty { Text("No recorded events.").foregroundStyle(.secondary) }
             ForEach(events, id: \.eventID) { event in
-                Text(verbatim: "#\(event.hostSequence) · \(event.decision.rawValue) · \(event.operation) · \(event.resourceSummary) · \(event.reason) · \(event.outcome.rawValue)")
-                    .font(.callout).textSelection(.enabled)
+                Text(
+                    verbatim:
+                        "#\(event.hostSequence) · \(event.decision.rawValue) · \(event.operation) · \(event.resourceSummary) · \(event.reason) · \(event.outcome.rawValue)"
+                )
+                .font(.callout).textSelection(.enabled)
             }
         }
     }
@@ -121,7 +145,7 @@ import SandboxHost
                 Spacer()
                 Button("Approve once") {
                     Task {
-                        do { try await approval.approve(action) } catch { /* Model publishes the real rejection. */ }
+                        do { try await approval.approve(action) } catch { /* Model publishes the real rejection. */  }
                     }
                 }
             }.disabled(approval.ordinaryControlsDisabled)
@@ -129,12 +153,15 @@ import SandboxHost
         }.padding(28).frame(width: 620)
     }
     private func field(_ label: String, _ value: String) -> some View {
-        GridRow { Text(label).foregroundStyle(.secondary); Text(verbatim: value).textSelection(.enabled) }
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            Text(verbatim: value).textSelection(.enabled)
+        }
     }
     private func stopControl(runID: UUID) -> some View {
         Button("Stop and revoke") {
             Task {
-                do { try await approval.stop(runID: runID) } catch { /* Model publishes cleanup failure. */ }
+                do { try await approval.stop(runID: runID) } catch { /* Model publishes cleanup failure. */  }
             }
         }.disabled(!model.canStop(runID: runID))
     }

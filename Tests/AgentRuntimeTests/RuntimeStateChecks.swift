@@ -1,6 +1,7 @@
-import Foundation
 import CryptoKit
 import Darwin
+import Foundation
+
 @testable import SandboxHost
 
 func runtimeStateChecks() throws {
@@ -10,7 +11,10 @@ func runtimeStateChecks() throws {
     let payload = Data("cancel-fixture".utf8)
     let hash = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
     func frame(_ type: String, id: Int, extra: [String: Any]) throws -> Data {
-        var object = extra; object["v"] = 1; object["id"] = id; object["type"] = type
+        var object = extra
+        object["v"] = 1
+        object["id"] = id
+        object["type"] = type
         return try JSONSerialization.data(withJSONObject: object)
     }
     let probe = AgentRuntimeProbe()
@@ -20,7 +24,9 @@ func runtimeStateChecks() throws {
     try check(probe.didCancel && probe.command == 5 && probe.outputBytes == payload.count, "first cancel output state")
     let size = probe.output.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
     let cancel = try JSONSerialization.jsonObject(with: probe.output.dropFirst(4)) as? [String: Any]
-    try check(size == probe.output.count - 4 && cancel?["type"] as? String == "cancel" && cancel?["id"] as? Int == 5, "cancel wire framing")
+    try check(
+        size == probe.output.count - 4 && cancel?["type"] as? String == "cancel" && cancel?["id"] as? Int == 5,
+        "cancel wire framing")
     let queued = probe.output
     try probe.receive(stdout)
     try check(probe.output == queued && probe.outputBytes == payload.count * 2, "duplicate stdout sent another cancel")
@@ -54,6 +60,9 @@ func runtimeStateChecks() throws {
     try check(console.finished && console.failed && console.stopping, "runtime deadline did not terminate")
     console.tick()
     try check(console.finished && console.output.isEmpty && console.input.isEmpty, "finished runtime revived")
-    try pipe.fileHandleForReading.close(); try pipe.fileHandleForWriting.close()
-    print("PASS runtime cancel wire exact-once, command completion, send bounds, console accounting and terminal deadline")
+    try pipe.fileHandleForReading.close()
+    try pipe.fileHandleForWriting.close()
+    print(
+        "PASS runtime cancel wire exact-once, command completion, send bounds, console accounting and terminal deadline"
+    )
 }

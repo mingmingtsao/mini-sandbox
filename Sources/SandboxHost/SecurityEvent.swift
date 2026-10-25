@@ -3,7 +3,8 @@ import SandboxContracts
 
 private func requireEventText(_ value: String, _ name: String) throws {
     guard !value.isEmpty, value.utf8.count <= 512,
-          !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+        !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else {
         throw ContractError.invalidField(name)
     }
 }
@@ -33,13 +34,28 @@ public struct SecurityEvent: Encodable, Equatable, Sendable {
     public let grantDigest: String
     public let outcome: DispatchOutcome
 
-    internal init(eventID: UUID, hostSequence: UInt64, runID: UUID, actionID: UUID?, time: Date, origin: EventOrigin, operation: String, resourceSummary: String, decision: EventDecision, reason: String, grantDigest: String, outcome: DispatchOutcome) throws {
+    internal init(
+        eventID: UUID, hostSequence: UInt64, runID: UUID, actionID: UUID?, time: Date, origin: EventOrigin,
+        operation: String, resourceSummary: String, decision: EventDecision, reason: String, grantDigest: String,
+        outcome: DispatchOutcome
+    ) throws {
         guard hostSequence > 0, time.timeIntervalSince1970.isFinite else { throw ContractError.invalidField("event") }
-        try requireEventText(operation, "operation"); try requireEventText(resourceSummary, "resourceSummary")
-        try requireEventText(reason, "reason"); try requireEventDigest(grantDigest, "grantDigest")
-        self.eventID = eventID; self.hostSequence = hostSequence; self.runID = runID; self.actionID = actionID
-        self.time = time; self.origin = origin; self.operation = operation; self.resourceSummary = resourceSummary
-        self.decision = decision; self.reason = reason; self.grantDigest = grantDigest; self.outcome = outcome
+        try requireEventText(operation, "operation")
+        try requireEventText(resourceSummary, "resourceSummary")
+        try requireEventText(reason, "reason")
+        try requireEventDigest(grantDigest, "grantDigest")
+        self.eventID = eventID
+        self.hostSequence = hostSequence
+        self.runID = runID
+        self.actionID = actionID
+        self.time = time
+        self.origin = origin
+        self.operation = operation
+        self.resourceSummary = resourceSummary
+        self.decision = decision
+        self.reason = reason
+        self.grantDigest = grantDigest
+        self.outcome = outcome
     }
 
     public var isHostRejection: Bool { origin == .hostEnforcement && decision == .deny && outcome == .notDispatched }

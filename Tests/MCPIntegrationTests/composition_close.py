@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Composition MCP close/settlement; original authenticated loopback handler."""
+
 import json
 import argparse
 from pathlib import Path
@@ -34,13 +35,20 @@ def run(binary):
                 super()._mcp_result(request_id, result)
 
         fixture.resource.server.RequestHandlerClass = Boundary
-        process = subprocess.Popen([str(binary), "--composition-mcp"],
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=ROOT)
+        process = subprocess.Popen(
+            [str(binary), "--composition-mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=ROOT,
+        )
         assert process.stdin is not None and process.stdout is not None
         seen, cases, failed = set(), set(), False
         active = None
         try:
-            process.stdin.write((json.dumps({"port": fixture.resource.server.server_address[1], "token": token}) + "\n").encode())
+            process.stdin.write(
+                (json.dumps({"port": fixture.resource.server.server_address[1], "token": token}) + "\n").encode()
+            )
             process.stdin.flush()
             for line in child_lines(process, time.monotonic() + 60, 10):
                 words = line.split()
@@ -49,9 +57,12 @@ def run(binary):
                     assert name in NAMES
                     if action == "BEGIN":
                         assert active is None and name not in cases
-                        active = name; cases.add(name)
-                        fixture.control.reset(); mode["hold"] = False
-                        entered.clear(); release.clear()
+                        active = name
+                        cases.add(name)
+                        fixture.control.reset()
+                        mode["hold"] = False
+                        entered.clear()
+                        release.clear()
                     else:
                         assert name == active
                         if action == "ARM":
@@ -61,7 +72,8 @@ def run(binary):
                             assert fixture.control.resource_hit_count == 4
                         else:
                             release.set()
-                    process.stdin.write(b"go\n"); process.stdin.flush()
+                    process.stdin.write(b"go\n")
+                    process.stdin.flush()
                 elif line.startswith("OBS MCP "):
                     assert words[2] == active
                     assert fixture.control.resource_hit_count == 4, "unexpected HTTP ingress count"
@@ -70,7 +82,8 @@ def run(binary):
                 elif line.startswith(("PASS composition MCP ", "FAIL composition MCP ")):
                     name = words[3].rstrip(":")
                     assert name == active and name not in seen
-                    seen.add(name); active = None
+                    seen.add(name)
+                    active = None
                     failed |= line.startswith("FAIL")
                     print(line, flush=True)
                 elif line.startswith("FAIL:"):
@@ -87,8 +100,10 @@ def run(binary):
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    process.kill(); process.wait(timeout=2)
-            process.stdin.close(); process.stdout.close()
+                    process.kill()
+                    process.wait(timeout=2)
+            process.stdin.close()
+            process.stdout.close()
 
 
 if __name__ == "__main__":

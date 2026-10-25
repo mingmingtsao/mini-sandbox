@@ -1,7 +1,7 @@
+import Darwin
 import Foundation
 import SandboxContracts
 import SandboxHost
-import Darwin
 
 /// An ownership ledger, not a second authorization lifecycle. Gateway actors
 /// register here synchronously before exposing execution-eligible attachments.
@@ -77,7 +77,9 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         let ready = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
             pending.removeValue(forKey: token)
             guard pending.isEmpty else { return [] }
-            let result = waiters; waiters.removeAll(); return result
+            let result = waiters
+            waiters.removeAll()
+            return result
         }
         ready.forEach { $0.resume() }
     }
@@ -101,16 +103,17 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         await withCheckedContinuation { continuation in
             let ready = lock.withLock {
                 if pending.isEmpty { return true }
-                waiters.append(continuation); return false
+                waiters.append(continuation)
+                return false
             }
             if ready { continuation.resume() }
         }
     }
     var handles: [HostRunHandle] { lock.withLock { runs.values.map { $0.1 } } }
-#if DEBUG
-    var pendingCount: Int { lock.withLock { pending.count } }
-    var retainedCount: Int { lock.withLock { runs.count } }
-#endif
+    #if DEBUG
+        var pendingCount: Int { lock.withLock { pending.count } }
+        var retainedCount: Int { lock.withLock { runs.count } }
+    #endif
 }
 
 /// App-owned composition. Settings replace only the future-run gateway, keeping
@@ -133,13 +136,14 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     private var fixtureTaskDirectory: URL?
     package private(set) var isLocalFixture = false
     package var businessRouteAvailable: Bool {
-#if SANDBOX_TEST_FIXTURES
-        if isLocalFixture { return true }
-#endif
+        #if SANDBOX_TEST_FIXTURES
+            if isLocalFixture { return true }
+        #endif
         return BusinessModelActivation.credentialEgressEnabled
     }
     package var businessTaskDirectory: URL {
-        fixtureTaskDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        fixtureTaskDirectory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MiniSandbox/Tasks", isDirectory: true)
     }
     package var business: BusinessTaskController {
@@ -153,18 +157,19 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         case beforeAuthority, afterAuthority, beforeModel, afterModel
         case beforeMCP, afterMCP, beforeWorkbench, afterWorkbench
     }
-#if DEBUG
-    /// Deterministic scheduling seam only; never supplies authority or output.
-    package var installationBarrier: ((InstallationPhase) async -> Void)?
-    package var pendingOwnedWork: Int { ownership.pendingCount }
-    package var retainedOwnedRuns: Int { ownership.retainedCount }
-#endif
+    #if DEBUG
+        /// Deterministic scheduling seam only; never supplies authority or output.
+        package var installationBarrier: ((InstallationPhase) async -> Void)?
+        package var pendingOwnedWork: Int { ownership.pendingCount }
+        package var retainedOwnedRuns: Int { ownership.retainedCount }
+    #endif
     private func checkpoint(_ phase: InstallationPhase, generation: UUID, handle: HostRunHandle? = nil) async throws {
-#if DEBUG
-        if let installationBarrier { await installationBarrier(phase) }
-#endif
+        #if DEBUG
+            if let installationBarrier { await installationBarrier(phase) }
+        #endif
         guard generation == configurationGeneration, !isClosing, !connectionSettings.isClosed,
-              !connectionSettings.isBusy, !mcpSettings.isBusy, !mcpSettings.isClosed else { throw HostModelGatewayError.revoked }
+            !connectionSettings.isBusy, !mcpSettings.isBusy, !mcpSettings.isClosed
+        else { throw HostModelGatewayError.revoked }
         if let handle { try validateInstallation(generation, handle) }
     }
 
@@ -177,10 +182,12 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         package let mcpGateway: HostMCPGateway
     }
 
-    package init(audit: WorkbenchAuditSink, modelConnections: [HostModelConnection] = [],
-                 credentialStore: (any FixedModelCredentialStore)? = nil,
-                 mcpConnections: [HostMCPConnection] = [],
-                 clock: RunClock = .system()) throws {
+    package init(
+        audit: WorkbenchAuditSink, modelConnections: [HostModelConnection] = [],
+        credentialStore: (any FixedModelCredentialStore)? = nil,
+        mcpConnections: [HostMCPConnection] = [],
+        clock: RunClock = .system()
+    ) throws {
         self.audit = audit
         modelConnectionIDs = Set(modelConnections.map(\.connectionID))
         mcpConnectionIDs = Set(mcpConnections.map(\.connectionID))
@@ -191,7 +198,8 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         let ownership = CompositionRunOwnership(authority: authority)
         self.ownership = ownership
         workbench = WorkbenchModel(audit: audit, authority: authority)
-        model = try HostModelGateway(connections: modelConnections, auditSink: audit, authority: authority, owner: ownership)
+        model = try HostModelGateway(
+            connections: modelConnections, auditSink: audit, authority: authority, owner: ownership)
         mcp = try HostMCPGateway(connections: mcpConnections, auditSink: audit, authority: authority, owner: ownership)
         workbench.attachmentOwner = ownership
         workbench.willClose = { [weak self] in self?.beginClose() }
@@ -211,25 +219,34 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
             return try self.retireModelConfiguration()
         }
         connectionSettings.publish = { [weak self] configuration, provider in
-            guard let self, !self.isClosing, !self.connectionSettings.isClosed else { throw HostModelGatewayError.revoked }
-            self.model = try HostModelGateway(connections: [configuration.connection(provider: provider)],
+            guard let self, !self.isClosing, !self.connectionSettings.isClosed else {
+                throw HostModelGatewayError.revoked
+            }
+            self.model = try HostModelGateway(
+                connections: [configuration.connection(provider: provider)],
                 auditSink: audit, authority: authority, owner: self.ownership)
             self.modelConnectionIDs = [configuration.connectionID]
         }
         mcpSettings.invalidate = { [weak self] in
-            guard let self else { throw HostMCPGatewayError.revoked }; return try self.retireMCPConfiguration()
+            guard let self else { throw HostMCPGatewayError.revoked }
+            return try self.retireMCPConfiguration()
         }
         mcpSettings.publish = { [weak self] configuration, provider in
             guard let self, !self.isClosing, !self.mcpSettings.isClosed else { throw HostMCPGatewayError.revoked }
-            self.mcp = try HostMCPGateway(connections: [configuration.connection(provider: provider)],
+            self.mcp = try HostMCPGateway(
+                connections: [configuration.connection(provider: provider)],
                 auditSink: audit, authority: authority, owner: self.ownership)
             self.mcpConnectionIDs = [configuration.connectionID]
         }
     }
 
     package func install(_ grant: RunGrant) async throws -> InstalledRun {
-        guard !isClosing, !connectionSettings.isBusy, !connectionSettings.isClosed, !mcpSettings.isBusy, !mcpSettings.isClosed, !workbench.isClosing else { throw HostModelGatewayError.revoked }
-        let generation = configurationGeneration, model = model, mcp = mcp
+        guard !isClosing, !connectionSettings.isBusy, !connectionSettings.isClosed, !mcpSettings.isBusy,
+            !mcpSettings.isClosed, !workbench.isClosing
+        else { throw HostModelGatewayError.revoked }
+        let generation = configurationGeneration
+        let model = model
+        let mcp = mcp
         let registration = try ownership.beginAttachment(grant: grant, existing: nil)
         defer { ownership.endAttachment(registration) }
         try await checkpoint(.beforeAuthority, generation: generation)
@@ -246,7 +263,9 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
             try await checkpoint(.beforeWorkbench, generation: generation, handle: handle)
             try await workbench.installTrustedGrant(grant, authorityHandle: handle)
             try await checkpoint(.afterWorkbench, generation: generation, handle: handle)
-            return InstalledRun(grant: grant, authorityHandle: handle, modelHandle: modelHandle, modelGateway: model, mcpHandle: mcpHandle, mcpGateway: mcp)
+            return InstalledRun(
+                grant: grant, authorityHandle: handle, modelHandle: modelHandle, modelGateway: model,
+                mcpHandle: mcpHandle, mcpGateway: mcp)
         } catch {
             handle.lifecycle.terminate(.faulted)
             try? await authority.stop(handle: handle)
@@ -255,8 +274,10 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     }
 
     private func validateInstallation(_ generation: UUID, _ handle: HostRunHandle) throws {
-        guard generation == configurationGeneration, !isClosing, !connectionSettings.isBusy, !connectionSettings.isClosed,
-              !mcpSettings.isBusy, !mcpSettings.isClosed, !workbench.isClosing, handle.lifecycle.currentStatus == .active else { throw HostModelGatewayError.revoked }
+        guard generation == configurationGeneration, !isClosing, !connectionSettings.isBusy,
+            !connectionSettings.isClosed,
+            !mcpSettings.isBusy, !mcpSettings.isClosed, !workbench.isClosing, handle.lifecycle.currentStatus == .active
+        else { throw HostModelGatewayError.revoked }
     }
 
     /// Retain the concrete VM/workspace owner until its asynchronous cleanup
@@ -267,7 +288,10 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         do {
             try ownership.registerAttachment(token, grant: run.grant, handle: run.authorityHandle)
             return token
-        } catch { ownership.endAttachment(token); throw error }
+        } catch {
+            ownership.endAttachment(token)
+            throw error
+        }
     }
     package func finishBusinessOwnership(_ token: UUID, succeeded: Bool) {
         if !succeeded { ownership.attachmentCleanupFailed(token) }
@@ -311,7 +335,9 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         businessStorage?.retireMCPConnections(mcpConnectionIDs)
         workbench.retireMCPConnections(mcpConnectionIDs)
         mcpConnectionIDs = []
-        if !isClosing { mcp = try HostMCPGateway(connections: [], auditSink: audit, authority: authority, owner: ownership) }
+        if !isClosing {
+            mcp = try HostMCPGateway(connections: [], auditSink: audit, authority: authority, owner: ownership)
+        }
         return retired
     }
 
@@ -320,8 +346,11 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         // Authenticate before observing or retaining the lifecycle. Equal run IDs
         // and grant metadata do not establish ownership by this composition.
         _ = try authority.installedGrantForOwnership(of: run.authorityHandle)
-        guard !isClosing, run.authorityHandle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
-        return try VMDiagnosticSession(owner: owner, runID: run.grant.runID, epoch: run.grant.epoch,
+        guard !isClosing, run.authorityHandle.lifecycle.currentStatus == .active else {
+            throw AuthorizationError.runRevoked
+        }
+        return try VMDiagnosticSession(
+            owner: owner, runID: run.grant.runID, epoch: run.grant.epoch,
             workloadDigest: run.grant.workloadImageDigest, sink: audit,
             authorityHandle: run.authorityHandle, installedGrant: run.grant)
     }
@@ -329,25 +358,44 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     package static func application() throws -> RunComposition {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MiniSandbox/Audit", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                               attributes: [.posixPermissions: 0o700])
-        return try RunComposition(audit: WorkbenchAuditSink(newFileAt: directory.appendingPathComponent("\(UUID()).jsonl")))
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        return try RunComposition(
+            audit: WorkbenchAuditSink(newFileAt: directory.appendingPathComponent("\(UUID()).jsonl")))
     }
-#if SANDBOX_TEST_FIXTURES
-    package static func localBusinessFixture(port: UInt16, newRoot: URL, mcpPort: UInt16? = nil) throws -> RunComposition {
-        let connection = try HostModelConnection.localClaudeFixture(port: port)
-        let mcpConfiguration = mcpPort.map { LocalMCPConfiguration(connectionID: UUID(), accountID: UUID(), version: 1, port: $0) }
-        let mcpConnections = try mcpConfiguration.map { [try $0.connection(provider: MemoryMCPCredential(binding: $0.binding,
-            bearer: MCPConnectionSettingsController.publicFixtureBearer))] } ?? []
-        guard newRoot.path.hasPrefix("/"), mkdir(newRoot.path, 0o700) == 0 else { throw BusinessTaskFailure.unavailable }
-        let audit = try WorkbenchAuditSink(newFileAt: newRoot.appendingPathComponent("audit.jsonl"))
-        let composition = try RunComposition(audit: audit, modelConnections: [connection], credentialStore: LocalBusinessNoCredentialStore(), mcpConnections: mcpConnections)
-        composition.isLocalFixture = true
-        composition.fixtureTaskDirectory = newRoot.appendingPathComponent("Tasks", isDirectory: true)
-        try composition.connectionSettings.installLocalFixture(FixedModelConnectionConfiguration(connectionID: connection.connectionID,
-            accountID: connection.accountID, accountBindingVersion: 1, routeVersion: 1))
-        if let mcpConfiguration { try composition.mcpSettings.installLocalFixture(mcpConfiguration) }
-        return composition
-    }
-#endif
+    #if SANDBOX_TEST_FIXTURES
+        package static func localBusinessFixture(port: UInt16, newRoot: URL, mcpPort: UInt16? = nil) throws
+            -> RunComposition
+        {
+            let connection = try HostModelConnection.localClaudeFixture(port: port)
+            let mcpConfiguration = mcpPort.map {
+                LocalMCPConfiguration(connectionID: UUID(), accountID: UUID(), version: 1, port: $0)
+            }
+            let mcpConnections =
+                try mcpConfiguration.map {
+                    [
+                        try $0.connection(
+                            provider: MemoryMCPCredential(
+                                binding: $0.binding,
+                                bearer: MCPConnectionSettingsController.publicFixtureBearer))
+                    ]
+                } ?? []
+            guard newRoot.path.hasPrefix("/"), mkdir(newRoot.path, 0o700) == 0 else {
+                throw BusinessTaskFailure.unavailable
+            }
+            let audit = try WorkbenchAuditSink(newFileAt: newRoot.appendingPathComponent("audit.jsonl"))
+            let composition = try RunComposition(
+                audit: audit, modelConnections: [connection], credentialStore: LocalBusinessNoCredentialStore(),
+                mcpConnections: mcpConnections)
+            composition.isLocalFixture = true
+            composition.fixtureTaskDirectory = newRoot.appendingPathComponent("Tasks", isDirectory: true)
+            try composition.connectionSettings.installLocalFixture(
+                FixedModelConnectionConfiguration(
+                    connectionID: connection.connectionID,
+                    accountID: connection.accountID, accountBindingVersion: 1, routeVersion: 1))
+            if let mcpConfiguration { try composition.mcpSettings.installLocalFixture(mcpConfiguration) }
+            return composition
+        }
+    #endif
 }

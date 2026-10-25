@@ -17,12 +17,19 @@ package final class WorkspaceRunSession: @unchecked Sendable {
     package let handle: HostRunHandle
     package var snapshotID: UUID { snapshot.id.grantSnapshotID }
 
-    private init(store: WorkspaceStore, snapshot: WorkspaceSnapshot, quota: WorkspaceGrantQuota, task: TaskQuotaLedger) {
-        self.store = store; self.snapshot = snapshot; self.quota = quota; self.task = task; handle = quota.handle
+    private init(store: WorkspaceStore, snapshot: WorkspaceSnapshot, quota: WorkspaceGrantQuota, task: TaskQuotaLedger)
+    {
+        self.store = store
+        self.snapshot = snapshot
+        self.quota = quota
+        self.task = task
+        handle = quota.handle
     }
-    package static func bind(store: WorkspaceStore, snapshot: WorkspaceSnapshot,
-                             authority: RunAuthorizationController, handle: HostRunHandle, grant: RunGrant,
-                             limits: WorkspaceTaskLimits) throws -> WorkspaceRunSession {
+    package static func bind(
+        store: WorkspaceStore, snapshot: WorkspaceSnapshot,
+        authority: RunAuthorizationController, handle: HostRunHandle, grant: RunGrant,
+        limits: WorkspaceTaskLimits
+    ) throws -> WorkspaceRunSession {
         guard snapshot.id.grantSnapshotID == grant.workspaceSnapshotID else { throw WorkspaceError.foreignSnapshot }
         let quota = try WorkspaceGrantQuota.authenticatedForSession(authority: authority, handle: handle, grant: grant)
         try store.bindTransferQuota(quota, for: snapshot.id)
@@ -33,7 +40,8 @@ package final class WorkspaceRunSession: @unchecked Sendable {
         try lock.withLock {
             guard self.runtimeID == nil, flow == nil, !adopted else { throw WorkspaceTransferError.rejected }
             let flow = try store.transferFlow(for: snapshot.id)
-            self.runtimeID = runtimeID; self.flow = flow
+            self.runtimeID = runtimeID
+            self.flow = flow
         }
     }
     /// Input bytes belong to the caller's verified VZ connection. Every received
@@ -50,9 +58,10 @@ package final class WorkspaceRunSession: @unchecked Sendable {
     package func sealAndAdopt(after stopped: BusinessVMStopReport) throws -> WorkspaceReview {
         try lock.withLock {
             guard !adopted, let runtimeID, stopped.runtimeID == runtimeID,
-                  stopped.runID == handle.runID, stopped.epoch == handle.installedEpoch,
-                  stopped.actualStopped, stopped.callbacksSettled,
-                  let flow, flow.completed else { throw WorkspaceTransferError.rejected }
+                stopped.runID == handle.runID, stopped.epoch == handle.installedEpoch,
+                stopped.actualStopped, stopped.callbacksSettled,
+                let flow, flow.completed
+            else { throw WorkspaceTransferError.rejected }
             let result = try flow.receiver.snapshot()
             _ = try store.acceptTransfer(result, for: snapshot.id)
             adopted = true
@@ -75,19 +84,28 @@ package final class WorkspaceRunSession: @unchecked Sendable {
             try store.exportReviewed(review, toNewDirectory: destination)
         }
     }
-    package func exportReviewedAfterStop(_ review: WorkspaceReview, toNewDirectory destination: String,
-                                        actionCancellation: WorkspaceExportCancellation) throws {
+    package func exportReviewedAfterStop(
+        _ review: WorkspaceReview, toNewDirectory destination: String,
+        actionCancellation: WorkspaceExportCancellation
+    ) throws {
         try lock.withLock {
             guard adopted else { throw WorkspaceTransferError.rejected }
-            try store.exportReviewedAfterStop(review, toNewDirectory: destination, actionCancellation: actionCancellation)
+            try store.exportReviewedAfterStop(
+                review, toNewDirectory: destination, actionCancellation: actionCancellation)
         }
     }
     /// The cancellation latch is independent of potentially long preparation or
     /// fsync work. Late settlement cannot restore it or release capacity twice.
-    package func cancel() { handle.lifecycle.terminate(.stopped); task.cancel() }
+    package func cancel() {
+        handle.lifecycle.terminate(.stopped)
+        task.cancel()
+    }
     /// Call after the owned transfer callback/task has ended. This releases only
     /// the receiver's retained bytes, never committed or orphaned disk charges.
     package func discardTransfer() {
-        lock.withLock { flow?.receiver.stop(); flow = nil }
+        lock.withLock {
+            flow?.receiver.stop()
+            flow = nil
+        }
     }
 }

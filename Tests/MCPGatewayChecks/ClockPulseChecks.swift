@@ -1,7 +1,7 @@
 import Foundation
-import SharedClockSupport
-import SandboxHost
 import SandboxContracts
+import SandboxHost
+import SharedClockSupport
 
 /// One expired sample, then valid samples; never mutates the system clock.
 /// Anchors are actual shared-now calls in HostMCPGateway/AuthorizationController:
@@ -14,17 +14,24 @@ func clockPulseChecks(_ port: UInt16, _ token: String) async throws {
         for position in 1...positions {
             let name = "pulse-" + operation + "-" + String(position)
             try phase(name)
-            let clock = PulseClock(); let id = UUID(), account = UUID()
-            let audit = Audit(); let credentials = Credentials(token, audit)
-            let connection = try HostMCPConnection.testOnlyLoopback(connectionID: id, accountID: account, port: port, provider: credentials)
+            let clock = PulseClock()
+            let id = UUID()
+            let account = UUID()
+            let audit = Audit()
+            let credentials = Credentials(token, audit)
+            let connection = try HostMCPConnection.testOnlyLoopback(
+                connectionID: id, accountID: account, port: port, provider: credentials)
             let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, clock: clock.source)
             let handle = try await gateway.install(grant: boundedGrant(id, at: clock.base))
-            let pending = operation == "propose" ? nil : try await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))
+            let pending =
+                operation == "propose"
+                ? nil : try await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))
             clock.arm(position)
             var errorLabel = "none"
             do {
                 switch operation {
-                case "propose": _ = try await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))
+                case "propose":
+                    _ = try await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))
                 case "approve": _ = try await gateway.hostApprove(handle: handle, proposal: pending!)
                 default: try await gateway.hostDeny(handle: handle, proposal: pending!)
                 }
@@ -41,9 +48,12 @@ func clockPulseChecks(_ port: UInt16, _ token: String) async throws {
             let auditExpired = audit.snapshot.contains { $0.time >= clock.base.addingTimeInterval(900) }
             var repaired = false
             if !latched {
-                repaired = (try? await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))) != nil
+                repaired =
+                    (try? await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))) != nil
             }
-            output("CLOCK \(name) samples=\(samples) fired=\(fired) latched=\(latched) repaired=\(repaired) audit_expired=\(auditExpired) error=\(errorLabel) reads=\(credentials.count)")
+            output(
+                "CLOCK \(name) samples=\(samples) fired=\(fired) latched=\(latched) repaired=\(repaired) audit_expired=\(auditExpired) error=\(errorLabel) reads=\(credentials.count)"
+            )
             try check(fired, "pulse anchor not reached")
             try check(credentials.count == 0, "control pulse read credentials")
             try check(latched && !repaired, "pulse sampled expiry did not latch")

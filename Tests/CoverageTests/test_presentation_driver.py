@@ -3,7 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-spec = importlib.util.spec_from_file_location("presentation_driver", Path(__file__).resolve().parents[1] / "PresentationTests/run.py")
+spec = importlib.util.spec_from_file_location(
+    "presentation_driver", Path(__file__).resolve().parents[1] / "PresentationTests/run.py"
+)
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
 

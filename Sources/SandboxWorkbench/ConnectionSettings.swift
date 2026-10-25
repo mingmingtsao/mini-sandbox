@@ -1,5 +1,5 @@
-import Foundation
 import Combine
+import Foundation
 import SandboxHost
 
 /// Synchronous storage boundary. Only detached tasks call its storage methods.
@@ -11,13 +11,17 @@ package protocol FixedModelCredentialStore: ModelCredentialProvider {
 
 package final class KeychainFixedModelStore: FixedModelCredentialStore, @unchecked Sendable {
     private let provider: KeychainModelCredentialProvider
-    package init(provider: KeychainModelCredentialProvider = KeychainModelCredentialProvider()) { self.provider = provider }
+    package init(provider: KeychainModelCredentialProvider = KeychainModelCredentialProvider()) {
+        self.provider = provider
+    }
     package func credential(for model: FixedModel) throws -> String { try provider.credential(for: model) }
     package func save(_ value: String) throws { try provider.setCredential(value) }
     package func delete() throws { try provider.remove() }
     package func check() throws -> Bool {
-        do { _ = try provider.credential(for: .deepSeekFlash); return true }
-        catch CredentialProviderError.missing { return false }
+        do {
+            _ = try provider.credential(for: .deepSeekFlash)
+            return true
+        } catch CredentialProviderError.missing { return false }
     }
 }
 
@@ -29,7 +33,8 @@ package struct FixedModelConnectionConfiguration: Equatable, Sendable {
     package let accountBindingVersion: UInt64
     package let routeVersion: UInt64
     package func connection(provider: any ModelCredentialProvider) -> HostModelConnection {
-        HostModelConnection(connectionID: connectionID, accountID: accountID,
+        HostModelConnection(
+            connectionID: connectionID, accountID: accountID,
             accountBindingVersion: accountBindingVersion, routeVersion: routeVersion,
             model: .deepSeekFlash, protocol: .anthropic, credentialProvider: provider)
     }
@@ -55,21 +60,21 @@ package struct ModelConfigurationRetirement: Sendable {
     private let connectionID = UUID(), accountID = UUID()
     private var version: UInt64 = 0
     private var storageTask: Task<Bool, Error>?
-#if DEBUG
-    package var storageStartBarrier: (@Sendable () async -> Void)?
-#endif
+    #if DEBUG
+        package var storageStartBarrier: (@Sendable () async -> Void)?
+    #endif
     package var invalidate: (() throws -> ModelConfigurationRetirement)?
     package var publish: ((FixedModelConnectionConfiguration, any ModelCredentialProvider) throws -> Void)?
     package var willClose: (() -> Void)?
     package init(store: any FixedModelCredentialStore) { self.store = store }
-#if SANDBOX_TEST_FIXTURES
-    package func installLocalFixture(_ configuration: FixedModelConnectionConfiguration) throws {
-        guard self.configuration == nil, !isBusy, !isClosed else { throw CredentialProviderError.unavailable }
-        isLocalFixture = true
-        self.configuration = configuration
-        status = "Local fixture · fixed 127.0.0.1 provider · public fake canary · no Keychain"
-    }
-#endif
+    #if SANDBOX_TEST_FIXTURES
+        package func installLocalFixture(_ configuration: FixedModelConnectionConfiguration) throws {
+            guard self.configuration == nil, !isBusy, !isClosed else { throw CredentialProviderError.unavailable }
+            isLocalFixture = true
+            self.configuration = configuration
+            status = "Local fixture · fixed 127.0.0.1 provider · public fake canary · no Keychain"
+        }
+    #endif
     package func close() {
         guard !isClosed else { return }
         isClosed = true
@@ -81,26 +86,39 @@ package struct ModelConfigurationRetirement: Sendable {
     }
     package func checkStoredCredential() async {
         let store = store
-        await perform({ try store.check() }, success: "Stored credential available for future runs. Provider not tested.")
+        await perform(
+            { try store.check() }, success: "Stored credential available for future runs. Provider not tested.")
     }
     package func deleteStoredCredential() async {
         let store = store
-        await perform({ try store.delete(); return false }, success: "Deleted. Routing unavailable.")
+        await perform(
+            {
+                try store.delete()
+                return false
+            }, success: "Deleted. Routing unavailable.")
     }
     package func save(_ value: String) async {
         guard !isBusy, !isClosed, !isLocalFixture else { return }
         guard !value.isEmpty, value.utf8.count <= 16 * 1024,
-              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else {
             status = "Invalid credential input. Existing configuration unchanged."
             return
         }
         let store = store
-        await perform({ try store.save(value); return true }, success: "Saved for future runs. No approval or provider test performed.")
+        await perform(
+            {
+                try store.save(value)
+                return true
+            }, success: "Saved for future runs. No approval or provider test performed.")
     }
     private func perform(_ operation: @escaping @Sendable () throws -> Bool, success: String) async {
         guard !isBusy, !isClosed, !isLocalFixture else { return }
         isBusy = true
-        defer { isBusy = false; storageTask = nil }
+        defer {
+            isBusy = false
+            storageTask = nil
+        }
         configuration = nil
         status = "Keychain operation in progress. Routing unavailable; Stop and Quit remain available."
         do {
@@ -109,21 +127,25 @@ package struct ModelConfigurationRetirement: Sendable {
             let retired = try invalidate()
             try await retired.revoke()
             guard !isClosed else { return }
-#if DEBUG
-            let barrier = storageStartBarrier
-#endif
+            #if DEBUG
+                let barrier = storageStartBarrier
+            #endif
             let task = Task.detached {
-#if DEBUG
-                if let barrier { await barrier() }
-#endif
+                #if DEBUG
+                    if let barrier { await barrier() }
+                #endif
                 try Task.checkCancellation()
                 return try operation()
             }
             storageTask = task
             let available = try await task.value
             guard !isClosed else { return }
-            guard available else { status = "No stored credential. Routing unavailable."; return }
-            let configuration = FixedModelConnectionConfiguration(connectionID: connectionID, accountID: accountID,
+            guard available else {
+                status = "No stored credential. Routing unavailable."
+                return
+            }
+            let configuration = FixedModelConnectionConfiguration(
+                connectionID: connectionID, accountID: accountID,
                 accountBindingVersion: version, routeVersion: version)
             try publish(configuration, store)
             self.configuration = configuration

@@ -1,4 +1,5 @@
 """Malformed archive regressions; no guest execution or external inputs."""
+
 import gzip
 import hashlib
 
@@ -30,11 +31,11 @@ def alter(raw, target, *, mode=None, major=None, minor=None, data=None, name=Non
     """Alter actual newc records, bypassing the production writer's checks."""
     out, offset = bytearray(), 0
     while offset + 110 <= len(raw):
-        fields = [int(raw[offset+6+i*8:offset+14+i*8], 16) for i in range(13)]
+        fields = [int(raw[offset + 6 + i * 8 : offset + 14 + i * 8], 16) for i in range(13)]
         start = offset + 110
-        original = raw[start:start+fields[11]-1].decode('ascii')
+        original = raw[start : start + fields[11] - 1].decode('ascii')
         start = (start + fields[11] + 3) & ~3
-        payload = raw[start:start+fields[6]]
+        payload = raw[start : start + fields[6]]
         offset = (start + fields[6] + 3) & ~3
         if original == target:
             for index, value in ((1, mode), (9, major), (10, minor)):
@@ -60,17 +61,28 @@ def alter(raw, target, *, mode=None, major=None, minor=None, data=None, name=Non
 class BundleInputTest(unittest.TestCase):
     def setUp(self):
         self.probe = elf()
-        self.entries = {n: (stat.S_IFREG | 0o755, self.probe, 0, 0) for n in
-                        ('bin/busybox', 'bin/diagnostic-probe', 'lib/ld-musl-aarch64.so.1')}
-        self.entries.update({'init': (stat.S_IFREG | 0o755, b'#!/bin/sh\n', 0, 0),
-                             'bin/sh': (stat.S_IFLNK | 0o777, b'busybox', 0, 0),
-                             'lib/libc.musl-aarch64.so.1': (stat.S_IFLNK | 0o777, b'ld-musl-aarch64.so.1', 0, 0),
-                             'dev/console': (stat.S_IFCHR | 0o600, b'', 5, 1),
-                             'dev/null': (stat.S_IFCHR | 0o600, b'', 1, 3)})
+        self.entries = {
+            n: (stat.S_IFREG | 0o755, self.probe, 0, 0)
+            for n in ('bin/busybox', 'bin/diagnostic-probe', 'lib/ld-musl-aarch64.so.1')
+        }
+        self.entries.update(
+            {
+                'init': (stat.S_IFREG | 0o755, b'#!/bin/sh\n', 0, 0),
+                'bin/sh': (stat.S_IFLNK | 0o777, b'busybox', 0, 0),
+                'lib/libc.musl-aarch64.so.1': (stat.S_IFLNK | 0o777, b'ld-musl-aarch64.so.1', 0, 0),
+                'dev/console': (stat.S_IFCHR | 0o600, b'', 5, 1),
+                'dev/null': (stat.S_IFCHR | 0o600, b'', 1, 3),
+            }
+        )
         for name in ('proc', 'sys', 'dev'):
             self.entries[name] = (stat.S_IFDIR | 0o755, b'', 0, 0)
         for name in ('vsock', 'vmw_vsock_virtio_transport_common', 'vmw_vsock_virtio_transport'):
-            self.entries['lib/modules/' + build.KERNEL_RELEASE + '/' + name + '.ko'] = (stat.S_IFREG | 0o644, elf(), 0, 0)
+            self.entries['lib/modules/' + build.KERNEL_RELEASE + '/' + name + '.ko'] = (
+                stat.S_IFREG | 0o644,
+                elf(),
+                0,
+                0,
+            )
         self.raw = build.newc(self.entries)
 
     def inspect_raw(self, raw):
@@ -83,7 +95,10 @@ class BundleInputTest(unittest.TestCase):
             (path / 'Image').write_bytes(kernel)
             (path / 'initramfs.cpio.gz').write_bytes(compressed)
             (path / 'bundle.json').write_text(json.dumps(manifest))
-            with mock.patch.object(build, 'RAW_HASH', hashlib.sha256(kernel).hexdigest()), mock.patch.object(build, 'RAW_SIZE', len(kernel)):
+            with (
+                mock.patch.object(build, 'RAW_HASH', hashlib.sha256(kernel).hexdigest()),
+                mock.patch.object(build, 'RAW_SIZE', len(kernel)),
+            ):
                 return inspect_bundle.inspect(path)
 
     def test_full_inspect_rejects_block_device_init_rehashed(self):
@@ -99,14 +114,26 @@ class BundleInputTest(unittest.TestCase):
 
     def test_cpio_types_devices_payloads_and_paths(self):
         cases = [('init', {'mode': kind | 0o755}) for kind in (0, stat.S_IFBLK, stat.S_IFIFO, stat.S_IFSOCK)]
-        cases += [('dev/console', change) for change in (
-            {'major': 1}, {'minor': 3}, {'name': 'dev/foreign'}, {'data': b'x'},
-            {'mode': stat.S_IFREG | 0o600, 'major': 0, 'minor': 0})]
-        cases += [('init', {'major': 1}), ('proc', {'data': b'x'}),
-                  ('proc', {'mode': stat.S_IFREG | 0o755}),
-                  ('init', {'name': '../evil'}), ('bin/sh', {'data': b'../evil'}),
-                  ('bin/sh', {'mode': stat.S_IFREG | 0o755}),
-                  ('bin/sh', {'data': b'other'}), ('bin/sh', {'name': 'bin/other'})]
+        cases += [
+            ('dev/console', change)
+            for change in (
+                {'major': 1},
+                {'minor': 3},
+                {'name': 'dev/foreign'},
+                {'data': b'x'},
+                {'mode': stat.S_IFREG | 0o600, 'major': 0, 'minor': 0},
+            )
+        ]
+        cases += [
+            ('init', {'major': 1}),
+            ('proc', {'data': b'x'}),
+            ('proc', {'mode': stat.S_IFREG | 0o755}),
+            ('init', {'name': '../evil'}),
+            ('bin/sh', {'data': b'../evil'}),
+            ('bin/sh', {'mode': stat.S_IFREG | 0o755}),
+            ('bin/sh', {'data': b'other'}),
+            ('bin/sh', {'name': 'bin/other'}),
+        ]
         for name, change in cases:
             with self.subTest(name=name, change=change), self.assertRaises(ValueError):
                 self.inspect_raw(alter(self.raw, name, **change))
@@ -123,26 +150,45 @@ class BundleInputTest(unittest.TestCase):
 
     def test_module_vermagic_and_depends_metadata(self):
         prefix = '/modules/' + build.KERNEL_RELEASE + '/'
-        names = ['kernel/net/vmw_vsock/' + n + '.ko' for n in
-                 ('vsock', 'vmw_vsock_virtio_transport_common', 'vmw_vsock_virtio_transport')]
+        names = [
+            'kernel/net/vmw_vsock/' + n + '.ko'
+            for n in ('vsock', 'vmw_vsock_virtio_transport_common', 'vmw_vsock_virtio_transport')
+        ]
+
         class Entry:
             mode = stat.S_IFREG | 0o644
+
             def __init__(self, path, data):
                 self.path, self.data, self.size = path, data, len(data)
+
             def read_bytes(self):
                 return self.data
+
         class Image(list):
-            def __enter__(self): return self
-            def __exit__(self, *args): pass
-        for vermagic, depends, error in ((build.VERMAGIC, '', None), ('wrong', '', 'vermagic'),
-                                         (build.VERMAGIC, 'missing', 'dependency metadata')):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        for vermagic, depends, error in (
+            (build.VERMAGIC, '', None),
+            ('wrong', '', 'vermagic'),
+            (build.VERMAGIC, 'missing', 'dependency metadata'),
+        ):
             metadata = b'\0vermagic=' + vermagic.encode() + b'\0depends=' + depends.encode() + b'\0'
-            image = Image([Entry(prefix + 'modules.dep', ''.join(n + ':\n' for n in names).encode())] +
-                          [Entry(prefix + n, elf() + metadata) for n in names])
+            image = Image(
+                [Entry(prefix + 'modules.dep', ''.join(n + ':\n' for n in names).encode())]
+                + [Entry(prefix + n, elf() + metadata) for n in names]
+            )
             library = types.SimpleNamespace(SquashFsImage=types.SimpleNamespace(from_bytes=lambda _: image))
-            with mock.patch.dict(sys.modules, {'PySquashfsImage': library}), self.subTest(vermagic=vermagic, depends=depends):
+            with (
+                mock.patch.dict(sys.modules, {'PySquashfsImage': library}),
+                self.subTest(vermagic=vermagic, depends=depends),
+            ):
                 if error:
-                    with self.assertRaisesRegex(ValueError, error): build.load_modules(b'hsqs' + bytes(92))
+                    with self.assertRaisesRegex(ValueError, error):
+                        build.load_modules(b'hsqs' + bytes(92))
                 else:
                     self.assertEqual(set(build.load_modules(b'hsqs' + bytes(92))), set(names))
 
@@ -151,13 +197,17 @@ class BundleInputTest(unittest.TestCase):
             path = pathlib.Path(td) / 'file'
             path.write_bytes(b'abc')
             self.assertEqual(build.read_regular(path, 3), b'abc')
-            with self.assertRaises(ValueError): build.read_regular(path, 2)
-            with self.assertRaises(ValueError): build.read_regular(path.parent, 8192)
+            with self.assertRaises(ValueError):
+                build.read_regular(path, 2)
+            with self.assertRaises(ValueError):
+                build.read_regular(path.parent, 8192)
             link = path.parent / 'link'
             link.symlink_to(path)
-            with self.assertRaises(ValueError): build.read_regular(link, 8192)
+            with self.assertRaises(ValueError):
+                build.read_regular(link, 8192)
             path.write_bytes(b'')
-            with self.assertRaises(ValueError): build.read_regular(path, 8192)
+            with self.assertRaises(ValueError):
+                build.read_regular(path, 8192)
 
 
 if __name__ == '__main__':

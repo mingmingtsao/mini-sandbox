@@ -10,12 +10,18 @@ package struct ClaudeRequestSelectors: Codable, Equatable, Sendable {
     package let version: String
     package let beta: String
     package let directBrowserAccess: String
-    package static let pinned = Self(method: "POST", path: "/v1/messages", query: "beta=true",
+    package static let pinned = Self(
+        method: "POST", path: "/v1/messages", query: "beta=true",
         version: "2023-06-01",
         beta: "claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24", directBrowserAccess: "true")
-    private init(method: String, path: String, query: String, version: String, beta: String, directBrowserAccess: String) {
-        self.method = method; self.path = path; self.query = query
-        self.version = version; self.beta = beta
+    private init(
+        method: String, path: String, query: String, version: String, beta: String, directBrowserAccess: String
+    ) {
+        self.method = method
+        self.path = path
+        self.query = query
+        self.version = version
+        self.beta = beta
         self.directBrowserAccess = directBrowserAccess
     }
     package func validate() throws {

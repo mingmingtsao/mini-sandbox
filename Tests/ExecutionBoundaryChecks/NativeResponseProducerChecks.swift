@@ -6,8 +6,20 @@ final class NativeHeldState: @unchecked Sendable {
     private let lock = NSLock()
     private var tail: (() -> Void)?
     private var arrivals = 0
-    func install(_ value: @escaping () -> Void) { lock.withLock { arrivals += 1; tail = value } }
-    func finish() { let value = lock.withLock { let value = tail; tail = nil; return value }; value?() }
+    func install(_ value: @escaping () -> Void) {
+        lock.withLock {
+            arrivals += 1
+            tail = value
+        }
+    }
+    func finish() {
+        let value = lock.withLock {
+            let value = tail
+            tail = nil
+            return value
+        }
+        value?()
+    }
     func cancel() { lock.withLock { tail = nil } }
     var count: Int { lock.withLock { arrivals } }
 }
@@ -22,7 +34,11 @@ final class NativeHeldProtocol: URLProtocol {
                 for event in events.dropFirst(3) { client?.urlProtocol(self, didLoad: event) }
                 client?.urlProtocolDidFinishLoading(self)
             }
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"])!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(
+                self,
+                didReceive: HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "text/event-stream"])!, cacheStoragePolicy: .notAllowed)
             for event in events.prefix(3) { client?.urlProtocol(self, didLoad: event) }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }

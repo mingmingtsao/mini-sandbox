@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Inspect diagnostic bundles without extracting/running their Linux contents."""
+
 import hashlib
 import json
-import pathlib
 import stat
 import sys
 import zlib
@@ -15,25 +15,25 @@ SYMLINKS = {'bin/sh': b'busybox', 'lib/libc.musl-aarch64.so.1': b'ld-musl-aarch6
 def parse_newc(raw):
     entries, offset = {}, 0
     while offset + 110 <= len(raw):
-        header = raw[offset:offset + 110]
+        header = raw[offset : offset + 110]
         if header[:6] != b'070701':
             raise ValueError('invalid newc header')
         try:
-            fields = [int(header[6 + i*8:14 + i*8], 16) for i in range(13)]
+            fields = [int(header[6 + i * 8 : 14 + i * 8], 16) for i in range(13)]
         except ValueError as exc:
             raise ValueError('invalid newc integer') from exc
         mode, size, namesize = fields[1], fields[6], fields[11]
         offset += 110
         if not 1 <= namesize <= 4096 or namesize > len(raw) - offset:
             raise ValueError('invalid newc name bounds')
-        namebytes = raw[offset:offset + namesize]
+        namebytes = raw[offset : offset + namesize]
         if namebytes[-1:] != b'\0' or b'\0' in namebytes[:-1]:
             raise ValueError('invalid newc name terminator')
         name = namebytes[:-1].decode('ascii')
         offset = (offset + namesize + 3) & ~3
         if size > len(raw) - offset:
             raise ValueError('invalid newc data bounds')
-        data = raw[offset:offset + size]
+        data = raw[offset : offset + size]
         offset = (offset + size + 3) & ~3
         if name == 'TRAILER!!!':
             if size or any(raw[offset:]):
@@ -62,17 +62,27 @@ def parse_newc(raw):
 def inspect(path):
     path = build.no_symlinks(path)
     m = json.loads(build.read_regular(path / 'bundle.json', 8192))
-    expected = {'schemaVersion','kernelFile','kernelSHA256','initramfsFile','initramfsSHA256','probeSHA256','protocolVersion','workloadSHA256','kernelRelease'}
+    expected = {
+        'schemaVersion',
+        'kernelFile',
+        'kernelSHA256',
+        'initramfsFile',
+        'initramfsSHA256',
+        'probeSHA256',
+        'protocolVersion',
+        'workloadSHA256',
+        'kernelRelease',
+    }
     if set(m) != expected or m['kernelFile'] != 'Image' or m['initramfsFile'] != 'initramfs.cpio.gz':
         raise ValueError('invalid fixed bundle schema')
     if m['schemaVersion'] != 1 or m['protocolVersion'] != 1 or m['kernelRelease'] != build.KERNEL_RELEASE:
         raise ValueError('unsupported bundle version')
     kernel = build.read_source(path / 'Image', m['kernelSHA256'], build.RAW_SIZE)
     build.checked_hash(kernel, build.RAW_HASH)
-    compressed = build.read_source(path / 'initramfs.cpio.gz', m['initramfsSHA256'], 64*1024*1024)
+    compressed = build.read_source(path / 'initramfs.cpio.gz', m['initramfsSHA256'], 64 * 1024 * 1024)
     decoder = zlib.decompressobj(31)
-    raw = decoder.decompress(compressed, 64*1024*1024 + 1)
-    if len(raw) > 64*1024*1024 or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+    raw = decoder.decompress(compressed, 64 * 1024 * 1024 + 1)
+    if len(raw) > 64 * 1024 * 1024 or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
         raise ValueError('invalid bounded initramfs gzip')
     entries = parse_newc(raw)
     executable = {'init', 'bin/busybox', 'bin/diagnostic-probe', 'lib/ld-musl-aarch64.so.1'}
@@ -91,8 +101,20 @@ def inspect(path):
     modules = [n for n in entries if n.endswith('.ko')]
     if len(modules) != 3:
         raise ValueError('unexpected module closure')
-    return {'manifest': m, 'entries': [{'name': n, 'bytes': len(v['data']), 'mode': oct(v['mode']), 'sha256': hashlib.sha256(v['data']).hexdigest()} for n, v in entries.items()],
-            'probeELF': 'ELF64 little-endian AArch64, no PT_INTERP/PT_DYNAMIC', 'vmLaunched': False}
+    return {
+        'manifest': m,
+        'entries': [
+            {
+                'name': n,
+                'bytes': len(v['data']),
+                'mode': oct(v['mode']),
+                'sha256': hashlib.sha256(v['data']).hexdigest(),
+            }
+            for n, v in entries.items()
+        ],
+        'probeELF': 'ELF64 little-endian AArch64, no PT_INTERP/PT_DYNAMIC',
+        'vmLaunched': False,
+    }
 
 
 def main():

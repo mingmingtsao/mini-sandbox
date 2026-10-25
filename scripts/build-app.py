@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a locally runnable macOS app; never recursively delete output paths."""
+
 import argparse
 import hashlib
 import json
@@ -19,8 +20,11 @@ VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 VARIANTS = {
     "release": {"app": "MiniSandbox.app", "bundle_id": "dev.mini-sandbox.app", "name": "Mini Sandbox"},
     # Test-only composition: fixed 127.0.0.1 scripted provider, never Keychain.
-    "local-fixture": {"app": "MiniSandboxFixture.app", "bundle_id": "dev.mini-sandbox.app.local-fixture",
-                      "name": "Mini Sandbox Local Fixture"},
+    "local-fixture": {
+        "app": "MiniSandboxFixture.app",
+        "bundle_id": "dev.mini-sandbox.app.local-fixture",
+        "name": "Mini Sandbox Local Fixture",
+    },
 }
 
 
@@ -84,8 +88,11 @@ def main() -> None:
     parser.add_argument("--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--sign-identity", default="-", help="codesign identity; default is local ad-hoc signing")
     parser.add_argument("--build-number", type=build_number, default=1, help="CFBundleVersion; default 1")
-    parser.add_argument("--test-fixtures", action="store_true",
-                        help="build the SANDBOX_TEST_FIXTURES local-fixture app into dist/MiniSandboxFixture.app")
+    parser.add_argument(
+        "--test-fixtures",
+        action="store_true",
+        help="build the SANDBOX_TEST_FIXTURES local-fixture app into dist/MiniSandboxFixture.app",
+    )
     args = parser.parse_args()
     variant_name = "local-fixture" if args.test_fixtures else "release"
     variant = VARIANTS[variant_name]
@@ -102,8 +109,11 @@ def main() -> None:
     previous_identity = check_existing(app)
 
     run("swift", "build", "-c", args.configuration, *build_args, *define_args, "--product", "MiniSandbox")
-    bin_path = Path(subprocess.check_output(["swift", "build", "-c", args.configuration, *build_args, "--show-bin-path"],
-                                            cwd=ROOT, text=True).strip())
+    bin_path = Path(
+        subprocess.check_output(
+            ["swift", "build", "-c", args.configuration, *build_args, "--show-bin-path"], cwd=ROOT, text=True
+        ).strip()
+    )
     binary = bin_path / "MiniSandbox"
     if not binary.is_file() or binary.is_symlink():
         raise RuntimeError("Missing or symlinked build executable")
@@ -117,21 +127,28 @@ def main() -> None:
     shutil.copy2(binary, staging / "Contents/MacOS/MiniSandbox")
     os.chmod(staging / "Contents/MacOS/MiniSandbox", 0o755)
     info = {
-        "CFBundleExecutable": "MiniSandbox", "CFBundleIdentifier": variant["bundle_id"],
-        "CFBundleName": variant["name"], "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": version, "CFBundleVersion": str(args.build_number),
-        "LSMinimumSystemVersion": "14.0", "NSHighResolutionCapable": True,
-        "NSPrincipalClass": "NSApplication"
+        "CFBundleExecutable": "MiniSandbox",
+        "CFBundleIdentifier": variant["bundle_id"],
+        "CFBundleName": variant["name"],
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": str(args.build_number),
+        "LSMinimumSystemVersion": "14.0",
+        "NSHighResolutionCapable": True,
+        "NSPrincipalClass": "NSApplication",
     }
     with (staging / "Contents/Info.plist").open("xb") as stream:
         plistlib.dump(info, stream)
     (staging / "Contents/Resources" / MARKER).write_text(json.dumps(ownership(app), sort_keys=True))
     # Launch Services needs traversal; group/world write remains prohibited.
     os.chmod(staging, 0o755)
-    run("codesign", "--force", "--sign", args.sign_identity,
-        "--entitlements", str(ENTITLEMENTS), str(staging))
+    run("codesign", "--force", "--sign", args.sign_identity, "--entitlements", str(ENTITLEMENTS), str(staging))
     run("codesign", "--verify", "--strict", "--verbose=2", str(staging))
-    if safe_directory(ROOT) != root_identity or safe_directory(dist) != dist_identity or safe_directory(staging) != staging_identity:
+    if (
+        safe_directory(ROOT) != root_identity
+        or safe_directory(dist) != dist_identity
+        or safe_directory(staging) != staging_identity
+    ):
         raise RuntimeError("Output directory changed while signing; staged bundle preserved")
     if check_existing(app) != previous_identity:
         raise RuntimeError("Existing output changed while building; bundles preserved")
@@ -152,12 +169,22 @@ def main() -> None:
             backup.rename(app)
         raise
     digest = hashlib.sha256((app / "Contents/MacOS/MiniSandbox").read_bytes()).hexdigest()
-    print(json.dumps({"app": str(app), "executable_sha256": digest, "variant": variant_name,
-                      "bundle_identifier": variant["bundle_id"], "version": version,
-                      "build_number": args.build_number,
-                      "previous_bundle": str(backup) if backup else None,
-                      "signing": "ad-hoc-local-only" if args.sign_identity == "-" else "specified-identity",
-                      "notarized": False}, indent=2))
+    print(
+        json.dumps(
+            {
+                "app": str(app),
+                "executable_sha256": digest,
+                "variant": variant_name,
+                "bundle_identifier": variant["bundle_id"],
+                "version": version,
+                "build_number": args.build_number,
+                "previous_bundle": str(backup) if backup else None,
+                "signing": "ad-hoc-local-only" if args.sign_identity == "-" else "specified-identity",
+                "notarized": False,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

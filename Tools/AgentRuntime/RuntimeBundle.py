@@ -2,25 +2,40 @@
 Mirrors diagnostic validation without changing diagnostic APIs/budgets.
 Every path is read once; all later image work consumes these validated bytes.
 """
-import json, stat, zlib
+
+import json
+import stat
+import zlib
 import image
 from inspect_bundle import DEVICES, SYMLINKS, parse_newc
-build=image.legacy
+
+build = image.legacy
+
 
 def validated_base(path):
     path = build.no_symlinks(path)
     m = json.loads(build.read_regular(path / 'bundle.json', 8192))
-    expected = {'schemaVersion','kernelFile','kernelSHA256','initramfsFile','initramfsSHA256','probeSHA256','protocolVersion','workloadSHA256','kernelRelease'}
+    expected = {
+        'schemaVersion',
+        'kernelFile',
+        'kernelSHA256',
+        'initramfsFile',
+        'initramfsSHA256',
+        'probeSHA256',
+        'protocolVersion',
+        'workloadSHA256',
+        'kernelRelease',
+    }
     if set(m) != expected or m['kernelFile'] != 'Image' or m['initramfsFile'] != 'initramfs.cpio.gz':
         raise ValueError('invalid fixed bundle schema')
     if m['schemaVersion'] != 1 or m['protocolVersion'] != 1 or m['kernelRelease'] != build.KERNEL_RELEASE:
         raise ValueError('unsupported bundle version')
     kernel = build.read_source(path / 'Image', m['kernelSHA256'], build.RAW_SIZE)
     build.checked_hash(kernel, build.RAW_HASH)
-    compressed = build.read_source(path / 'initramfs.cpio.gz', m['initramfsSHA256'], 64*1024*1024)
+    compressed = build.read_source(path / 'initramfs.cpio.gz', m['initramfsSHA256'], 64 * 1024 * 1024)
     decoder = zlib.decompressobj(31)
-    raw = decoder.decompress(compressed, 64*1024*1024 + 1)
-    if len(raw) > 64*1024*1024 or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+    raw = decoder.decompress(compressed, 64 * 1024 * 1024 + 1)
+    if len(raw) > 64 * 1024 * 1024 or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
         raise ValueError('invalid bounded initramfs gzip')
     entries = parse_newc(raw)
     executable = {'init', 'bin/busybox', 'bin/diagnostic-probe', 'lib/ld-musl-aarch64.so.1'}

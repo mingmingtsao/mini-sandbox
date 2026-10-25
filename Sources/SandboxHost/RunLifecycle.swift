@@ -17,8 +17,10 @@ package struct RunEffectScope: Sendable {
     let connectionRevision: UInt64
     let runHandle: HostRunHandle?
     init(generation: UInt64, connectionID: UUID?, connectionRevision: UInt64, runHandle: HostRunHandle? = nil) {
-        self.generation = generation; self.connectionID = connectionID
-        self.connectionRevision = connectionRevision; self.runHandle = runHandle
+        self.generation = generation
+        self.connectionID = connectionID
+        self.connectionRevision = connectionRevision
+        self.runHandle = runHandle
     }
 }
 
@@ -27,8 +29,20 @@ enum RunPreparedEffect: Sendable {
     case model(ModelPreparedOperation)
     case mcp(MCPPreparedOperation)
     case businessVM(BusinessVMPreparedStart)
-    func acquire() { switch self { case .model(let op): op.acquireForStart(); case .mcp(let op): op.acquireForStart(); case .businessVM(let op): op.acquireForStart() } }
-    func release() { switch self { case .model(let op): op.releaseForStart(); case .mcp(let op): op.releaseForStart(); case .businessVM(let op): op.releaseForStart() } }
+    func acquire() {
+        switch self {
+        case .model(let op): op.acquireForStart()
+        case .mcp(let op): op.acquireForStart()
+        case .businessVM(let op): op.acquireForStart()
+        }
+    }
+    func release() {
+        switch self {
+        case .model(let op): op.releaseForStart()
+        case .mcp(let op): op.releaseForStart()
+        case .businessVM(let op): op.releaseForStart()
+        }
+    }
     func validateScope(_ scope: RunEffectScope, lifecycle: RunLifecycle) throws {
         switch self {
         case .model(let operation):
@@ -39,17 +53,26 @@ enum RunPreparedEffect: Sendable {
             try operation.validateVMOwner(scope: scope, lifecycle: lifecycle)
         case .businessVM(let operation):
             guard scope.connectionID == nil, scope.runHandle === operation.handle,
-                  operation.handle.lifecycle === lifecycle, operation.generation == scope.generation else {
+                operation.handle.lifecycle === lifecycle, operation.generation == scope.generation
+            else {
                 throw AuthorizationError.wrongRun
             }
         }
     }
     func startLocked() throws {
         try Task.checkCancellation()
-        switch self { case .model(let op): try op.startLocked(); case .mcp(let op): try op.startLocked(); case .businessVM(let op): try op.startLocked() }
+        switch self {
+        case .model(let op): try op.startLocked()
+        case .mcp(let op): try op.startLocked()
+        case .businessVM(let op): try op.startLocked()
+        }
     }
     func cancel() {
-        switch self { case .model(let op): op.cancel(); case .mcp(let op): op.cancel(); case .businessVM(let op): op.cancel() }
+        switch self {
+        case .model(let op): op.cancel()
+        case .mcp(let op): op.cancel()
+        case .businessVM(let op): op.cancel()
+        }
     }
 }
 
@@ -74,24 +97,29 @@ public final class RunLifecycle: @unchecked Sendable {
     private var operations: [UUID: (RunEffectScope, RunPreparedEffect)] = [:]
 
     init(expiresAt: Date, epoch: UInt64, installedAt: Date, clock: RunClock, installedElapsed: Duration? = nil) {
-        self.expiresAt = expiresAt; self.generation = epoch
-        self.highWater = installedAt; self.clock = clock
+        self.expiresAt = expiresAt
+        self.generation = epoch
+        self.highWater = installedAt
+        self.clock = clock
         self.deadline = (installedElapsed ?? clock.elapsed) + .seconds(max(0, expiresAt.timeIntervalSince(installedAt)))
     }
     private func reduce(_ sampledWall: Date, _ sampledMono: Duration) -> RunObservation {
         highWater = max(highWater, sampledWall)
         if status == .active && (highWater >= expiresAt || sampledMono >= deadline) {
-            status = .expired; generation &+= 1
+            status = .expired
+            generation &+= 1
         }
         sequence &+= 1
-        let observation = RunObservation(wallTime: sampledWall, effectiveTime: highWater,
-                              sequence: sequence, generation: generation, status: status)
+        let observation = RunObservation(
+            wallTime: sampledWall, effectiveTime: highWater,
+            sequence: sequence, generation: generation, status: status)
         latestObservation = observation
         return observation
     }
     private func drainTerminal() -> [RunPreparedEffect] {
         guard status != .active else { return [] }
-        let drained = operations.values.map { $0.1 }; operations.removeAll()
+        let drained = operations.values.map { $0.1 }
+        operations.removeAll()
         return drained
     }
     public func observeAndReduce(reason: String) -> RunObservation {
@@ -108,7 +136,10 @@ public final class RunLifecycle: @unchecked Sendable {
     public func terminate(_ terminal: Status) {
         precondition(terminal != .active)
         let cancelled = lock.withLock {
-            if status == .active { status = terminal; generation &+= 1 }
+            if status == .active {
+                status = terminal
+                generation &+= 1
+            }
             return drainTerminal()
         }
         cancelled.forEach { $0.cancel() }
@@ -137,8 +168,11 @@ public final class RunLifecycle: @unchecked Sendable {
         lock.withLock { status == .active && !invalidConnections.contains(id) }
     }
     package func effectScope(connectionID: UUID) -> RunEffectScope {
-        lock.withLock { RunEffectScope(generation: generation, connectionID: connectionID,
-                                      connectionRevision: connectionRevisions[connectionID, default: 0]) }
+        lock.withLock {
+            RunEffectScope(
+                generation: generation, connectionID: connectionID,
+                connectionRevision: connectionRevisions[connectionID, default: 0])
+        }
     }
     /// Immutable run provenance for the closed VM/task consumers. Not a permit:
     /// each start/write validates the actual owner again after taking its locks.
@@ -150,18 +184,25 @@ public final class RunLifecycle: @unchecked Sendable {
         guard status == .active, generation == scope.generation else { throw AuthorizationError.runRevoked }
         if let connectionID = scope.connectionID {
             guard !invalidConnections.contains(connectionID),
-                  connectionRevisions[connectionID, default: 0] == scope.connectionRevision else { throw AuthorizationError.connectionRevoked }
+                connectionRevisions[connectionID, default: 0] == scope.connectionRevision
+            else { throw AuthorizationError.connectionRevoked }
         } else {
             guard let handle = scope.runHandle, handle.lifecycle === self,
-                  handle.installedEpoch == scope.generation else { throw AuthorizationError.wrongRun }
+                handle.installedEpoch == scope.generation
+            else { throw AuthorizationError.wrongRun }
         }
     }
     /// The only gateway start entry: validation, registration and actual resume
     /// share the mutex with terminal/connection invalidation, with no await or Task.
-    func start(_ effect: RunPreparedEffect, id: UUID, scope: RunEffectScope, notBefore: Date, startDeadline: Date) throws {
+    func start(_ effect: RunPreparedEffect, id: UUID, scope: RunEffectScope, notBefore: Date, startDeadline: Date)
+        throws
+    {
         var cancelled: [RunPreparedEffect] = []
         effect.acquire()
-        defer { effect.release(); cancelled.forEach { $0.cancel() } }
+        defer {
+            effect.release()
+            cancelled.forEach { $0.cancel() }
+        }
         try lock.withLock {
             let sample = clock.sample()
             let observation = reduce(sample.wall, sample.elapsed)
@@ -177,7 +218,7 @@ public final class RunLifecycle: @unchecked Sendable {
     }
     func finishEffect(_ id: UUID) {
         let removed = lock.withLock { operations.removeValue(forKey: id) }
-        removed?.1.cancel() // never deinit/cancel unknown cleanup under the lifecycle lock
+        removed?.1.cancel()  // never deinit/cancel unknown cleanup under the lifecycle lock
     }
     func acceptOutput(_ output: ControlledRunOutput) throws -> Bool {
         var cancelled: [RunPreparedEffect] = []
@@ -211,8 +252,9 @@ public final class RunLifecycle: @unchecked Sendable {
             let observation = reduce(sample.wall, sample.elapsed)
             cancelled = drainTerminal()
             guard output.lifecycle === self, output.handle.lifecycle === self,
-                  output.handle.installedEpoch == output.generation,
-                  output.scope.generation == output.generation else { throw AuthorizationError.wrongRun }
+                output.handle.installedEpoch == output.generation,
+                output.scope.generation == output.generation
+            else { throw AuthorizationError.wrongRun }
             if output.scope.connectionID == nil {
                 guard output.scope.runHandle === output.handle else { throw AuthorizationError.wrongRun }
             }
@@ -262,14 +304,16 @@ public final class RunLifecycle: @unchecked Sendable {
             cancelled.forEach { $0.cancel() }
         }
         try effect.prepare()
-        binding.gate.acquireEffect(); workflowOwned = true
+        binding.gate.acquireEffect()
+        workflowOwned = true
         let result = try lock.withLock {
             let sample = clock.sample()
             let observation = reduce(sample.wall, sample.elapsed)
             cancelled = drainTerminal()
             try binding.gate.validateLocked(binding)
             guard let run = binding.run, run.handle.lifecycle === self, run.matches(binding),
-                  run.handle.installedEpoch == run.epoch else { throw AuthorizationError.wrongRun }
+                run.handle.installedEpoch == run.epoch
+            else { throw AuthorizationError.wrongRun }
             guard status == .active, generation == run.epoch else { throw AuthorizationError.runRevoked }
             guard observation.wallTime >= run.notBefore else { throw AuthorizationError.grantNotYetValid }
             try effect.validateOwner()

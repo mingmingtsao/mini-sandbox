@@ -31,7 +31,10 @@ enum RunPreparedEffect: Sendable {
     func release() { switch self { case .model(let op): op.releaseForStart(); case .mcp(let op): op.releaseForStart(); case .businessVM(let op): op.releaseForStart() } }
     func validateScope(_ scope: RunEffectScope, lifecycle: RunLifecycle) throws {
         switch self {
-        case .model, .mcp:
+        case .model(let operation):
+            guard scope.connectionID != nil else { throw AuthorizationError.connectionNotGranted }
+            try operation.validateVMOwner(scope: scope, lifecycle: lifecycle)
+        case .mcp:
             guard scope.connectionID != nil else { throw AuthorizationError.connectionNotGranted }
         case .businessVM(let operation):
             guard scope.connectionID == nil, scope.runHandle === operation.handle,

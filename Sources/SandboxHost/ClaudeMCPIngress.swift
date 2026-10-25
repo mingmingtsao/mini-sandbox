@@ -76,7 +76,7 @@ enum ClaudeMCPProtocol {
               value["jsonrpc"] == .string("2.0"), validID(value["id"]),
               let method = value["method"]?.string, let params = value["params"]?.object,
               let meta = params["_meta"]?.object,
-              Set(meta.keys).isSubset(of: [metaVersion, metaClient, metaCapabilities, "progressToken"]),
+              Set(meta.keys).isSubset(of: [metaVersion, metaClient, metaCapabilities, "progressToken", "claudecode/toolUseId"]),
               meta[metaVersion] == .string(version),
               let info = meta[metaClient]?.object,
               Set(info.keys) == ["name", "title", "version", "description", "websiteUrl"],
@@ -86,6 +86,10 @@ enum ClaudeMCPProtocol {
               info["websiteUrl"] == .string("https://claude.com/claude-code"),
               meta[metaCapabilities] == .object(["roots": .object(["listChanged": .bool(true)]), "elicitation": .object(["form": .object([:]), "url": .object([:])])]),
               meta["progressToken"] == nil || validID(meta["progressToken"]) else { throw HostMCPGatewayError.denied }
+        if let correlation = meta["claudecode/toolUseId"] {
+            guard method == "tools/call", let text = correlation.string, !text.isEmpty, text.utf8.count <= 128,
+                  text.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else { throw HostMCPGatewayError.denied }
+        }
         switch method {
         case "server/discover", "tools/list":
             guard Set(params.keys) == ["_meta"] else { throw HostMCPGatewayError.denied }

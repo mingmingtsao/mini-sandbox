@@ -5,12 +5,17 @@ import SandboxContracts
 
 #if DEBUG || SANDBOX_TEST_FIXTURES
 private func clientJSON(_ method: String, repo: String = "A", write: Bool = false, id: ModelJSON = .integer(7)) -> ModelJSON {
-    let meta: ModelJSON = .object([
+    var meta: ModelJSON = .object([
         ClaudeMCPProtocol.metaVersion: .string(ClaudeMCPProtocol.version),
         ClaudeMCPProtocol.metaClient: .object(["name": .string("claude-code"), "title": .string("Claude Code"),
             "version": .string("2.1.309"), "description": .string("Anthropic's agentic coding tool"),
             "websiteUrl": .string("https://claude.com/claude-code")]),
         ClaudeMCPProtocol.metaCapabilities: .object(["roots": .object(["listChanged": .bool(true)]), "elicitation": .object(["form": .object([:]), "url": .object([:])])])])
+    if method == "tools/call", var fields = meta.object {
+        fields["claudecode/toolUseId"] = .string("mcp_fixture_0")
+        fields["progressToken"] = .integer(1)
+        meta = .object(fields)
+    }
     var params: [String: ModelJSON] = ["_meta": meta]
     if method == "tools/call" {
         params["name"] = .string(write ? "repo_write" : "repo_read")
@@ -107,6 +112,15 @@ func claudeClientChecks(_ port: UInt16, _ token: String) async throws {
         do { _ = try ClaudeMCPIngress.parse(wire); throw Failure(message: "MCP malformed HTTP accepted") } catch HostMCPGatewayError.denied {}
     }
     try check(credentials.count == 0, "MCP parser read credentials")
+    let toolWire = try clientWire(clientJSON("tools/call"))
+    for replacement in ["123", "\"\"", "\"bad/id\"", "\"" + String(repeating: "a", count: 129) + "\""] {
+        let invalid = Data(String(decoding: toolWire, as: UTF8.self).replacingOccurrences(of: "\"mcp_fixture_0\"", with: replacement).utf8)
+        // Parse the JSON body directly so this tests correlation semantics rather
+        // than merely noticing the changed HTTP Content-Length.
+        let body = Data(invalid[invalid.range(of: Data("\r\n\r\n".utf8))!.upperBound...])
+        do { _ = try ClaudeMCPProtocol.ingress(body, maxBytes: 65536); throw Failure(message: "unbounded MCP tool correlation accepted") }
+        catch HostMCPGatewayError.denied {}
+    }
     try phase("modern-discovery")
     _ = try await context.send(clientIngress("server/discover", id: .string("server-discover-probe-1")))
     _ = try await context.send(clientIngress("tools/list"))

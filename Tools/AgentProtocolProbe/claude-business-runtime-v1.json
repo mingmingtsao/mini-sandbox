@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "profile": "claude-business-runtime-v1",
+  "binary": "/opt/agent-probe/claude",
+  "binary_sha256": "028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332",
+  "version": "2.1.309 (Claude Code)",
+  "environment_mode": "replace-not-inherit",
+  "environment": {
+    "HOME": "/run/agent-probe/business-home",
+    "TMPDIR": "/run/agent-probe/business-tmp",
+    "PATH": "/usr/bin:/bin",
+    "SHELL": "/bin/bash",
+    "LANG": "C.UTF-8",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:4061",
+    "ANTHROPIC_AUTH_TOKEN": "mini-sandbox-local-only",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192",
+    "CLAUDE_CODE_DISABLE_THINKING": "1",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+  },
+  "cwd": "/work/project",
+  "argv": ["/opt/agent-probe/claude", "--print", "--verbose", "--no-session-persistence", "--setting-sources", "", "--model", "deepseek-flash", "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--permission-mode", "default", "--permission-prompt-tool", "stdio", "--input-format", "stream-json", "--output-format", "stream-json", "--max-turns", "16"],
+  "task_source": "host control frame after user authorization; never a fixed fixture edit",
+  "wall_timeout_seconds": 840,
+  "channels": {"runtime_control": 4060, "guest_model_http": 4061, "workspace": 4062, "guest_mcp_http": 4063, "model_vsock": 4064, "permission_vsock": 4065, "mcp_vsock": 4066},
+  "limits": {"requests": 64, "request_body": 65536, "header_bytes": 16384, "response_bytes": 8388608, "cli_output_bytes": 131072, "permission_requests": 64, "CPUSeconds": 120, "FSIZE": 67108864, "NOFILE": 128},
+  "mcp": "host-selected optional bounded HTTP connection; no support claim until gateway acceptance"
+}

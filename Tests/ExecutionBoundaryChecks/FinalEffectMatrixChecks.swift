@@ -86,7 +86,11 @@ func r3ExpiryWait(_ target: String) throws {
         clock.advance(600); mutex.unlock()
         try attempt.wait()
         let resumes: Int
-        switch effect { case .model(let operation): resumes = operation.resumeCalls; case .mcp(let operation): resumes = operation.resumeCalls }
+        switch effect {
+        case .model(let operation): resumes = operation.resumeCalls
+        case .mcp(let operation): resumes = operation.resumeCalls
+        case .businessVM: throw Failure(message: "R3 fixture requires model or MCP effect")
+        }
         try check(entered && blocked && (try attempt.denied()) && resumes == 0 && life.registeredEffectCount == 0 && life.currentStatus == .expired, "R3 stale concrete resume")
         try check(life.lastObservation?.wallTime == life.expiresAt, "R3 resume final time")
         print("OBS R3-A-C-D-E target=\(target) resumes=\(resumes) registered=\(life.registeredEffectCount) credential_reads=\(credentials.count + mcpCredentials.count) sequence=\(life.lastObservation!.sequence) final_wall=\(life.lastObservation!.wallTime.timeIntervalSince1970) deadline=\(life.expiresAt.timeIntervalSince1970) status=\(life.currentStatus.rawValue)")
@@ -199,7 +203,11 @@ func r3RegisteredTerminal() throws {
         life.finishEffect(operationID); life.finishEffect(operationID); effect.cancel(); effect.cancel()
         do { try life.start(effect, id: operationID, scope: scope, notBefore: start, startDeadline: start.addingTimeInterval(900)); throw Failure(message: "R3 effect revived") } catch is AuthorizationError {}
         let resumes: Int
-        switch effect { case .model(let operation): resumes = operation.resumeCalls; case .mcp(let operation): resumes = operation.resumeCalls }
+        switch effect {
+        case .model(let operation): resumes = operation.resumeCalls
+        case .mcp(let operation): resumes = operation.resumeCalls
+        case .businessVM: throw Failure(message: "R3 fixture requires model or MCP effect")
+        }
         try check(registered == 1 && life.registeredEffectCount == 0 && resumes == 1, "R3 registration settlement")
         if !mcp {
             var held: [ModelPreparedOperation] = []

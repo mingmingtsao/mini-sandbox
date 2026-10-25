@@ -126,6 +126,10 @@ package final class BusinessVMConnection: @unchecked Sendable {
     }
     func releaseFrameEffect() { lock.unlock() }
     package func acquireNativeEffect() -> Bool { lock.try() }
+    // Concrete prepared transports take this after their operation lock and
+    // before the shared lifecycle clock fence. No lifecycle lock may be held
+    // while waiting here; startLocked then validates with this ownership held.
+    func acquireNativeStart() { lock.lock() }
     package func validateNativeEffectLocked() throws {
         guard !closed, claimed, descriptor >= 0, ContinuousClock.now < deadline else { throw BusinessVMError.closed }
     }

@@ -120,10 +120,24 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     }
 
     package func prepareNative(_ request: AnthropicNativeRequest) throws -> ModelPreparedOperation {
-        try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
+        guard request.dialect == .native else { throw HostModelGatewayError.businessRouteDisabled }
+        return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
     }
 
-    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool) throws -> ModelPreparedOperation {
+    package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors) throws -> ModelPreparedOperation {
+        // Immutable production gate, before credential preparation or URLSession.
+        guard BusinessModelActivation.credentialEgressEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        guard request.dialect == .claude else { throw ModelTransportError.invalidRequest("claude dialect") }
+        try selectors.validate()
+        return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
+                                  streaming: request.streaming, claudeSelectors: selectors)
+    }
+
+    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
+                                claudeSelectors: ClaudeRequestSelectors? = nil) throws -> ModelPreparedOperation {
+        if claudeSelectors != nil {
+            guard BusinessModelActivation.credentialEgressEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        }
         try limiter.acquire()
         do {
             guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
@@ -136,7 +150,9 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 throw ModelTransportError.credential(.invalid)
             }
 
-            let endpoint = endpoint(for: kind)
+            if let claudeSelectors { try claudeSelectors.validate(); guard kind == .anthropic else { throw ModelTransportError.invalidRequest("claude protocol") } }
+            // The closed host route is unreachable while activation is disabled.
+            let endpoint = claudeSelectors == nil ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = Self.requestTimeout
@@ -146,6 +162,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             case .anthropic:
                 urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
                 urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                if let claudeSelectors { urlRequest.setValue(claudeSelectors.beta, forHTTPHeaderField: "anthropic-beta") }
             }
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body

@@ -36,6 +36,12 @@ package struct ModelToolChoice: Equatable, Sendable, Codable {
 
 package enum ModelConversationValidation {
     package static func validate(messages: [FixedMessage], tools: [ModelToolDefinition], choice: ModelToolChoice?, protocol kind: FixedProtocol) throws {
+        try validateImpl(messages: messages, tools: tools, choice: choice, protocol: kind, midSystem: false)
+    }
+    static func validateClaude(messages: [FixedMessage], tools: [ModelToolDefinition], choice: ModelToolChoice?) throws {
+        try validateImpl(messages: messages, tools: tools, choice: choice, protocol: .anthropic, midSystem: true)
+    }
+    private static func validateImpl(messages: [FixedMessage], tools: [ModelToolDefinition], choice: ModelToolChoice?, protocol kind: FixedProtocol, midSystem: Bool) throws {
         let structured = !tools.isEmpty || choice != nil || messages.contains { !$0.isLegacyText }
         guard kind == .anthropic || !structured else { throw ModelTransportError.invalidRequest("structured OpenAI unsupported") }
         guard tools.count <= 64, Set(tools.map(\.name)).count == tools.count else { throw ModelTransportError.invalidRequest("tools") }
@@ -45,8 +51,20 @@ package enum ModelConversationValidation {
         }
         guard structured else { return }
         var ids = Set<String>(); var pending = Set<String>(); var nonSystem = false
-        for message in messages {
+        for (index, message) in messages.enumerated() {
             if message.role == .system {
+                if midSystem {
+                    var first = index
+                    while first > 0 && messages[first - 1].role == .system { first -= 1 }
+                    var end = index + 1
+                    while end < messages.count && messages[end].role == .system { end += 1 }
+                    guard pending.isEmpty, first > 0, messages[first - 1].role == .user,
+                          end == messages.count || messages[end].role == .assistant,
+                          message.blocks.allSatisfy({ if case .text(let text) = $0 { !text.isEmpty } else { false } }) else {
+                        throw ModelTransportError.invalidRequest("system placement")
+                    }
+                    continue
+                }
                 guard !nonSystem, message.blocks.allSatisfy({ if case .text = $0 { true } else { false } }) else { throw ModelTransportError.invalidRequest("system blocks") }
                 continue
             }

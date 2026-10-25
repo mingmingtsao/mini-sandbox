@@ -4,6 +4,8 @@ import Foundation
 /// conversion. Only the original validated JSON tree is retained/sent. Projection
 /// into existing DTOs below is exclusively for the existing pairing checks.
 package struct AnthropicNativeRequest: Sendable {
+    package enum Dialect: Sendable { case native, claude }
+    package let dialect: Dialect
     package let body: ModelJSON
     package let canonicalBody: Data
     package let streaming: Bool
@@ -14,7 +16,16 @@ package struct AnthropicNativeRequest: Sendable {
         catch { throw ModelTransportError.invalidRequest("native request") }
     }
 
-    private init(root: ModelJSON, streaming: Bool) throws {
+    /// DeepSeek's documented Messages dialect accepts text system messages in
+    /// conversation. Preserve their original position and content; the projection
+    /// below is validation-only, never the body sent to the provider.
+    package static func decodeClaude(_ bytes: Data, streaming: Bool, selectors: ClaudeRequestSelectors) throws -> Self {
+        try selectors.validate()
+        do { return try Self(root: ModelJSON.parse(bytes), streaming: streaming, allowMidSystem: true) }
+        catch { throw ModelTransportError.invalidRequest("claude native request") }
+    }
+
+    private init(root: ModelJSON, streaming: Bool, allowMidSystem: Bool = false) throws {
         var object = try Self.keys(root, ["model", "max_tokens", "stream", "system", "messages", "tools", "tool_choice", "thinking", "metadata", "output_config"])
         guard object["model"]?.string == FixedModel.deepSeekFlash.rawValue,
               let tokens = object["max_tokens"]?.integer, (1...Int64(FixedModelRequest.maxOutputTokens)).contains(tokens),
@@ -65,21 +76,28 @@ package struct AnthropicNativeRequest: Sendable {
         }
         let projection: [FixedMessage] = try messages.map { message in
             let m = try Self.keys(message, ["role", "content"])
-            guard let role = m["role"]?.string, role == "user" || role == "assistant", let content = m["content"] else { throw Self.invalid }
-            let kind: FixedMessageRole = role == "user" ? .user : .assistant
+            guard let role = m["role"]?.string,
+                  role == "user" || role == "assistant" || (allowMidSystem && role == "system"),
+                  let content = m["content"] else { throw Self.invalid }
+            let kind: FixedMessageRole = role == "user" ? .user : (role == "system" ? .system : .assistant)
             if let text = content.string {
                 _ = try FixedMessage(role: kind, content: text)
                 return try FixedMessage(role: kind, blocks: [.text(text)])
             }
             guard let array = content.array, !array.isEmpty, array.count <= 128 else { throw Self.invalid }
-            return try FixedMessage(role: kind, blocks: array.map(Self.messageBlock))
+            return try FixedMessage(role: kind, blocks: array.map { kind == .system ? try Self.textBlock($0) : try Self.messageBlock($0) })
         }
-        try ModelConversationValidation.validate(messages: projection, tools: tools, choice: choice, protocol: .anthropic)
+        if allowMidSystem {
+            try ModelConversationValidation.validateClaude(messages: projection, tools: tools, choice: choice)
+        } else {
+            try ModelConversationValidation.validate(messages: projection, tools: tools, choice: choice, protocol: .anthropic)
+        }
         let body = ModelJSON.object(object)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let canonical = try encoder.encode(body)
         _ = try ModelJSON.parse(canonical) // policy expansion must also fit unchanged bounds
         self.body = body; canonicalBody = canonical; self.streaming = streaming
+        dialect = allowMidSystem ? .claude : .native
     }
 
     private static var invalid: ModelTransportError { .invalidRequest("native request") }

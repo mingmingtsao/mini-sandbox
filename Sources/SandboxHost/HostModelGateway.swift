@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 import SandboxContracts
 
@@ -46,6 +47,19 @@ package struct HostModelApproval: Sendable {
     fileprivate let approved: ApprovedAction
 }
 
+#if DEBUG
+package enum HostAttachmentPhase: String, CaseIterable, Sendable { case afterRegistration, beforeExposure }
+#endif
+
+/// Composition ownership for attachments and their in-flight uses. Implementations seal registration synchronously;
+/// F03 remains the sole lifecycle, clock, start and output authority.
+package protocol HostRunAttachmentOwner: Sendable {
+    func beginAttachment(grant: RunGrant, existing: HostRunHandle?) throws -> UUID
+    func registerAttachment(_ token: UUID, grant: RunGrant, handle: HostRunHandle) throws
+    func endAttachment(_ token: UUID)
+    func attachmentCleanupFailed(_ token: UUID)
+}
+
 /// A host-only integration slice, not a guest listener or an F10 approval UI.
 /// Uses the injected F03 authority; retains only gateway/transport bookkeeping.
 
@@ -77,30 +91,56 @@ package actor HostModelGateway {
         let accountBindingVersion: UInt64
         let routeVersion: UInt64
         let streaming: Bool
-        let request: FixedModelRequest
+        let request: FixedModelRequest?
+        let nativeBody: ModelJSON?
     }
     package let authority: RunAuthorizationController
+    private let owner: (any HostRunAttachmentOwner)?
+#if DEBUG
+    private var attachmentBarrier: (@Sendable (HostAttachmentPhase) async -> Void)?
+    package func setAttachmentBarrier(_ barrier: (@Sendable (HostAttachmentPhase) async -> Void)?) { attachmentBarrier = barrier }
+#endif
     private var registry: [UUID: Entry] = [:]
     private var runs: [UUID: Run] = [:]
     private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v2".utf8)).map { String(format: "%02x", $0) }.joined()
 
     package init(connections: [HostModelConnection], auditSink: any SynchronousAuditSink,
-        now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
+        clock: RunClock = .system(), authority: RunAuthorizationController? = nil,
+        owner: (any HostRunAttachmentOwner)? = nil) throws {
         guard Set(connections.map(\.connectionID)).count == connections.count,
               connections.allSatisfy({ $0.accountBindingVersion > 0 && $0.routeVersion > 0 }) else {
             throw HostModelGatewayError.invalidConnection
         }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, clock: clock)
+        self.owner = owner
     }
 
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostModelRunHandle {
+        let registration = try owner?.beginAttachment(grant: grant, existing: existing)
+        defer { if let registration { owner?.endAttachment(registration) } }
         let authorityHandle: HostRunHandle
         if let existing { try await authority.validateAttachment(handle: existing, grant: grant); authorityHandle = existing }
         else { authorityHandle = try await authority.install(grant: grant) }
+        if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.afterRegistration) }
+#endif
+        guard authorityHandle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
+        // Reclaim only settled gateway bookkeeping, never authority replay state.
+        runs = runs.filter { !$0.value.revoked || $0.value.reserved != 0 }
+        if let existing = runs.values.first(where: { $0.authorityHandle === authorityHandle }) {
+            if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+            return existing.handle
+        }
         // Installation creates no dispatch permission; all registry/time checks repeat at use.
         let handle = HostModelRunHandle()
         runs[handle.token] = Run(handle: handle, authorityHandle: authorityHandle, grant: grant)
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.beforeExposure) }
+#endif
+        if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+        guard authorityHandle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
         return handle
     }
 
@@ -121,13 +161,42 @@ package actor HostModelGateway {
             let envelope = Envelope(schemaVersion: 2, runID: run.grant.runID, epoch: run.grant.epoch,
                 connectionID: connectionID, accountID: entry.connection.accountID,
                 accountBindingVersion: entry.connection.accountBindingVersion, routeVersion: entry.connection.routeVersion,
-                streaming: streaming, request: request)
+                streaming: streaming, request: request, nativeBody: nil)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let canonical = try encoder.encode(envelope)
             guard canonical.count <= min(run.grant.resourceLimits.messageBytes, 65_536) else { throw HostModelGatewayError.messageTooLarge }
             let binding = try ActionBinding(runID: run.grant.runID, epoch: run.grant.epoch,
                 grantDigest: RunAuthorizationController.grantDigest(for: run.grant), connectionID: connectionID,
                 operation: scope.operation, schemaDigest: Self.schemaDigest, resolvedResource: scope.resource, canonicalRequest: canonical)
+            let generation = run.generation
+            let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
+            let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "Model \(scope.operation): \(scope.resource)")
+            try validate(run, generation: generation, connectionID: connectionID, connectionGeneration: entry.generation)
+            return HostModelProposal(handle: handle, pending: pending, connectionGeneration: entry.generation, runGeneration: generation, effectScope: effectScope)
+        } catch { throw await handleError(error, run: run) }
+    }
+
+    package func proposeNative(handle: HostModelRunHandle, connectionID: UUID, body: Data,
+        streaming: Bool) async throws -> HostModelProposal {
+        let request = try AnthropicNativeRequest.decodeValidated(body, streaming: streaming)
+        let run = try get(handle)
+        do {
+            let entry = try live(run, connectionID: connectionID)
+            guard entry.connection.model == request.model, entry.connection.protocol == .anthropic else { throw HostModelGatewayError.denied }
+            let scope = try ResourceScope(service: "model", resource: request.model.rawValue, operation: streaming ? "stream" : "complete")
+            let time = try validatedRunTime(run)
+            guard run.grant.decision(for: scope, connectionID: connectionID, at: time) == .allowed else { throw HostModelGatewayError.denied }
+            let envelope = Envelope(schemaVersion: 3, runID: run.grant.runID, epoch: run.grant.epoch,
+                connectionID: connectionID, accountID: entry.connection.accountID,
+                accountBindingVersion: entry.connection.accountBindingVersion, routeVersion: entry.connection.routeVersion,
+                streaming: streaming, request: nil, nativeBody: request.body)
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let canonical = try encoder.encode(envelope)
+            guard canonical.count <= min(run.grant.resourceLimits.messageBytes, 65_536) else { throw HostModelGatewayError.messageTooLarge }
+            let digest = SHA256.hash(data: Data("host-model-native-envelope-v3".utf8)).map { String(format: "%02x", $0) }.joined()
+            let binding = try ActionBinding(runID: run.grant.runID, epoch: run.grant.epoch,
+                grantDigest: RunAuthorizationController.grantDigest(for: run.grant), connectionID: connectionID,
+                operation: scope.operation, schemaDigest: digest, resolvedResource: scope.resource, canonicalRequest: canonical)
             let generation = run.generation
             let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
             let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "Model \(scope.operation): \(scope.resource)")
@@ -168,6 +237,22 @@ package actor HostModelGateway {
         let run = try get(handle); try validate(run, proposal: approval.proposal)
         return ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID)
     }
+    /// Trusted host accepts and relinquishes one local socket; no guest route or
+    /// connection ID is accepted here. Consumes the descriptor even on failure.
+    /// Only the existing controlled execute overload can produce into this output.
+    package func makeNativeOutput(handle: HostModelRunHandle, approval: HostModelApproval,
+                                  takingAcceptedSocket fd: Int32) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred, fd >= 0 { Darwin.close(fd) } }
+        let run = try get(handle); try validate(run, proposal: approval.proposal)
+        let envelope = try JSONDecoder().decode(Envelope.self, from: approval.proposal.pending.binding.canonicalRequest)
+        guard (envelope.schemaVersion == 3 && envelope.nativeBody != nil && envelope.request == nil) ||
+              (envelope.schemaVersion == 2 && envelope.nativeBody == nil && envelope.request?.protocol == .anthropic) else { throw NativeResponseError.invalidEvent }
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle,
+            scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
+            takingAcceptedSocket: fd, streaming: envelope.streaming)
+    }
     /// Controlled-output vertical API: caller drives acceptNext on the owned receiver. Completion
     /// means producer/audit finished, NOT that queued business output was accepted.
     package func execute(handle: HostModelRunHandle, approval: HostModelApproval, output: ControlledRunOutput) async throws {
@@ -181,8 +266,15 @@ package actor HostModelGateway {
         let run = try get(handle)
         let proposal = approval.proposal
         if let output, !output.matches(run.authorityHandle.lifecycle, effectScope(proposal), actionID: proposal.pending.actionID) { throw HostModelGatewayError.invalidApproval }
-        do { try validate(run, proposal: proposal) }
+        var ownerRegistration: UUID?
+        do {
+            try validate(run, proposal: proposal)
+            ownerRegistration = try owner?.beginAttachment(grant: run.grant, existing: run.authorityHandle)
+        }
         catch { throw await handleError(error, run: run) }
+        // Keep this resource owned until the existing completion/cancellation
+        // bookkeeping below has settled; close must not acknowledge it early.
+        defer { if let ownerRegistration { owner?.endAttachment(ownerRegistration) } }
         guard run.reserved < min(run.grant.resourceLimits.concurrentRequests, ModelTransport.maxConcurrentRequests) else { throw HostModelGatewayError.busy }
         run.reserved += 1
         let operationID = UUID()
@@ -199,16 +291,29 @@ package actor HostModelGateway {
             // The actual request is reconstructed ONLY from the immutable F03 approved bytes.
             let envelope = try JSONDecoder().decode(Envelope.self, from: ticket.approvedRequest)
             let entry = try live(run, connectionID: envelope.connectionID)
-            guard envelope.schemaVersion == 2, envelope.runID == run.grant.runID, envelope.epoch == run.grant.epoch,
+            guard envelope.runID == run.grant.runID, envelope.epoch == run.grant.epoch,
                   envelope.accountID == entry.connection.accountID,
                   envelope.accountBindingVersion == entry.connection.accountBindingVersion,
-                  envelope.routeVersion == entry.connection.routeVersion,
-                  envelope.request.model == entry.connection.model, envelope.request.protocol == entry.connection.protocol else {
+                  envelope.routeVersion == entry.connection.routeVersion else {
                 throw HostModelGatewayError.invalidApproval
+            }
+            let native: AnthropicNativeRequest?
+            if let body = envelope.nativeBody {
+                guard envelope.schemaVersion == 3, envelope.request == nil, entry.connection.protocol == .anthropic else { throw HostModelGatewayError.invalidApproval }
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                native = try AnthropicNativeRequest.decodeValidated(encoder.encode(body), streaming: envelope.streaming)
+                guard native?.model == entry.connection.model else { throw HostModelGatewayError.invalidApproval }
+            } else {
+                guard envelope.schemaVersion == 2, let request = envelope.request,
+                      request.model == entry.connection.model, request.protocol == entry.connection.protocol else { throw HostModelGatewayError.invalidApproval }
+                native = nil
             }
             // No suspension from final liveness validation through credential access and resume().
             try validatedRunTime(run, startDeadline: proposal.pending.expiresAt)
-            let operation = try entry.connection.transport.prepare(envelope.request, streaming: envelope.streaming)
+            let operation: ModelPreparedOperation
+            if let native { operation = try entry.connection.transport.prepareNative(native) }
+            else if let request = envelope.request { operation = try entry.connection.transport.prepare(request, streaming: envelope.streaming) }
+            else { throw HostModelGatewayError.invalidApproval }
             run.operations[operationID] = (envelope.connectionID, operation)
             try validate(run, proposal: proposal)
             try Task.checkCancellation()
@@ -254,6 +359,9 @@ package actor HostModelGateway {
             if !envelope.streaming, let output { try output.enqueue(.modelCompletion(result)) }
             return result
         } catch {
+            if completionAttempted, error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                owner?.attachmentCleanupFailed(ownerRegistration)
+            }
             output?.cancel()
             run.operations[operationID]?.1.cancel()
             let sanitized = await handleError(error, run: run)
@@ -262,7 +370,12 @@ package actor HostModelGateway {
                 // .unknown means a started call may already have affected the upstream.
                 completionAttempted = true
                 do { try await authority.complete(handle: run.authorityHandle, ticket: ticket, outcome: started ? .unknown : .failed) }
-                catch { throw await handleError(error, run: run) }
+                catch {
+                    if error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                        owner?.attachmentCleanupFailed(ownerRegistration)
+                    }
+                    throw await handleError(error, run: run)
+                }
                 // No success or further dispatch after this suspension, including a stopped run.
             }
             if sanitized as? HostModelGatewayError == .auditFailed { throw sanitized }

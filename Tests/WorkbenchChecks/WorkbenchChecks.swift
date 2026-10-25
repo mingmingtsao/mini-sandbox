@@ -7,6 +7,30 @@ import SandboxWorkbench
 @main struct WorkbenchChecks {
     @MainActor static func main() async {
         do {
+            if CommandLine.arguments.contains("--composition-native-close-only") {
+                try await CompositionNativeCloseChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-diagnostic-only") {
+                try await CompositionDiagnosticChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-mcp") {
+                try await CompositionMCPChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-bounds-only") {
+                try await CompositionBoundsChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-close-only") {
+                try await CompositionCloseChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--connection-settings-only") {
+                try await ConnectionSettingsChecks.run()
+                return
+            }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
             let model = WorkbenchModel(newAuditFileAt: url)
@@ -54,7 +78,7 @@ import SandboxWorkbench
                 let clock = Clock(grant.createdAt.addingTimeInterval(1))
                 let path = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
                 defer { try? FileManager.default.removeItem(at: path) }
-                let subject = WorkbenchModel(newAuditFileAt: path, now: { clock.now() })
+                let subject = WorkbenchModel(newAuditFileAt: path, clock: clock.source)
                 try await subject.installTrustedGrant(grant)
                 let action = try await subject.proposeTrustedAction(binding: binding, display: "<b>literal native text</b>")
                 let view = WorkbenchView(model: subject)
@@ -81,7 +105,7 @@ import SandboxWorkbench
                 let clock = Clock(grant.createdAt.addingTimeInterval(1))
                 let path = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
                 defer { try? FileManager.default.removeItem(at: path) }
-                let subject = WorkbenchModel(newAuditFileAt: path, now: { clock.now() })
+                let subject = WorkbenchModel(newAuditFileAt: path, clock: clock.source)
                 try await subject.installTrustedGrant(grant)
                 let a = try await subject.proposeTrustedAction(binding: binding, display: "A expires before B")
                 clock.advance(301)
@@ -125,6 +149,11 @@ import SandboxWorkbench
             }
             try require(!failing.authorityAvailable && failing.pending.isEmpty && failing.activity.isEmpty, "failed append not forwarded; run revoked")
             print("WorkbenchChecks: \(checks) assertions passed, 0 failed (no GUI interaction tested)")
+            try await ConnectionSettingsChecks.run()
+            try await CompositionCloseChecks.run()
+            try await CompositionBoundsChecks.run()
+            try await CompositionDiagnosticChecks.run()
+            try await CompositionNativeCloseChecks.run()
         } catch { print("FAIL: \(error)"); exit(1) }
     }
     @MainActor static func withWritesBlocked(_ operation: @MainActor () async throws -> Void) async throws {
@@ -142,11 +171,10 @@ import SandboxWorkbench
         checks += 1
     }
     final class Clock: @unchecked Sendable {
-        private let lock = NSLock()
-        private var date: Date
-        init(_ date: Date) { self.date = date }
-        func now() -> Date { lock.lock(); defer { lock.unlock() }; return date }
-        func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; date.addTimeInterval(seconds) }
+        let source: RunClock
+        init(_ date: Date) { source = .manual(wall: date) }
+        func now() -> Date { source.now() }
+        func advance(_ seconds: TimeInterval) { source.advance(seconds) }
     }
     struct Failure: Error { let message: String }
 }

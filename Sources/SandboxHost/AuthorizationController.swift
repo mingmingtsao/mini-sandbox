@@ -31,12 +31,15 @@ public enum AuthorizationError: Error, Equatable, Sendable {
 /// A host-created capability. It has no public initializer and carries no guest-authenticated run ID.
 public final class HostRunHandle: @unchecked Sendable {
     fileprivate let token: UUID
+    fileprivate let authorityIdentity: UUID
+    fileprivate let installedGrant: RunGrant
 
     public let lifecycle: RunLifecycle
     public let runID: UUID
     let grantDigest: String
-    fileprivate init(token: UUID, lifecycle: RunLifecycle, grant: RunGrant) {
+    fileprivate init(token: UUID, lifecycle: RunLifecycle, grant: RunGrant, authorityIdentity: UUID) {
         self.token = token; self.lifecycle = lifecycle
+        self.authorityIdentity = authorityIdentity; self.installedGrant = grant
         self.runID = grant.runID; self.grantDigest = RunAuthorizationController.grantDigest(for: grant)
     }
 }
@@ -125,6 +128,15 @@ public final class JSONLAuditSink: SynchronousAuditSink, @unchecked Sendable {
 
 /// Host-only authorization lifecycle. A guest payload never creates or authenticates a handle.
 public actor RunAuthorizationController {
+    private nonisolated let attachmentIdentity = UUID()
+
+    /// Immutable provenance only: no liveness check, clock sample, execution or
+    /// delivery permission. Intake still must call validateAttachment afterward.
+    package nonisolated func installedGrantForOwnership(of handle: HostRunHandle) throws -> RunGrant {
+        guard handle.authorityIdentity == attachmentIdentity else { throw AuthorizationError.invalidHandle }
+        return handle.installedGrant
+    }
+
     private final class RunState: @unchecked Sendable {
         let grant: RunGrant
         let grantDigest: String
@@ -173,22 +185,20 @@ public actor RunAuthorizationController {
         let actionID: UUID
         let operation: String
         let resourceSummary: String
+        var ownership: (owner: any HostRunAttachmentOwner, registration: UUID)? = nil
     }
 
     private static let activeLimit = 32
     private static let historyLimit = 64
 
     private let auditSink: any SynchronousAuditSink
-    private let now: @Sendable () -> Date
-    private let monotonic: @Sendable () -> Duration
+    private let clock: RunClock
+    private func now() -> Date { clock.now() }
     private var runs: [UUID: RunState] = [:]
 
-    public init(auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() },
-                monotonic: (@Sendable () -> Duration)? = nil) {
+    public init(auditSink: any SynchronousAuditSink, clock: RunClock = .system()) {
         self.auditSink = auditSink
-        self.now = now
-        let clock = ContinuousClock(); let origin = clock.now
-        self.monotonic = monotonic ?? { origin.duration(to: clock.now) }
+        self.clock = clock
     }
 
     // Do not hash RunGrant's Codable Set representations: their array order is unspecified.
@@ -248,13 +258,20 @@ public actor RunAuthorizationController {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+#if DEBUG || SANDBOX_TEST_FIXTURES
+    /// Scheduling fixture before authority acquisition; no lifecycle, operation
+    /// or receiver lock is held. Never supplies clock data or effect permission.
+    package func withPreAcquisitionBarrier(_ barrier: @Sendable () -> Void) { barrier() }
+#endif
+
     public func install(grant: RunGrant) throws -> HostRunHandle {
-        let current = now()
+        let installed = clock.sample()
+        let current = installed.wall
         guard current >= grant.createdAt else { throw AuthorizationError.grantNotYetValid }
         guard current < grant.expiresAt else { throw AuthorizationError.grantExpired }
         guard runs[grant.runID] == nil else { throw AuthorizationError.duplicateRun }
 
-        let handle = HostRunHandle(token: UUID(), lifecycle: RunLifecycle(expiresAt: grant.expiresAt, epoch: grant.epoch, installedAt: current, wall: now, monotonic: monotonic), grant: grant)
+        let handle = HostRunHandle(token: UUID(), lifecycle: RunLifecycle(expiresAt: grant.expiresAt, epoch: grant.epoch, installedAt: current, clock: clock, installedElapsed: installed.elapsed), grant: grant, authorityIdentity: attachmentIdentity)
         let state = RunState(grant: grant, grantDigest: Self.grantDigest(for: grant), handle: handle)
         runs[grant.runID] = state
         return handle
@@ -390,6 +407,16 @@ public actor RunAuthorizationController {
         return ticket
     }
 
+    /// Attach only outcome bookkeeping to the issued ticket, with no suspension
+    /// between issuance and registration. This grants no start/output authority.
+    package func consumeOwned(handle: HostRunHandle, approved: ApprovedAction,
+                              owner: any HostRunAttachmentOwner, registration: UUID) throws -> DispatchTicket {
+        let ticket = try consume(handle: handle, approved: approved)
+        let state = try state(for: handle)
+        state.tickets[ticket.ticketID]?.ownership = (owner, registration)
+        return ticket
+    }
+
     public func complete(handle: HostRunHandle, ticket: DispatchTicket, outcome: DispatchOutcome) throws {
         let state = try state(for: handle)
         guard ticket.handleToken == handle.token else { throw AuthorizationError.ticketInvalid }
@@ -398,12 +425,18 @@ public actor RunAuthorizationController {
         }
         guard ticket.actionID == record.actionID else { throw AuthorizationError.ticketInvalid }
         guard outcome == .completed || outcome == .failed || outcome == .unknown else { throw AuthorizationError.completionAlreadyRecorded }
+        // Invalid/replayed attempts cannot release an unfinished reservation.
+        // The actual ticket, not a caller's UI projection, owns this retirement.
+        defer {
+            if let ownership = record.ownership { ownership.owner.endAttachment(ownership.registration) }
+        }
         state.tickets.removeValue(forKey: ticket.ticketID)
         state.completedTickets.append(ticket.ticketID)
         if state.completedTickets.count > Self.historyLimit { state.completedTickets.removeFirst() }
         do {
             try append(event: try hostEvent(state: state, actionID: record.actionID, operation: record.operation, resourceSummary: record.resourceSummary, decision: .allow, reason: "dispatch-completion", outcome: outcome))
         } catch {
+            if let ownership = record.ownership { ownership.owner.attachmentCleanupFailed(ownership.registration) }
             state.handle.lifecycle.terminate(.faulted)
             revoke(state)
             throw AuthorizationError.auditFailed

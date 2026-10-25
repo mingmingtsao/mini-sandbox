@@ -97,6 +97,7 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     private var controller: RunAuthorizationController?
     private var handles: [UUID: HostRunHandle] = [:]
     private var approvedSnapshots: [UUID: PendingAction] = [:]
+
     @Published public private(set) var activity: [SecurityEvent] = []
     @Published public private(set) var runStatus: [UUID: String] = [:]
     @Published public private(set) var isBusy = false
@@ -104,6 +105,9 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     @Published public private(set) var isClosed = false
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     private var closeTask: Task<Bool, Never>?
+    package var attachmentOwner: (any HostRunAttachmentOwner)?
+    package var willClose: (() -> Void)?
+    package var closeOwnedRuns: (() async -> Bool)?
     public var trustedDenialCount: Int { activity.filter(\.isHostRejection).count }
 
     public static func applicationModel() -> WorkbenchModel {
@@ -164,25 +168,38 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     /// Trusted in-process ingress only. Never expose this as a guest JSON handler.
     public func installTrustedGrant(_ grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws {
         let controller = try begin(); defer { finish() }
+        let registration = try attachmentOwner?.beginAttachment(grant: grant, existing: existing)
+        defer { if let registration { attachmentOwner?.endAttachment(registration) } }
         do {
             let handle: HostRunHandle
             if let existing { try await controller.validateAttachment(handle: existing, grant: grant); handle = existing }
             else { handle = try await controller.install(grant: grant) }
-            handles[grant.runID] = handle; grants.append(grant)
+            if let registration { try attachmentOwner?.registerAttachment(registration, grant: grant, handle: handle) }
+            guard !isClosing, handle.lifecycle.currentStatus == .active else {
+                handle.lifecycle.terminate(.stopped)
+                try? await controller.stop(handle: handle)
+                throw AuthorizationError.runRevoked
+            }
+            handles[grant.runID] = handle
+            if !grants.contains(where: { $0.runID == grant.runID }) { grants.append(grant) }
             runStatus[grant.runID] = "Authorized — runtime not connected"
         } catch { await failed(error, runID: grant.runID); throw error }
     }
     public func proposeTrustedAction(binding: ActionBinding, display: String) async throws -> PendingAction {
         let controller = try begin(); defer { finish() }
         do {
-            let action = try await controller.propose(handle: handle(binding.runID), binding: binding, display: display)
+            let handle = try handle(binding.runID)
+            let action = try await controller.propose(handle: handle, binding: binding, display: display)
+            guard !isClosing, handle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
             pending.append(action); return action
         } catch { await failed(error, runID: binding.runID); throw error }
     }
     public func approveOnce(_ action: PendingAction) async throws -> ApprovedAction {
         let controller = try begin(); defer { finish() }
         do {
-            let approved = try await controller.hostApprove(handle: handle(action.binding.runID), actionID: action.actionID, nonce: action.nonce)
+            let handle = try handle(action.binding.runID)
+            let approved = try await controller.hostApprove(handle: handle, actionID: action.actionID, nonce: action.nonce)
+            guard !isClosing, handle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
             pending.removeAll { $0.actionID == action.actionID }
             approvedActions[action.actionID] = approved; approvedSnapshots[action.actionID] = action
             return approved
@@ -216,8 +233,20 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
     /// Called by a trusted broker, never by the view. Does not perform external I/O.
     public func consumeForTrustedHost(runID: UUID, approved: ApprovedAction) async throws -> DispatchTicket {
         let controller = try begin(); defer { finish() }
+        let authorityHandle = try handle(runID)
+        let installed = try controller.installedGrantForOwnership(of: authorityHandle)
+        let registration = try attachmentOwner?.beginAttachment(grant: installed, existing: authorityHandle)
+        var transferred = false
+        defer { if !transferred, let registration { attachmentOwner?.endAttachment(registration) } }
         do {
-            let ticket = try await controller.consume(handle: handle(runID), approved: approved)
+            let ticket: DispatchTicket
+            if let registration, let attachmentOwner {
+                ticket = try await controller.consumeOwned(handle: authorityHandle, approved: approved,
+                    owner: attachmentOwner, registration: registration)
+                transferred = true
+            } else {
+                ticket = try await controller.consume(handle: authorityHandle, approved: approved)
+            }
             approvedActions.removeValue(forKey: approved.actionID); approvedSnapshots.removeValue(forKey: approved.actionID)
             return ticket
         } catch {
@@ -233,14 +262,25 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         await waitForIdle()
         guard let controller else { throw AuthorizationError.auditFailed }
         isBusy = true; defer { finish() }
-        do { try await controller.complete(handle: handle(runID), ticket: ticket, outcome: outcome) }
-        catch { await failed(error, runID: runID); throw error }
+        do {
+            try await controller.complete(handle: handle(runID), ticket: ticket, outcome: outcome)
+        } catch {
+            await failed(error, runID: runID); throw error
+        }
     }
     public func recordGuestDiagnostic(runID: UUID, operation: String, resource: String, message: String) async throws {
         let controller = try begin(); defer { finish() }
         do { try await controller.recordGuestDiagnostic(runID: runID, operation: operation, resourceSummary: resource, message: message) }
         catch { await failed(error, runID: runID); throw error }
     }
+    /// Retire shared authority before credential I/O, without waiting on audit.
+    package func retireModelConnections(_ connectionIDs: Set<UUID>) {
+        for grant in grants where grant.connections.contains(where: { connectionIDs.contains($0.connectionID) }) {
+            handles[grant.runID]?.lifecycle.terminate(.stopped)
+            clearRun(grant.runID, status: "Stopped — model configuration changed; new grant required")
+        }
+    }
+
     /// Stop is an interrupt, not ordinary approval work: busy must not hide it.
     /// Terminal/closing runs need no further UI intent; cleanup remains idempotent.
     public func canStop(runID: UUID) -> Bool {
@@ -286,19 +326,26 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
             }
         }
     }
-    /// No termination reply is sent until every installed handle is revoked.
-    public func close() async -> Bool {
-        if let closeTask { return await closeTask.value }
+    /// The native close callback calls this before spawning asynchronous cleanup.
+    public func beginClose() {
+        guard !isClosing else { return }
         isClosing = true
+        willClose?()
         for (id, handle) in handles {
             handle.lifecycle.terminate(.stopped)
             clearRun(id, status: "Stopped — authorization revoked")
         }
+    }
+    /// No termination reply is sent until every owned attachment is revoked.
+    public func close() async -> Bool {
+        beginClose()
+        if let closeTask { return await closeTask.value }
         let task = Task { @MainActor in
             await self.waitForIdle()
             for id in self.handles.keys {
                 do { try await self.stop(runID: id) } catch { return false }
             }
+            if let closeOwnedRuns = self.closeOwnedRuns, !(await closeOwnedRuns()) { return false }
             self.isClosed = true
             self.authorityAvailable = false
             return true
@@ -323,13 +370,13 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         self.authorityAvailable = true
     }
 
-    public init(newAuditFileAt url: URL, now: @escaping @Sendable () -> Date = { Date() },
+    public init(newAuditFileAt url: URL, clock: RunClock = .system(),
                 authority: RunAuthorizationController? = nil) {
         auditURL = url
         do {
             let sink = try WorkbenchAuditSink(newFileAt: url)
             audit = sink
-            controller = authority ?? RunAuthorizationController(auditSink: sink, now: now)
+            controller = authority ?? RunAuthorizationController(auditSink: sink, clock: clock)
             authorityAvailable = true
         } catch { errorMessage = "Audit unavailable; authority disabled: \(error)" }
     }

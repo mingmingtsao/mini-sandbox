@@ -57,7 +57,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     }
     @MainActor static func stopWhileAuditBlocked() async throws {
         let clock = SharedHostClock(), sink = Sink()
-        let a = RunAuthorizationController(auditSink: sink, now: clock.now, monotonic: clock.monotonic)
+        let a = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let g = try grant(clock), h = try await a.install(grant: g)
         let other = try await a.install(grant: grant(clock))
         let owner = NSObject()
@@ -70,7 +70,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
         let ch = try await c.install(grant: g, authorityHandle: h)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("shared-ui-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
-        let ui = WorkbenchModel(newAuditFileAt: url, now: clock.now, authority: a)
+        let ui = WorkbenchModel(newAuditFileAt: url, clock: clock.source, authority: a)
         try await ui.installTrustedGrant(g, authorityHandle: h)
         let ml = try await m.lifecycle(handle: mh), cl = try await c.lifecycle(handle: ch)
         try check(ml === h.lifecycle && cl === h.lifecycle && ui.lifecycle(runID: g.runID) === h.lifecycle, "actual reference identity")
@@ -100,7 +100,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
         let clock = SharedHostClock()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("composition-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
-        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: url), now: clock.now, monotonic: clock.monotonic)
+        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: url), clock: clock.source)
         let run = try await root.install(grant(clock))
         let modelLifecycle = try await root.model.lifecycle(handle: run.modelHandle)
         let mcpLifecycle = try await root.mcp.lifecycle(handle: run.mcpHandle)
@@ -113,7 +113,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     }
     @MainActor static func vmForeignHandle() async throws {
         let clock = SharedHostClock(), sink = Sink()
-        let a = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let a = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let g = try grant(clock), foreign = try await a.install(grant: grant(clock))
         do {
             _ = try VMDiagnosticSession(owner: NSObject(), runID: g.runID, epoch: g.epoch,
@@ -123,7 +123,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     }
     @MainActor static func vmStop() async throws {
         let clock = SharedHostClock(), sink = Sink(), owner = NSObject()
-        let a = RunAuthorizationController(auditSink: sink, now: clock.now, monotonic: clock.monotonic)
+        let a = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let g = try grant(clock), h = try await a.install(grant: g)
         let vm = try VMDiagnosticSession(owner: owner, runID: g.runID, epoch: g.epoch,
             workloadDigest: g.workloadImageDigest, sink: sink, authorityHandle: h, installedGrant: g)
@@ -133,9 +133,9 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
         catch VMProtocolError.stopped {}
     }
     static func wall() async throws {
-        let clock = SharedHostClock(), a = RunAuthorizationController(auditSink: Sink(), now: { Date() })
+        let clock = SharedHostClock(), a = RunAuthorizationController(auditSink: Sink(), clock: .system())
         _ = a // independent controller cannot manufacture a handle
-        let authority = RunAuthorizationController(auditSink: Sink(), now: clock.now, monotonic: clock.monotonic)
+        let authority = RunAuthorizationController(auditSink: Sink(), clock: clock.source)
         let h = try await authority.install(grant: grant(clock))
         clock.set(wall: 800, elapsed: .seconds(1))
         let first = h.lifecycle.observeAndReduce(reason: "test")
@@ -150,7 +150,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     static func monotonic() async throws {
         for elapsed in [Duration.seconds(900), .seconds(3600)] {
             let clock = SharedHostClock()
-            let a = RunAuthorizationController(auditSink: Sink(), now: clock.now, monotonic: clock.monotonic)
+            let a = RunAuthorizationController(auditSink: Sink(), clock: clock.source)
             let h = try await a.install(grant: grant(clock))
             clock.set(wall: 500, elapsed: .seconds(899))
             try check(h.lifecycle.observeAndReduce(reason: "retry").status == .active, "before fixed deadline")
@@ -165,7 +165,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
         let ms = try ResourceScope(service: "model", resource: "deepseek-flash", operation: "complete")
         let cs = try ResourceScope(service: "mcp", resource: "control", operation: "initialize")
         let g = try grant(clock, connections: [ConnectionGrant(connectionID: mi, accountBindingVersion: 1, routeVersion: 1, scopes: [ms]), ConnectionGrant(connectionID: ci, accountBindingVersion: 1, routeVersion: 1, scopes: [cs])])
-        let a = RunAuthorizationController(auditSink: sink, now: clock.now, monotonic: clock.monotonic)
+        let a = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let h = try await a.install(grant: g)
         let m = try HostModelGateway(connections: [HostModelConnection(connectionID: mi, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash, protocol: .openAI, credentialProvider: credentials)], auditSink: sink, authority: a)
         let c = try HostMCPGateway(connections: [HostMCPConnection.testOnlyLoopback(connectionID: ci, accountID: UUID(), port: 1, provider: credentials)], auditSink: sink, authority: a)
@@ -177,7 +177,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
         if stop {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("approved-stop-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
-            let ui = WorkbenchModel(newAuditFileAt: url, now: clock.now, authority: a)
+            let ui = WorkbenchModel(newAuditFileAt: url, clock: clock.source, authority: a)
             try await ui.installTrustedGrant(g, authorityHandle: h)
             try await ui.stop(runID: g.runID)
         } else {
@@ -196,7 +196,7 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     static func connectionIsolation() async throws {
         let clock = SharedHostClock(), credentials = NeverCredentials(), sink = Sink(), x = UUID(), y = UUID()
         let scope = try ResourceScope(service: "model", resource: "deepseek-flash", operation: "complete")
-        let a = RunAuthorizationController(auditSink: sink, now: clock.now)
+        let a = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let m = try HostModelGateway(connections: [x, y].map { HostModelConnection(connectionID: $0, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash, protocol: .openAI, credentialProvider: credentials) }, auditSink: sink, authority: a)
         let gx = try grant(clock, connections: [ConnectionGrant(connectionID: x, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])])
         let gy = try grant(clock, connections: [ConnectionGrant(connectionID: y, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])])
@@ -211,8 +211,8 @@ final class NeverCredentials: ModelCredentialProvider, MCPCredentialProvider, @u
     }
     static func oldHandle() async throws {
         let clock = SharedHostClock(), g = try grant(clock)
-        let first = RunAuthorizationController(auditSink: Sink(), now: clock.now)
-        let second = RunAuthorizationController(auditSink: Sink(), now: clock.now)
+        let first = RunAuthorizationController(auditSink: Sink(), clock: clock.source)
+        let second = RunAuthorizationController(auditSink: Sink(), clock: clock.source)
         let old = try await first.install(grant: g), new = try await second.install(grant: g)
         try check(old !== new && old.lifecycle !== new.lifecycle, "same UUID is not authority identity")
         do { try await second.validateAttachment(handle: old, grant: g); throw Failure(message: "old handle accepted") }
@@ -255,7 +255,7 @@ extension SharedAuthorityChecks {
             let clock = SharedHostClock(), g = try grant(clock)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("stop-policy-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
-            let ui = WorkbenchModel(newAuditFileAt: url, now: clock.now)
+            let ui = WorkbenchModel(newAuditFileAt: url, clock: clock.source)
             try check(!ui.canStop(runID: g.runID), "no installed handle disables Stop")
             try await ui.installTrustedGrant(g)
             try check(ui.canStop(runID: g.runID), "active idle run enables Stop")
@@ -275,7 +275,7 @@ extension SharedAuthorityChecks {
             let g = try grant(clock, connections: [ConnectionGrant(connectionID: connectionID, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])])
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("presentation-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
-            let ui = WorkbenchModel(newAuditFileAt: url, now: clock.now)
+            let ui = WorkbenchModel(newAuditFileAt: url, clock: clock.source)
             try await ui.installTrustedGrant(g)
             let binding = try ActionBinding(runID: g.runID, epoch: 1, grantDigest: RunAuthorizationController.grantDigest(for: g), connectionID: connectionID, operation: "read", schemaDigest: String(repeating: "c", count: 64), resolvedResource: "fixture", canonicalRequest: Data("{}".utf8))
             let action = try await ui.proposeTrustedAction(binding: binding, display: "fixture")
@@ -317,7 +317,7 @@ extension SharedAuthorityChecks {
     @MainActor static func sheetBusyStop() async throws { try await busyStop(sheet: true) }
     @MainActor static func busyStop(sheet: Bool) async throws {
         let clock = SharedHostClock(), sink = WorkbenchStopAudit()
-        let authority = RunAuthorizationController(auditSink: sink, now: clock.now, monotonic: clock.monotonic)
+        let authority = RunAuthorizationController(auditSink: sink, clock: clock.source)
         let connectionID = UUID(), mi = UUID(), ci = UUID(), credentials = NeverCredentials()
         let scope = try ResourceScope(service: "fixture", resource: "fixture", operation: "read")
         let ms = try ResourceScope(service: "model", resource: "deepseek-flash", operation: "complete")
@@ -337,7 +337,7 @@ extension SharedAuthorityChecks {
         let vm = try VMDiagnosticSession(owner: owner, runID: g.runID, epoch: g.epoch, workloadDigest: g.workloadImageDigest, sink: sink, authorityHandle: handle, installedGrant: g)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("busy-stop-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
-        let ui = WorkbenchModel(newAuditFileAt: url, now: clock.now, authority: authority)
+        let ui = WorkbenchModel(newAuditFileAt: url, clock: clock.source, authority: authority)
         try await ui.installTrustedGrant(g, authorityHandle: handle)
         let binding = try ActionBinding(runID: g.runID, epoch: 1, grantDigest: RunAuthorizationController.grantDigest(for: g), connectionID: connectionID, operation: "read", schemaDigest: String(repeating: "c", count: 64), resolvedResource: "fixture", canonicalRequest: Data("{}".utf8))
         // An already-issued ticket must remain usable for bookkeeping only.

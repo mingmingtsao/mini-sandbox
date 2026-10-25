@@ -6,7 +6,7 @@ README 的覆盖率徽章显示最近一次成功主线 CI 的 **Swift 源码行
 
 - 分母包含 `Sources/` 下全部 Swift 文件，包括未被检查触达的文件。当前覆盖 `SandboxContracts`、`SandboxHost`、`SandboxWorkbench` 和 `MiniSandboxApp`。
 - 实际执行集合包含全部离线 Swift 检查入口、额外的执行边界 selector、两组 MCP 网关回环检查、两组执行边界 MCP 回环检查、工作台 MCP 关闭回环检查，以及经过 JSON 断言的 App 环境诊断。完整集合以 `scripts/swift-coverage.py` 的 `CHECKS` 为准。
-- `RuntimeReceiveChecks` 将现有 guest 接收检查接入 SwiftPM；`VMChecks` 运行协议和状态检查，不创建 VM。工作台检查使用假凭据；环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目。
+- `RuntimeReceiveChecks` 将现有 guest 接收检查接入 SwiftPM；`VMChecks` 运行协议和状态检查，不创建 VM。`ModelTransportChecks --offline` 执行 32 组检查，明确排除默认套件中的隔离 Keychain CRUD 用例，原用例仍保留。工作台检查使用假凭据；环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目。
 - 不包含 `Tests/`、`Tools/`、自动生成代码、Python 和 Go。公开 API 编译检查、Release 打包及签名验证也不产生这个指标的运行计数。
 - 不设置最低百分比门槛；统计失败、缺失源码映射或缺少原始计数会使覆盖率 job 失败，不会用虚构数值代替。
 
@@ -37,6 +37,6 @@ python3 scripts/swift-coverage.py
 
 ## 当前覆盖边界
 
-本次在相同产品源码上测得：单独 `ContractChecks` 为 101 / 7,104 行（1.4%）；接入现有离线检查、guest 接收和只读诊断后为 5,911 / 7,104 行（83.2%）。这只是本次本地测量；主线徽章以成功 Actions 产物为准。
+本次在相同产品源码上测得：单独 `ContractChecks` 为 101 / 7,104 行（1.4%）；接入现有离线检查、guest 接收和只读诊断后为 5,847 / 7,104 行（82.3%）。这只是本次本地测量；主线徽章以成功 Actions 产物为准。
 
 现有可离线运行的入口已全部接入。余量主要位于 SwiftUI 交互、真实 VM 启停/套接字回调、真实 Keychain 行为和系统错误分支。继续提高这些部分需要对应功能测试和实机验收，不应缩小分母或用编译结果替代执行证据。

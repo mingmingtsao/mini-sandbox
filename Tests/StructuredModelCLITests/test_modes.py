@@ -50,6 +50,15 @@ class StructuredModelCLITests(unittest.TestCase):
             self.assertNotIn("PASS", result.stdout + result.stderr)
             self.assertEqual(list(Path(root).iterdir()), [])
 
+    def test_transport_offline_mode_rejects_mixed_modes_before_running_checks(self):
+        binary = self.binary.parent / "ModelTransportChecks"
+        for args in (["--offline", "--live"], ["--live", "--offline"], ["--offline", "other"]):
+            with self.subTest(args=args):
+                result = subprocess.run([str(binary), *args], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 64)
+                self.assertIn("USAGE:", result.stdout)
+                self.assertNotIn("PASS", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

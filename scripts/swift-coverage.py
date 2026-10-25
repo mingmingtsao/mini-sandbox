@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = (
-    "ContractChecks", "AuthorizationChecks", "ModelTransportChecks",
+    "ContractChecks", "AuthorizationChecks", "ModelTransportChecks --offline",
     "HostIntegrationChecks", "StructuredModelChecks", "WorkbenchChecks",
     "SharedAuthorityChecks", "WorkspaceChecks", "WorkspaceTransferChecks", "VMChecks", "RuntimeReceiveChecks",
     "ExecutionBoundaryChecks", "ExecutionBoundaryChecks --final-effect-clock",

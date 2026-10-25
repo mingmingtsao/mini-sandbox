@@ -683,10 +683,18 @@ private func runLiveSmoke() async {
 @main
 private struct ModelTransportChecks {
     static func main() async {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard !arguments.contains("--offline") || arguments == ["--offline"] else {
+            print("USAGE: ModelTransportChecks [--offline | --live | selector]")
+            Foundation.exit(64)
+        }
         if CommandLine.arguments.contains("--live") { await runLiveSmoke(); return }
         var failures = 0
         var blocked = 0
-        let selected = checks.filter { CommandLine.arguments.count < 2 || $0.name.contains(CommandLine.arguments[1]) }
+        let selected = checks.filter {
+            arguments == ["--offline"] ? $0.name != "isolated Keychain CRUD" :
+                (arguments.isEmpty || $0.name.contains(arguments[0]))
+        }
         guard !selected.isEmpty else {
             print("ERROR: no tests matched the selector")
             Foundation.exit(64)

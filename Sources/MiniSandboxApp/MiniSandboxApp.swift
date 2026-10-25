@@ -55,12 +55,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     let connectionSettings: ConnectionSettingsController?
     let taskController: BusinessTaskController?
     override init() {
-        let composition = try? RunComposition.application()
+        let composition = try? Self.makeComposition()
         self.composition = composition
         self.connectionSettings = composition?.connectionSettings
         self.taskController = composition?.business
         self.model = composition?.workbench ?? WorkbenchModel(unavailable: "App composition unavailable; authority disabled")
         super.init()
+    }
+    private static func makeComposition() throws -> RunComposition {
+#if SANDBOX_TEST_FIXTURES
+        let args = CommandLine.arguments
+        if args.contains("--local-business-fixture-port") || args.contains("--local-business-fixture-root") {
+            guard let portIndex = args.firstIndex(of: "--local-business-fixture-port"), portIndex + 1 < args.count,
+                  let port = UInt16(args[portIndex + 1]), port > 0,
+                  let rootIndex = args.firstIndex(of: "--local-business-fixture-root"), rootIndex + 1 < args.count,
+                  args[rootIndex + 1].hasPrefix("/") else { throw BusinessTaskFailure.unavailable }
+            return try RunComposition.localBusinessFixture(port: port,
+                newRoot: URL(fileURLWithPath: args[rootIndex + 1], isDirectory: true))
+        }
+#endif
+        return try RunComposition.application()
     }
     private var terminationPending = false
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

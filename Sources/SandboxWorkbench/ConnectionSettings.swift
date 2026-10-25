@@ -50,6 +50,7 @@ package struct ModelConfigurationRetirement: Sendable {
     @Published package private(set) var isBusy = false
     @Published package private(set) var isClosed = false
     @Published package private(set) var status = "Not checked. Routing unavailable."
+    @Published package private(set) var isLocalFixture = false
     private let store: any FixedModelCredentialStore
     private let connectionID = UUID(), accountID = UUID()
     private var version: UInt64 = 0
@@ -61,6 +62,14 @@ package struct ModelConfigurationRetirement: Sendable {
     package var publish: ((FixedModelConnectionConfiguration, any ModelCredentialProvider) throws -> Void)?
     package var willClose: (() -> Void)?
     package init(store: any FixedModelCredentialStore) { self.store = store }
+#if SANDBOX_TEST_FIXTURES
+    package func installLocalFixture(_ configuration: FixedModelConnectionConfiguration) throws {
+        guard self.configuration == nil, !isBusy, !isClosed else { throw CredentialProviderError.unavailable }
+        isLocalFixture = true
+        self.configuration = configuration
+        status = "Local fixture · fixed 127.0.0.1 provider · public fake canary · no Keychain"
+    }
+#endif
     package func close() {
         guard !isClosed else { return }
         isClosed = true
@@ -79,7 +88,7 @@ package struct ModelConfigurationRetirement: Sendable {
         await perform({ try store.delete(); return false }, success: "Deleted. Routing unavailable.")
     }
     package func save(_ value: String) async {
-        guard !isBusy, !isClosed else { return }
+        guard !isBusy, !isClosed, !isLocalFixture else { return }
         guard !value.isEmpty, value.utf8.count <= 16 * 1024,
               !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             status = "Invalid credential input. Existing configuration unchanged."
@@ -89,7 +98,7 @@ package struct ModelConfigurationRetirement: Sendable {
         await perform({ try store.save(value); return true }, success: "Saved for future runs. No approval or provider test performed.")
     }
     private func perform(_ operation: @escaping @Sendable () throws -> Bool, success: String) async {
-        guard !isBusy, !isClosed else { return }
+        guard !isBusy, !isClosed, !isLocalFixture else { return }
         isBusy = true
         defer { isBusy = false; storageTask = nil }
         configuration = nil

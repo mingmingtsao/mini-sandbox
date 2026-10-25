@@ -15,6 +15,9 @@ import SandboxHost
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Project task").font(.title.bold())
+                    if controller.isLocalFixture {
+                        Text("LOCAL FIXTURE · real VM / CLI · local scripted provider · no Keychain").font(.caption.bold()).foregroundStyle(.orange)
+                    }
                     Text(verbatim: controller.status).font(.callout)
                 }
                 Spacer()

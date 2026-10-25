@@ -5,6 +5,7 @@ import SandboxWorkbench
 
 @MainActor enum CompositionBusinessChecks {
     static func run() async throws {
+        try frameBuffer()
         for succeeded in [true, false] {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("business-close-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
@@ -40,5 +41,29 @@ import SandboxWorkbench
         try CompositionDiagnosticChecks.require(rejected && receivingClosed && sourceActive && sourceClosed,
             "business intake must reject foreign equal-ID authority without retiring source")
         print("PASS composition business owner rejects foreign equal-ID run")
+    }
+    private static func frameBuffer() throws {
+        func framed(_ data: Data) -> Data {
+            var length = UInt32(data.count).bigEndian
+            return withUnsafeBytes(of: &length) { Data($0) } + data
+        }
+        let expected = [Data("ready".utf8), Data(repeating: 65, count: 4096), Data("finished".utf8)]
+        let wire = expected.reduce(Data()) { $0 + framed($1) }
+        for fragment in [1, 3, 17, 4096] {
+            var buffer = BusinessFrameBuffer(), received = [Data](), cursor = 0
+            while cursor < wire.count {
+                let end = min(wire.count, cursor + fragment)
+                try buffer.append(Data(wire[cursor..<end])); cursor = end
+                while let next = try buffer.next() { received.append(next) }
+            }
+            try CompositionDiagnosticChecks.require(received == expected && buffer.isEmpty, "fragmented/coalesced VM frames retain exact bytes and safe indices")
+        }
+        for invalid: UInt32 in [0, 16385, UInt32.max] {
+            var buffer = BusinessFrameBuffer(), length = invalid.bigEndian
+            try buffer.append(withUnsafeBytes(of: &length) { Data($0) })
+            do { _ = try buffer.next(); throw CompositionDiagnosticChecks.Failure(message: "invalid VM frame length") }
+            catch BusinessTaskFailure.invalidFrame {}
+        }
+        print("PASS App VM frame decoder fragmented/coalesced multi-frame indices and bounded lengths")
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import SandboxContracts
 import SandboxHost
+import Darwin
 
 /// An ownership ledger, not a second authorization lifecycle. Gateway actors
 /// register here synchronously before exposing execution-eligible attachments.
@@ -127,6 +128,18 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     private var configurationGeneration = UUID()
     private var modelConnectionIDs: Set<UUID>
     private var businessStorage: BusinessTaskController?
+    private var fixtureTaskDirectory: URL?
+    package private(set) var isLocalFixture = false
+    package var businessRouteAvailable: Bool {
+#if SANDBOX_TEST_FIXTURES
+        if isLocalFixture { return true }
+#endif
+        return BusinessModelActivation.credentialEgressEnabled
+    }
+    package var businessTaskDirectory: URL {
+        fixtureTaskDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MiniSandbox/Tasks", isDirectory: true)
+    }
     package var business: BusinessTaskController {
         if let businessStorage { return businessStorage }
         let controller = BusinessTaskController(composition: self)
@@ -294,4 +307,17 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
                                                attributes: [.posixPermissions: 0o700])
         return try RunComposition(audit: WorkbenchAuditSink(newFileAt: directory.appendingPathComponent("\(UUID()).jsonl")))
     }
+#if SANDBOX_TEST_FIXTURES
+    package static func localBusinessFixture(port: UInt16, newRoot: URL) throws -> RunComposition {
+        let connection = try HostModelConnection.localClaudeFixture(port: port)
+        guard newRoot.path.hasPrefix("/"), mkdir(newRoot.path, 0o700) == 0 else { throw BusinessTaskFailure.unavailable }
+        let audit = try WorkbenchAuditSink(newFileAt: newRoot.appendingPathComponent("audit.jsonl"))
+        let composition = try RunComposition(audit: audit, modelConnections: [connection], credentialStore: LocalBusinessNoCredentialStore())
+        composition.isLocalFixture = true
+        composition.fixtureTaskDirectory = newRoot.appendingPathComponent("Tasks", isDirectory: true)
+        try composition.connectionSettings.installLocalFixture(FixedModelConnectionConfiguration(connectionID: connection.connectionID,
+            accountID: connection.accountID, accountBindingVersion: 1, routeVersion: 1))
+        return composition
+    }
+#endif
 }

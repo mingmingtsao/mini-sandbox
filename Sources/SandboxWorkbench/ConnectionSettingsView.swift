@@ -6,6 +6,9 @@ import SwiftUI
     @State private var input = ""
     package init(controller: ConnectionSettingsController) { self.controller = controller }
     package var body: some View {
+        if controller.isLocalFixture {
+            GroupBox("Local fixture connection") { Text(verbatim: controller.status).padding(8) }
+        } else {
         GroupBox("Model connection") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("DeepSeek flash · Anthropic protocol").font(.headline)
@@ -39,5 +42,6 @@ import SwiftUI
         }
         .onDisappear { input = "" }
         .onChange(of: controller.isClosed) { _, _ in input = "" }
+        }
     }
 }

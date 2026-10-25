@@ -29,28 +29,44 @@ private actor TaskWorkspaceOwner {
     }
 }
 
+package struct BusinessFrameBuffer {
+    private var buffer = Data()
+    package init() {}
+    package var isEmpty: Bool { buffer.isEmpty }
+    package mutating func append(_ bytes: Data) throws {
+        guard bytes.count <= 32_768 - buffer.count else { throw BusinessTaskFailure.invalidFrame }
+        buffer.append(bytes)
+    }
+    package mutating func next() throws -> Data? {
+        guard buffer.count >= 4 else { return nil }
+        let length = buffer.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
+        guard (1...16_384).contains(length) else { throw BusinessTaskFailure.invalidFrame }
+        guard buffer.count >= 4 + length else { return nil }
+        let start = buffer.index(buffer.startIndex, offsetBy: 4)
+        let end = buffer.index(start, offsetBy: length)
+        let result = Data(buffer[start..<end])
+        // Data.removeFirst preserves its nonzero startIndex. Normalize the
+        // retained bounded tail before a subsequent frame arrives.
+        buffer = Data(buffer.dropFirst(4 + length))
+        return result
+    }
+}
+
 private actor BusinessFrameReader {
     private let connection: BusinessVMConnection
-    private var buffer = Data()
+    private var frames = BusinessFrameBuffer()
     private var reading = false
     init(_ connection: BusinessVMConnection) { self.connection = connection }
     func next() async throws -> Data? {
         guard !reading else { throw BusinessTaskFailure.invalidFrame }; reading = true
         defer { reading = false }
         while true {
-            if buffer.count >= 4 {
-                let length = buffer.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
-                guard (1...16_384).contains(length) else { throw BusinessTaskFailure.invalidFrame }
-                if buffer.count >= 4 + length {
-                    let result = Data(buffer[4..<(4 + length)]); buffer.removeFirst(4 + length); return result
-                }
-            }
+            if let next = try frames.next() { return next }
             let bytes = try await connection.receive(maxBytes: 4096)
             if bytes.isEmpty {
-                guard buffer.isEmpty else { throw BusinessTaskFailure.invalidFrame }; return nil
+                guard frames.isEmpty else { throw BusinessTaskFailure.invalidFrame }; return nil
             }
-            guard bytes.count <= 32_768 - buffer.count else { throw BusinessTaskFailure.invalidFrame }
-            buffer.append(bytes)
+            try frames.append(bytes)
         }
     }
 }
@@ -122,9 +138,10 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         !isBusy && review == nil && !isClosing && !composition.isClosing && agent == .claude && project != nil &&
         runtimeDirectory != nil && vendorDisk != nil && !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         task.utf8.count <= 8192 && permissionsConfirmed && composition.connectionSettings.configuration != nil &&
-        BusinessModelActivation.credentialEgressEnabled
+        composition.businessRouteAvailable
     }
-    package var activationAvailable: Bool { BusinessModelActivation.credentialEgressEnabled }
+    package var activationAvailable: Bool { composition.businessRouteAvailable }
+    package var isLocalFixture: Bool { composition.isLocalFixture }
     package func selectProject(_ value: URL) { guard !isBusy else { return }; project = value; permissionsConfirmed = false }
     package func selectRuntime(_ value: URL) { guard !isBusy else { return }; runtimeDirectory = value; permissionsConfirmed = false }
     package func selectVendor(_ value: URL) { guard !isBusy else { return }; vendorDisk = value; permissionsConfirmed = false }
@@ -159,8 +176,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         status = "Verifying runtime and copying the selected project…"
         let bundle = try await Task.detached { try BusinessRuntimeBundle(directory: runtime, vendorDisk: vendor) }.value
         try check(token)
-        let parent = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MiniSandbox/Tasks", isDirectory: true)
+        let parent = composition.businessTaskDirectory
         let root = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let vmDirectory = root.appendingPathComponent("VM", isDirectory: true)
         try FileManager.default.createDirectory(at: vmDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

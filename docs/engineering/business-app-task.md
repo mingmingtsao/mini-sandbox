@@ -33,3 +33,21 @@ cleanup verdict across repeated close and reject a foreign equal-ID run owner.
 These are in-process checks. Actual GUI interaction, VM/CLI and external-model
 evidence must be recorded separately. The TabView now has explicit selection and
 tags so an environment refresh does not reset the selected tab.
+
+## Explicit local provider UI test build
+
+An App built with `-DSANDBOX_TEST_FIXTURES` alone contains the optional launch
+arguments `--local-business-fixture-port <port>` and
+`--local-business-fixture-root <new-absolute-directory>`. Both are required; the
+directory must not already exist. No host, key or credential file argument is
+accepted. This composition uses only the fixed 127.0.0.1/public-canary transport
+factory, never constructs a Keychain store, disables credential settings and
+stores task data under the newly created test directory. Its UI displays
+`LOCAL FIXTURE` prominently. Project/runtime selection, task consent, each model
+and tool approval, actual VM cleanup, result review and export remain the same
+MainActor/product path. There is no automatic task start or tool approval.
+
+Normal builds do not contain this constructor or argument handling. The
+production activation gate remains false in both builds. A successful fixture
+run is evidence of real UI/VM/CLI execution with a local scripted provider only;
+it cannot satisfy external-provider or release acceptance.

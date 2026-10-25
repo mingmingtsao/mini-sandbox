@@ -7,12 +7,15 @@ private actor FixtureState {
     var transferred = false
     var models = 0, permissions = 0
     var failures: [String] = []
+    var reflectedMetadataRejected = false
     func finished(_ sha: String) { finishedSHA = sha }
     func transfer() { transferred = true }
     func model() { models += 1 }
     func permission() { permissions += 1 }
     func fail(_ error: Error) { failures.append(String(describing: type(of: error))) }
     func progress() -> (String?, Bool, Int, Int, [String]) { (finishedSHA, transferred, models, permissions, failures) }
+    func reflection() { reflectedMetadataRejected = true }
+    func reflectionComplete() -> Bool { reflectedMetadataRejected }
 }
 
 /// Fixture-only actual VM tool loop. Every tool executes in the real CLI/VM;
@@ -66,7 +69,9 @@ private actor FixtureState {
         var evidenceRoot: URL?
         do {
             let args = CommandLine.arguments
-            guard args.count == 5, let port = UInt16(args[4]), port != 0 else { throw BusinessVMError.invalidResource }
+            guard (5...6).contains(args.count), let port = UInt16(args[4]), port != 0 else { throw BusinessVMError.invalidResource }
+            let reflection = args.count == 6 && args[5] == "reflection"
+            guard args.count == 5 || reflection else { throw BusinessVMError.invalidProfile }
             let root = URL(fileURLWithPath: args[3], isDirectory: true)
             evidenceRoot = root
             let bundle = try BusinessRuntimeBundle(directory: URL(fileURLWithPath: args[1], isDirectory: true), vendorDisk: URL(fileURLWithPath: args[2]))
@@ -151,7 +156,20 @@ private actor FixtureState {
                                     let output = try await gateway.makeVMNativeOutput(handle: modelHandle, approval: approval, connection: connection)
                                     let execution = Task { try await gateway.execute(handle: modelHandle, approval: approval, output: output) }
                                     while output.nativeProgress?.closed == false {
-                                        if try !output.acceptNext() { try await Task.sleep(for: .milliseconds(5)) }
+                                        do {
+                                            if try !output.acceptNext() { try await Task.sleep(for: .milliseconds(5)) }
+                                        } catch {
+                                            if reflection, output.nativeProgress?.closed == true { break }
+                                            throw error
+                                        }
+                                    }
+                                    if reflection {
+                                        var rejected = false
+                                        do { try await execution.value }
+                                        catch { rejected = error as? HostModelGatewayError == .outcomeUnknown }
+                                        guard rejected, let progress = output.nativeProgress,
+                                              progress.committedBytes == 0, progress.writeCalls == 0, progress.acceptedFinals == 0 else { throw BusinessVMError.invalidOwner }
+                                        await state.reflection(); session.cancel(); return
                                     }
                                     try await execution.value
                                     guard let progress = output.nativeProgress, progress.committedBytes > 0, progress.acceptedFinals == 1 else { throw BusinessVMError.invalidOwner }
@@ -184,6 +202,23 @@ private actor FixtureState {
                 }
             }
             try await session.start()
+            if reflection {
+                while !(await state.reflectionComplete()) {
+                    if !(await state.progress().4.isEmpty), !(await state.reflectionComplete()) { throw BusinessVMError.closed }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                let stopped = await session.waitUntilStopped()
+                await incoming.value
+                let canary = try LocalClaudeFixtureCredential().credential(for: .deepSeekFlash)
+                let output = display.snapshot
+                guard stopped.actualStopped, stopped.callbacksSettled, stopped.diskRemoved,
+                      !output.stdout.contains(canary), !output.stderr.contains(canary) else { throw BusinessVMError.invalidOwner }
+                try Data(output.stdout.utf8).write(to: root.appendingPathComponent("cli.stdout"), options: [.withoutOverwriting])
+                try Data(output.stderr.utf8).write(to: root.appendingPathComponent("cli.stderr"), options: [.withoutOverwriting])
+                report(["event": "PASS", "scope": "actual-VZ-active-fake-credential-reflection", "nativeBytes": 0, "nativeWriteCalls": 0,
+                        "guestOutputCanaryOccurrences": 0, "actualStopped": true, "callbacksSettled": true, "realProvider": "NOT_RUN"])
+                _ = await events.value; return
+            }
             while true {
                 let progress = await state.progress()
                 guard progress.4.isEmpty, handle.lifecycle.currentStatus == .active else { throw BusinessVMError.closed }

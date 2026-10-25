@@ -73,3 +73,18 @@ does not launch an App, select a project or approve any action. Use a separate
 fixture-only App build and native controls. Its provider transcript verifies
 real CLI tool results, but does not establish GUI, cleanup or export success;
 those observations must be recorded separately.
+
+## Actual VZ credential-reflection negative control
+
+`cli-reflection-fixture-v1` with `business-fixture-host-v11` and the same v5
+image passed. The owned loopback provider placed the built-in public fake
+credential in SSE message metadata. The actual CLI's request reached the
+provider once. The model guard rejected that response with outcome unknown;
+the concrete VZ native consumer made zero send calls and committed zero bytes.
+Accepted guest stdout/stderr contained zero canary occurrences. The VM was
+physically stopped and callbacks settled. This is a real VZ/CLI negative
+control using fake material, not an assertion about all encoding families or
+a real provider request. Add `reflection` to the reproduction command to run it.
+
+Standalone builds now hash their source and contract-object inputs before and
+after compilation and refuse evidence if those inputs change while compiling.

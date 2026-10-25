@@ -26,8 +26,9 @@ TOOLS = [
 ]
 
 
-def response(step):
-    result = wire_event('message_start', message=dict(id='msg_fixture_' + str(step), type='message', role='assistant',
+def response(step, reflection=False):
+    message_id = 'mini-sandbox-local-fixture-canary-86db9bd39f874753' if reflection else 'msg_fixture_' + str(step)
+    result = wire_event('message_start', message=dict(id=message_id, type='message', role='assistant',
         model='deepseek-flash', content=[], stop_reason=None, stop_sequence=None, usage=dict(input_tokens=1, output_tokens=0)))
     if step < len(TOOLS):
         name, arguments = TOOLS[step]
@@ -45,11 +46,12 @@ def response(step):
 
 def main():
     serve_only = len(sys.argv) == 3 and sys.argv[1] == '--serve'
-    if not serve_only and len(sys.argv) != 5:
-        raise SystemExit('usage: business_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE_DIRECTORY | --serve NEW_EVIDENCE_DIRECTORY')
+    if not serve_only and (len(sys.argv) not in (5, 6) or (len(sys.argv) == 6 and sys.argv[5] != 'reflection')):
+        raise SystemExit('usage: business_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE_DIRECTORY [reflection] | --serve NEW_EVIDENCE_DIRECTORY')
+    reflection = not serve_only and len(sys.argv) == 6
     if not serve_only:
         host, image, vendor = map(lambda v: str(Path(v).absolute()), sys.argv[1:4])
-    root = Path(sys.argv[-1]).absolute()
+    root = Path(sys.argv[2] if serve_only else sys.argv[4]).absolute()
     os.umask(0o077)
     root.mkdir(mode=0o700)
     session = root / 'session'; session.mkdir(mode=0o700)
@@ -62,7 +64,7 @@ def main():
         def do_POST(self):
             try:
                 step = state['requests']
-                if self.path != '/anthropic/v1/messages?beta=true' or step >= 5:
+                if self.path != '/anthropic/v1/messages?beta=true' or step >= (1 if reflection else 5):
                     raise ValueError('fixture route/count')
                 count = int(self.headers.get('Content-Length', '0'))
                 if not 0 < count <= 65536 or self.headers.get('Transfer-Encoding'):
@@ -89,7 +91,7 @@ def main():
                         raise ValueError('edit or unchanged test failed')
                     state['tool_results'].append({'id': block['tool_use_id'], 'is_error': block.get('is_error', False),
                         'content_sha256': hashlib.sha256(content.encode()).hexdigest(), 'content_bytes': len(content.encode())})
-                body = response(step)
+                body = response(step, reflection)
                 state['requests'] += 1
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
@@ -113,14 +115,14 @@ def main():
             state['completed_within_deadline'] = completed.wait(1800)
         else:
             with (root / 'host.log').open('w') as output:
-                run = subprocess.run([host, image, vendor, str(session), str(server.server_port)],
+                run = subprocess.run([host, image, vendor, str(session), str(server.server_port)] + (['reflection'] if reflection else []),
                     stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=180)
             state['host_exit'] = run.returncode
     finally:
         server.shutdown(); server.server_close(); worker.join(timeout=5)
         (root / 'fixture.json').write_text(json.dumps(state, indent=2) + '\n')
     print(json.dumps(state, sort_keys=True))
-    if state.get('host_exit', 0) or state['requests'] != 5 or len(state['tool_results']) != 4 or state['errors']:
+    if state.get('host_exit', 0) or state['requests'] != (1 if reflection else 5) or len(state['tool_results']) != (0 if reflection else 4) or state['errors']:
         raise SystemExit(1)
 
 

@@ -37,9 +37,12 @@ def main():
     entry_flags = [] if sys.argv[1] == "runtime-probe" else ["-parse-as-library"]
     fixture_flags = ["-DSANDBOX_TEST_FIXTURES", "-enable-testing"] if sys.argv[1] in {"business-probe", "business-fixture", "permission-clock"} else []
     command = ["swiftc", *entry_flags, *fixture_flags, "-package-name", "MiniSandbox", "-swift-version", "6", "-I", str(binary_dir / "Modules"), *map(str, sources), *map(str, objects), "-o", str(out / "host")]
+    hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources + objects}
     print(json.dumps({"command": command}), flush=True)
     subprocess.run(command, cwd=root, check=True)
-    hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    after = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources + objects}
+    if hashes != after or sorted((root / "Sources/SandboxHost").glob("*.swift")) != sources[:-1]:
+        raise SystemExit("build inputs changed during compile; binary is not accepted evidence")
     hashes["host"] = hashlib.sha256((out / "host").read_bytes()).hexdigest()
     (out / "build.json").write_text(json.dumps({"mode": sys.argv[1], "command": command, "sha256": hashes}, indent=2) + "\n")
 

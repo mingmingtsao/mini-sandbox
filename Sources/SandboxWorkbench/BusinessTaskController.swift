@@ -10,9 +10,10 @@ private actor TaskWorkspaceOwner {
     struct Summary: Sendable { let id: UUID; let files: Int; let bytes: Int; let exclusions: [String] }
     private var store: WorkspaceStore?
     private var snapshot: WorkspaceSnapshot?
-    func prepare(source: URL, root: URL) throws -> Summary {
+    func prepare(source: URL, root: URL, cancellation: WorkspaceExportCancellation) throws -> Summary {
         guard store == nil else { throw BusinessTaskFailure.unavailable }
-        let value = try WorkspaceStore(newRoot: root.path)
+        guard !cancellation.isCancelled else { throw BusinessTaskFailure.cancelled }
+        let value = try WorkspaceStore(newRoot: root.path, cancellation: cancellation)
         let snapshot = try value.importTree(from: source.path)
         store = value; self.snapshot = snapshot
         return Summary(id: snapshot.id.grantSnapshotID, files: snapshot.manifest.filter { !$0.directory }.count,
@@ -127,6 +128,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     private var workspace: WorkspaceRunSession?
     private var display: BusinessDisplayOutput?
     private var decisions: [UUID: BusinessDecisionWaiter] = [:]
+    private var workspaceCancellation: WorkspaceExportCancellation?
     private var exportCancellation: WorkspaceExportCancellation?
     private var guestFinished = false
     private var transferFinished = false
@@ -159,12 +161,15 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         selectedConnectionID = configuration.connectionID
         let mcpConfiguration = useMCP ? composition.mcpSettings.configuration : nil
         selectedMCPConnectionID = mcpConfiguration?.connectionID
+        let workspaceCancellation = WorkspaceExportCancellation()
+        self.workspaceCancellation = workspaceCancellation
         guestFinished = false; transferFinished = false; guestSucceeded = false; resultStopRequested = false
         finishedDigest = nil; transferredDigest = nil
         generation = UUID(); let token = generation, task = task, allowMCPWrite = allowMCPWrite
         runTask = Task { [self] in
             do { try await execute(project: project, runtime: runtimeDirectory, vendor: vendorDisk, task: task,
-                configuration: configuration, mcpConfiguration: mcpConfiguration, allowMCPWrite: allowMCPWrite, token: token) }
+                configuration: configuration, mcpConfiguration: mcpConfiguration, allowMCPWrite: allowMCPWrite,
+                workspaceCancellation: workspaceCancellation, token: token) }
             catch {
                 if !(error is CancellationError), !(error is BusinessTaskFailure && generation != token) {
                     self.error = "Task stopped: \(String(describing: error))"
@@ -181,7 +186,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     }
     private func execute(project: URL, runtime: URL, vendor: URL, task: String,
                          configuration: FixedModelConnectionConfiguration, mcpConfiguration: LocalMCPConfiguration?,
-                         allowMCPWrite: Bool, token: UUID) async throws {
+                         allowMCPWrite: Bool, workspaceCancellation: WorkspaceExportCancellation, token: UUID) async throws {
         status = "Verifying runtime and copying the selected project…"
         let bundle = try await Task.detached { try BusinessRuntimeBundle(directory: runtime, vendorDisk: vendor) }.value
         try check(token)
@@ -190,7 +195,8 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         let vmDirectory = root.appendingPathComponent("VM", isDirectory: true)
         try FileManager.default.createDirectory(at: vmDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let owner = TaskWorkspaceOwner()
-        let summary = try await owner.prepare(source: project, root: root.appendingPathComponent("Workspace", isDirectory: true))
+        let summary = try await owner.prepare(source: project, root: root.appendingPathComponent("Workspace", isDirectory: true),
+            cancellation: workspaceCancellation)
         try check(token)
         importExclusions = summary.exclusions
         let workspaceConnectionID = UUID(), resource = "workspace:" + summary.id.uuidString
@@ -468,7 +474,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     package func decide(_ id: UUID, allow: Bool) { decisions[id]?.resolve(allow) }
     package func finishReview() {
         guard !isBusy, !isClosing else { return }
-        review = nil; workspace = nil; hasUnexportedResult = false
+        review = nil; workspace = nil; workspaceCancellation = nil; hasUnexportedResult = false
         status = "Review closed. The task snapshot remains in the private task directory."
     }
     package func expireApprovals() {
@@ -477,7 +483,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     package func cancel() {
         generation = UUID()
         run?.authorityHandle.lifecycle.terminate(.stopped)
-        vm?.cancel(); workspace?.cancel(); display?.cancel(); exportCancellation?.cancel()
+        vm?.cancel(); workspaceCancellation?.cancel(); workspace?.cancel(); display?.cancel(); exportCancellation?.cancel()
         for waiter in decisions.values { waiter.resolve(false) }
         runTask?.cancel(); exportTask?.cancel()
         if isBusy { status = "Stopping · waiting for the actual VM and callbacks…" }

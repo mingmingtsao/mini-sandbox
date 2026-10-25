@@ -19,6 +19,7 @@ final class BusinessVMPreparedStart: @unchecked Sendable {
     }
     func acquireForStart() { lock.lock() }
     func releaseForStart() { lock.unlock() }
+    var didInvokeStart: Bool { lock.withLock { started } }
     func startLocked() throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !cancelled, !started else { throw BusinessVMError.closed }
@@ -40,6 +41,8 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     let lifecycle: RunLifecycle
     let channelID: UUID
     let actionID: UUID?
+    let notBefore: Date?
+    let startDeadline: Date?
     private let lock = NSLock()
     private let connection: BusinessVMConnection
     private let bytes: Data
@@ -50,30 +53,34 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
     private var cleanupOwner = false
     private let retireAfterFrame: Bool
     private var writeCount = 0
+    private var backpressureCount = 0
 
     init(connection: BusinessVMConnection, handle: HostRunHandle, scope: RunEffectScope,
-         body: Data, actionID: UUID? = nil) throws {
+         body: Data, actionID: UUID? = nil, notBefore: Date? = nil, startDeadline: Date? = nil) throws {
         guard connection.lifecycle === handle.lifecycle, connection.runID == handle.runID,
               connection.epoch == scope.generation, !body.isEmpty, body.count <= 16_384,
               [.control, .workspace, .permission].contains(connection.service) else { throw BusinessVMError.invalidOwner }
         if connection.service == .permission {
-            guard actionID != nil, scope.connectionID != nil else { throw BusinessVMError.invalidOwner }
+            guard actionID != nil, scope.connectionID != nil,
+                  let notBefore, let startDeadline, notBefore < startDeadline else { throw BusinessVMError.invalidOwner }
             self.bytes = body; retireAfterFrame = true
         } else {
-            guard actionID == nil else { throw BusinessVMError.invalidOwner }
+            guard actionID == nil, notBefore == nil, startDeadline == nil else { throw BusinessVMError.invalidOwner }
             var length = UInt32(body.count).bigEndian
             self.bytes = withUnsafeBytes(of: &length) { Data($0) } + body
             retireAfterFrame = false
         }
         self.handle = handle; generation = scope.generation; self.scope = scope
         lifecycle = handle.lifecycle; channelID = connection.id; self.actionID = actionID
+        self.notBefore = notBefore; self.startDeadline = startDeadline
         self.connection = connection
-        descriptor = try connection.takeFrameDescriptor()
+        descriptor = try connection.takeFrameDescriptor(bytes: bytes.count)
     }
 
     package var completed: Bool { lock.withLock { terminal && offset == bytes.count } }
     package var committedBytes: Int { lock.withLock { offset } }
     package var writeCalls: Int { lock.withLock { writeCount } }
+    package var backpressureWrites: Int { lock.withLock { backpressureCount } }
     package func acceptNext() throws -> Bool {
         do { return try lifecycle.acceptVMFrame(self) }
         catch { cancel(); throw error }
@@ -97,6 +104,7 @@ package final class BusinessVMFrameOutput: @unchecked Sendable {
         }
         writeCount += 1
         if written < 0 {
+            if errno == EAGAIN { backpressureCount += 1 }
             if errno == EAGAIN || errno == EINTR { return false }
             throw BusinessVMError.io
         }

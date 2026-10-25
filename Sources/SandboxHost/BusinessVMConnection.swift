@@ -31,6 +31,8 @@ package final class BusinessVMConnection: @unchecked Sendable {
     private var closed = false
     private var readPending = false
     private var received = 0
+    private var outboundBytes = 0
+    private var outboundFrames = 0
     private let byteLimit: Int
     private let deadline: ContinuousClock.Instant
     private let retired: @Sendable (UUID) -> Void
@@ -99,13 +101,17 @@ package final class BusinessVMConnection: @unchecked Sendable {
         }
     }
 
-    func takeFrameDescriptor() throws -> Int32 {
+    func takeFrameDescriptor(bytes: Int) throws -> Int32 {
         try lock.withLock {
+            let byteCap = service == .workspace ? 32 * 1024 * 1024 : service == .control ? 16_388 : 16_384
+            let frameCap = service == .workspace ? 8192 : 1
             guard !closed, !claimed, !frameClaimed, descriptor >= 0,
                   [.control, .workspace, .permission].contains(service),
+                  bytes > 0, bytes <= byteCap - outboundBytes, outboundFrames < frameCap,
                   ContinuousClock.now < deadline else { throw BusinessVMError.alreadyClaimed }
             let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
             guard duplicate >= 0 else { throw BusinessVMError.io }
+            outboundBytes += bytes; outboundFrames += 1
             frameClaimed = true
             return duplicate
         }
@@ -153,7 +159,8 @@ extension BusinessVMSession {
         guard !closing, socketDevice === device,
               let service = listeners.first(where: { $0.value === listener })?.key,
               connections.count < 8,
-              connections.values.filter({ $0.service == service }).count < (service == .model || service == .mcp ? 2 : 1),
+              connections.values.filter({ $0.service == service }).count < (service == .model || service == .mcp ? min(2, grant.resourceLimits.concurrentRequests) : 1),
+              admittedConnections[service, default: 0] < (service == .control || service == .workspace ? 1 : 64),
               handle.lifecycle.observeAndReduce(reason: "business-vm-accept").status == .active,
               handle.lifecycle.currentGeneration == grant.epoch else {
             connection.close(); return false
@@ -162,6 +169,7 @@ extension BusinessVMSession {
             let owner = try BusinessVMConnection(connection: connection, session: self,
                 service: service, queue: queue) { [weak self] id in self?.removeConnection(id) }
             connections[owner.id] = owner
+            admittedConnections[service, default: 0] += 1
             guard publish(owner) else { owner.retire(); requestStop(); return false }
             return true
         } catch { connection.close(); return false }

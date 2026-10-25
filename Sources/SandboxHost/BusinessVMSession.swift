@@ -11,11 +11,15 @@ package struct BusinessVMStopReport: Sendable {
     package let callbacksSettled: Bool
     package let diskRemoved: Bool
     package let consoleBytes: Int
+    package let startInvoked: Bool
+    package let stoppedDuringStart: Bool
     fileprivate init(runtimeID: UUID, runID: UUID, epoch: UInt64, actualStopped: Bool,
-                     callbacksSettled: Bool, diskRemoved: Bool, consoleBytes: Int) {
+                     callbacksSettled: Bool, diskRemoved: Bool, consoleBytes: Int,
+                     startInvoked: Bool, stoppedDuringStart: Bool) {
         self.runtimeID = runtimeID; self.runID = runID; self.epoch = epoch
         self.actualStopped = actualStopped; self.callbacksSettled = callbacksSettled
         self.diskRemoved = diskRemoved; self.consoleBytes = consoleBytes
+        self.startInvoked = startInvoked; self.stoppedDuringStart = stoppedDuringStart
     }
 }
 
@@ -44,12 +48,14 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
     var socketDevice: VZVirtioSocketDevice?
     var listeners: [BusinessVMService: VZVirtioSocketListener] = [:]
     var connections: [UUID: BusinessVMConnection] = [:]
+    var admittedConnections: [BusinessVMService: Int] = [:]
     private var machine: VZVirtualMachine?
     private var console: Pipe?
     private var consoleBytes = 0
     private var disk: URL?
     private var timer: DispatchSourceTimer?
     private var startPending = false, stopPending = false, stopIssued = false
+    private var stoppedDuringStart = false
     private var prepared: BusinessVMPreparedStart?
     private let effectID = UUID()
     private var startContinuation: CheckedContinuation<Void, Error>?
@@ -177,6 +183,7 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
         // VM queue. Their VZ originals are closed later on that queue.
         for owner in owners { owner.retire() }
         queue.async { [self] in
+            stoppedDuringStart = startPending
             stopDeadline = .now.advanced(by: .seconds(15))
             eventContinuation.yield(.stopping)
             for service in BusinessVMService.allCases { socketDevice?.removeSocketListener(forPort: service.rawValue) }
@@ -267,8 +274,26 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
 
     private func report(actualStopped: Bool, callbacksSettled: Bool, diskRemoved: Bool) -> BusinessVMStopReport {
         BusinessVMStopReport(runtimeID: id, runID: grant.runID, epoch: grant.epoch, actualStopped: actualStopped,
-                            callbacksSettled: callbacksSettled, diskRemoved: diskRemoved, consoleBytes: consoleBytes)
+                            callbacksSettled: callbacksSettled, diskRemoved: diskRemoved, consoleBytes: consoleBytes,
+                            startInvoked: prepared?.didInvokeStart ?? false, stoppedDuringStart: stoppedDuringStart)
     }
+
+    #if DEBUG || SANDBOX_TEST_FIXTURES
+    /// A bounded fault-injection point for actual VZ backpressure checks. This
+    /// method is absent from the normal optimized application. It does not emit
+    /// output or change authorization; cancellation still owns the paused VM.
+    package func pauseForBackpressureCheck() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async { [self] in
+                guard !closing, let machine, machine.canPause else { continuation.resume(throwing: BusinessVMError.closed); return }
+                machine.pause { result in
+                    guard !self.closing else { continuation.resume(throwing: BusinessVMError.closed); return }
+                    continuation.resume(with: result)
+                }
+            }
+        }
+    }
+    #endif
 
     package func makeFrameOutput(connection: BusinessVMConnection, body: Data) throws -> BusinessVMFrameOutput {
         guard connection.runtimeID == id, [.control, .workspace].contains(connection.service) else { throw BusinessVMError.invalidOwner }

@@ -174,3 +174,13 @@ Physical VM retirement therefore prevents a new request even when result-stop
 intentionally preserves the run long enough to adopt files. Direct start() is
 unavailable for a VM-bound operation; fixture/native diagnostics without a VM
 retain their separate existing behavior.
+
+The actual pinned SDK's MCP tool permission uses only
+`mcp__sandbox__repo_read` / `mcp__sandbox__repo_write`, with exact
+`mcp_server:{name:sandbox,source:dynamic}` and `server_policy_ask_only:true`.
+These fields remain bound metadata and grant no authority. Typed `repo`/`content`
+arguments resolve a separate configured MCP connection and the corresponding
+`mcp` resource/operation scope; workspace permissions cannot authorize them.
+Resource B is parsed so the explicit grant decision can deny it before a tool
+allow reply. The subsequent actual MCP HTTP call still requires its own exact
+gateway approval and concrete output. No permission suggestion is applied.

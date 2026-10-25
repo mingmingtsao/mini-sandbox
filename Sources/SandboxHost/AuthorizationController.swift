@@ -36,6 +36,7 @@ public final class HostRunHandle: @unchecked Sendable {
 
     public let lifecycle: RunLifecycle
     public let runID: UUID
+    package var installedEpoch: UInt64 { installedGrant.epoch }
     let grantDigest: String
     fileprivate init(token: UUID, lifecycle: RunLifecycle, grant: RunGrant, authorityIdentity: UUID) {
         self.token = token; self.lifecycle = lifecycle

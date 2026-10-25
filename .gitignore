@@ -1,6 +1,7 @@
 .build/
 .swiftpm/
 dist/
+coverage-report/
 .DS_Store
 __pycache__/
 *.pyc

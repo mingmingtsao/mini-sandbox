@@ -14,6 +14,7 @@
     "WorkspaceTransferChecks",
     "VMChecks",
     "RuntimeReceiveChecks",
+    "PresentationChecks (validated)",
     "ExecutionBoundaryChecks",
     "ExecutionBoundaryChecks --final-effect-clock",
     "ExecutionBoundaryChecks --native-repairs",
@@ -26,17 +27,17 @@
     "WorkbenchChecks --composition-mcp (loopback)",
     "MiniSandbox --diagnostics-json (validated)"
   ],
-  "commit": "c6abf2a33b0340a67a94ac2d66c7558421b28ab8",
+  "commit": "cd4a498b0c52183154f0949809720949b6ada5bb",
   "repository": "mingmingtsao/mini-sandbox",
-  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40207862601",
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40211112860",
   "lines": 7104,
-  "covered": 5836,
-  "percent": 82.15,
+  "covered": 6470,
+  "percent": 91.08,
   "files": [
     {
       "path": "Sources/MiniSandboxApp/MiniSandboxApp.swift",
       "lines": 229,
-      "covered": 15
+      "covered": 151
     },
     {
       "path": "Sources/SandboxContracts/Contracts.swift",
@@ -46,7 +47,7 @@
     {
       "path": "Sources/SandboxHost/AgentRuntimeProbe.swift",
       "lines": 235,
-      "covered": 132
+      "covered": 146
     },
     {
       "path": "Sources/SandboxHost/AnthropicNativeRequest.swift",
@@ -71,7 +72,7 @@
     {
       "path": "Sources/SandboxHost/EnvironmentInspector.swift",
       "lines": 33,
-      "covered": 28
+      "covered": 32
     },
     {
       "path": "Sources/SandboxHost/HeadlessVMProbe.swift",
@@ -136,7 +137,7 @@
     {
       "path": "Sources/SandboxHost/ModelTransport.swift",
       "lines": 411,
-      "covered": 405
+      "covered": 404
     },
     {
       "path": "Sources/SandboxHost/NativeResponseChannel.swift",
@@ -161,7 +162,7 @@
     {
       "path": "Sources/SandboxHost/RuntimeJSON.swift",
       "lines": 156,
-      "covered": 125
+      "covered": 155
     },
     {
       "path": "Sources/SandboxHost/SecurityEvent.swift",
@@ -181,7 +182,7 @@
     {
       "path": "Sources/SandboxHost/VMVerifiedBundle.swift",
       "lines": 48,
-      "covered": 0
+      "covered": 48
     },
     {
       "path": "Sources/SandboxHost/WorkspaceCopy.swift",
@@ -206,7 +207,7 @@
     {
       "path": "Sources/SandboxWorkbench/ConnectionSettingsView.swift",
       "lines": 132,
-      "covered": 0
+      "covered": 127
     },
     {
       "path": "Sources/SandboxWorkbench/KeychainCanarySelfCheck.swift",
@@ -221,12 +222,12 @@
     {
       "path": "Sources/SandboxWorkbench/WorkbenchModel.swift",
       "lines": 367,
-      "covered": 334
+      "covered": 346
     },
     {
       "path": "Sources/SandboxWorkbench/WorkbenchView.swift",
       "lines": 472,
-      "covered": 207
+      "covered": 471
     }
   ]
 }

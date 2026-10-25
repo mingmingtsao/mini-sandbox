@@ -13,6 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = ".mini-sandbox-owner"
+ENTITLEMENTS = Path(__file__).with_name("app.entitlements")
 
 
 def run(*args: str) -> None:
@@ -88,7 +89,8 @@ def main() -> None:
     (staging / "Contents/Resources" / MARKER).write_text(json.dumps(ownership(app), sort_keys=True))
     # Launch Services needs traversal; group/world write remains prohibited.
     os.chmod(staging, 0o755)
-    run("codesign", "--force", "--sign", args.sign_identity, str(staging))
+    run("codesign", "--force", "--sign", args.sign_identity,
+        "--entitlements", str(ENTITLEMENTS), str(staging))
     run("codesign", "--verify", "--strict", "--verbose=2", str(staging))
     if safe_directory(ROOT) != root_identity or safe_directory(dist) != dist_identity or safe_directory(staging) != staging_identity:
         raise RuntimeError("Output directory changed while signing; staged bundle preserved")

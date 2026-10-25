@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Workflow and Python syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Check Python syntax
+        run: python3 -m compileall -q scripts Tests
+      - name: Check workflow syntax with pinned actionlint
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  python:
+    name: Python safety and host fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Packaging path and ownership regressions
+        run: python3 -m unittest discover -s Tests/PackagingTests -v
+      - name: Loopback OAuth and MCP fixtures
+        run: python3 -m unittest discover -s Tests/Fixtures/host_services -v
+
+  macos:
+    name: macOS build, contracts and packaging
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Record toolchain and require Apple Silicon
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          swift --version
+          python3 --version
+      - name: Build all Debug targets
+        run: swift build
+      - name: Public contract checks
+        run: swift run --skip-build ContractChecks
+      - name: Public API compile-time boundaries
+        run: python3 -m unittest discover -s Tests/APITests -v
+      - name: Build and verify the Release app with ad-hoc signing
+        run: |
+          python3 scripts/build-app.py --configuration release --sign-identity -
+          codesign --verify --strict --verbose=2 dist/MiniSandbox.app
+
+  ci:
+    name: CI
+    if: ${{ always() }}
+    needs: [lint, python, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require every check to succeed
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+        run: |
+          printf 'lint=%s python=%s macos=%s\n' "$LINT_RESULT" "$PYTHON_RESULT" "$MACOS_RESULT"
+          test "$LINT_RESULT" = success
+          test "$PYTHON_RESULT" = success
+          test "$MACOS_RESULT" = success

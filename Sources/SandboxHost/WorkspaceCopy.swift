@@ -549,18 +549,23 @@ public final class WorkspaceStore {
         for part in parts { try component(part) }
         return parts
     }
-    private static func openDirectory(_ path: String) throws -> WorkspaceFD {
+    private static func openDirectory(_ path: String, searchOnly: Bool = false) throws -> WorkspaceFD {
         let parts = try pathParts(path)
-        var fd = try WorkspaceFD(open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW))
-        for part in parts { fd = try child(fd, part, directory: true) }
+        // Ancestors are only traversed and checked, never enumerated. Requiring
+        // their directory-read permission would exceed access to the selected
+        // tree. The final tree still opens for read before any content scan.
+        var fd = try WorkspaceFD(open("/", O_SEARCH | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW))
+        for (index, part) in parts.enumerated() {
+            fd = try child(fd, part, directory: true, searchOnly: searchOnly || index < parts.count - 1)
+        }
         return fd
     }
     private static func parent(_ path: String) throws -> (WorkspaceFD, String) {
         var parts = try pathParts(path)
         let name = parts.removeLast()
         let fd: WorkspaceFD
-        if parts.isEmpty { fd = try WorkspaceFD(open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW)) }
-        else { fd = try openDirectory("/" + parts.joined(separator: "/")) }
+        if parts.isEmpty { fd = try WorkspaceFD(open("/", O_SEARCH | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW)) }
+        else { fd = try openDirectory("/" + parts.joined(separator: "/"), searchOnly: true) }
         return (fd, name)
     }
     // Pure stat classifier; device coverage needs no host device creation.
@@ -570,11 +575,14 @@ public final class WorkspaceStore {
             throw WorkspaceError.rejected("unsupported file type or hard link")
         }
     }
-    private static func child(_ parent: WorkspaceFD, _ name: String, directory: Bool = false) throws -> WorkspaceFD {
+    private static func child(_ parent: WorkspaceFD, _ name: String, directory: Bool = false, searchOnly: Bool = false) throws -> WorkspaceFD {
         var before = stat()
         guard fstatat(parent.value, name, &before, AT_SYMLINK_NOFOLLOW) == 0 else { throw WorkspaceError.io("entry stat", errno) }
         try checkNodeType(before, directory: directory)
-        let fd = try WorkspaceFD(openat(parent.value, name, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW | (directory ? O_DIRECTORY : 0)))
+        // Search mode is available only for known directory traversal. Ordinary
+        // children, selected roots and scan descriptors retain O_RDONLY.
+        let access = directory && searchOnly ? O_SEARCH : O_RDONLY
+        let fd = try WorkspaceFD(openat(parent.value, name, access | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW | (directory ? O_DIRECTORY : 0)))
         let s = try status(fd)
         try checkNodeType(s, directory: directory)
         guard WorkspaceIdentity(before) == WorkspaceIdentity(s) else { throw WorkspaceError.mutated }
@@ -592,7 +600,7 @@ public final class WorkspaceStore {
         for _ in 0..<256 {
             let here = try identity(current)
             if here == target { return true }
-            let up = try Self.child(current, "..", directory: true)
+            let up = try Self.child(current, "..", directory: true, searchOnly: true)
             if try identity(up) == here { return false }
             current = up
         }
@@ -654,7 +662,7 @@ public final class WorkspaceStore {
                 throw WorkspaceError.rejected("unsafe ancestor permissions")
             }
             try checkACL(fd, requireEmpty: false)
-            let up = try child(fd, "..", directory: true)
+            let up = try child(fd, "..", directory: true, searchOnly: true)
             if try identity(fd) == identity(up) { return }
             fd = up
         }

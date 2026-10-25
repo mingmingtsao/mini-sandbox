@@ -4,14 +4,14 @@ import SandboxHost
 import SandboxWorkbench
 
 final class CloseMCPCredentials: MCPCredentialProvider, @unchecked Sendable {
-    let barrier = CloseClock()
+    let barrier = CloseBarrier()
     private let lock = NSLock()
     private var reads = 0
     let token: String, fail: Bool
     init(token: String = "synthetic-" + UUID().uuidString, fail: Bool = false) { self.token = token; self.fail = fail }
     var count: Int { lock.withLock { reads } }
     func credential(for binding: MCPCredentialBinding) throws -> MCPCredential {
-        lock.withLock { reads += 1 }; _ = barrier.now()
+        lock.withLock { reads += 1 }; barrier.block()
         if fail { throw CredentialProviderError.unavailable }
         return MCPCredential(binding: binding, bearer: token)
     }

@@ -172,8 +172,30 @@ handler arrival; they are not sleep/FIFO assumptions. Only the completed-outcome
 cleanup failure was a newly witnessed RED in this four-case slice; the remaining
 cases first ran GREEN and are coverage, not invented historical failures.
 
-**Activation blockers remain:** this increment needs a new independent review;
-shared-clock/final-effect integration is separate. Credential preparation and
+### Closed-clock composition and concrete native close control
+
+The composition passes one closed `RunClock` into its existing authority; it does
+not restore arbitrary wall/monotonic constructor callbacks. Attachment scheduling
+fixtures use a separate `CloseBarrier`, not the clock. Their package-only
+`withPreAcquisitionBarrier` holds the authority actor before attachment validation
+or installation, without any lifecycle/operation/receiver lock. It is compiled
+only for Debug or explicit test-fixture builds, not the normal Release product.
+All original barrier-entry, timeout, ownership and settlement assertions remain.
+
+`WorkbenchChecks --composition-native-close-only` uses the composition-installed
+model handle, a real URLSession producer with offline protocol interception, and
+an actual owned AF_UNIX socket. The positive control drains a full native response.
+The close control commits a real partial prefix, synchronously closes the
+composition, then verifies no new write call or late complete-event acceptance;
+previously committed peer bytes and counters remain truthful. It measures source
+credential reads, resumes, protocol arrivals, durable completion/audit sequence,
+and drained ownership/registration counts. Both controls first ran GREEN; neither
+is presented as a newly witnessed pre-fix failure. The default Workbench suite
+also runs them. This is local socket delivery, not VM/device binding, rendered GUI
+or external-provider interoperability.
+
+**Activation blockers remain:** the combined clock/composition increment needs a
+new independent review before activation. Credential preparation and
 detached storage retain check-to-entry scheduling gaps, so these checks do not
 establish a universal physical credential-read-start-after-close guarantee. An
 already-entered synchronous storage call may finish after close. Raw legacy

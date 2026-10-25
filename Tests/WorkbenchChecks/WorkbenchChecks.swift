@@ -7,6 +7,10 @@ import SandboxWorkbench
 @main struct WorkbenchChecks {
     @MainActor static func main() async {
         do {
+            if CommandLine.arguments.contains("--composition-native-close-only") {
+                try await CompositionNativeCloseChecks.run()
+                return
+            }
             if CommandLine.arguments.contains("--composition-diagnostic-only") {
                 try await CompositionDiagnosticChecks.run()
                 return
@@ -149,6 +153,7 @@ import SandboxWorkbench
             try await CompositionCloseChecks.run()
             try await CompositionBoundsChecks.run()
             try await CompositionDiagnosticChecks.run()
+            try await CompositionNativeCloseChecks.run()
         } catch { print("FAIL: \(error)"); exit(1) }
     }
     @MainActor static func withWritesBlocked(_ operation: @MainActor () async throws -> Void) async throws {

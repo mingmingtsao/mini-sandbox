@@ -258,6 +258,12 @@ public actor RunAuthorizationController {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+#if DEBUG || SANDBOX_TEST_FIXTURES
+    /// Scheduling fixture before authority acquisition; no lifecycle, operation
+    /// or receiver lock is held. Never supplies clock data or effect permission.
+    package func withPreAcquisitionBarrier(_ barrier: @Sendable () -> Void) { barrier() }
+#endif
+
     public func install(grant: RunGrant) throws -> HostRunHandle {
         let installed = clock.sample()
         let current = installed.wall

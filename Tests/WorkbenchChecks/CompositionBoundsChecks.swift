@@ -132,9 +132,9 @@ import SandboxWorkbench
         let grant = try ConnectionSettingsChecks.makeGrant(nil), handle = try await root.authority.install(grant: grant)
         let model = root.model
         if duplicate { try await CompositionCloseChecks.attach(entry, root: root, grant: grant, handle: handle) }
-        let barrier = CloseClock()
+        let barrier = CloseBarrier()
         let hook: @Sendable (HostAttachmentPhase) async -> Void = { phase in
-            if phase == .afterRegistration { await Task.detached { barrier.arm(); _ = barrier.now() }.value }
+            if phase == .afterRegistration { await Task.detached { barrier.arm(); barrier.block() }.value }
         }
         if entry == "model" { await model.setAttachmentBarrier(hook) }
         else { await root.mcp.setAttachmentBarrier(hook) }
@@ -162,9 +162,9 @@ import SandboxWorkbench
         let audit = try WorkbenchAuditSink(newFileAt: path)
         let root = try RunComposition(audit: audit, credentialStore: SettingsStore())
         let grant = try ConnectionSettingsChecks.makeGrant(nil), handle = try await root.authority.install(grant: grant)
-        let barrier = CloseClock()
+        let barrier = CloseBarrier()
         let hook: @Sendable (HostAttachmentPhase) async -> Void = { observed in
-            if observed == phase { await Task.detached { barrier.arm(); _ = barrier.now() }.value }
+            if observed == phase { await Task.detached { barrier.arm(); barrier.block() }.value }
         }
         if entry == "model" { await root.model.setAttachmentBarrier(hook) }
         else { await root.mcp.setAttachmentBarrier(hook) }
@@ -202,7 +202,7 @@ import SandboxWorkbench
         var rejected = false
         do { _ = try await root.model.install(grant: ConnectionSettingsChecks.makeGrant(nil)) }
         catch AuthorizationError.pendingLimit { rejected = true }
-        let cleanup = root.workbench.closeOwnedRuns!, entered = CloseClock()
+        let cleanup = root.workbench.closeOwnedRuns!, entered = CloseBarrier()
         root.workbench.closeOwnedRuns = { entered.entered.signal(); return await cleanup() }
         let closing = Task { await root.close() }
         let reachedCleanup = await Task.detached { entered.wait() }.value
@@ -240,34 +240,36 @@ import SandboxWorkbench
     static func pendingCapacityAndFailureRecovery() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("pending-cap-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: path) }
-        let clock = CloseClock(), root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore(), now: clock.now)
-        // An expired grant blocks inside install's first sample then fails; all
-        // 32 reservations must recover without allocating any retained run.
+        let barrier = CloseBarrier(), root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore())
+        // Hold authority acquisition separately from the closed clock. All 32
+        // expired-grant reservations recover without allocating a retained run.
         let valid = try ConnectionSettingsChecks.makeGrant(nil)
         let expired = try RunGrant(runID: valid.runID, epoch: valid.epoch, createdAt: Date().addingTimeInterval(-100),
             expiresAt: Date().addingTimeInterval(-1), workloadImageDigest: valid.workloadImageDigest,
             agentAdapterVersion: valid.agentAdapterVersion, workspaceSnapshotID: valid.workspaceSnapshotID,
             policyDigest: valid.policyDigest, approvalSnapshotID: valid.approvalSnapshotID, connections: [],
             explicitDenies: [], resourceLimits: valid.resourceLimits)
-        clock.arm()
+        barrier.arm()
+        let hold = Task { await root.authority.withPreAcquisitionBarrier { barrier.block() } }
+        let entered = await Task.detached { barrier.wait() }.value
         let tasks = (0..<32).map { _ in Task { () -> Bool in
             do { _ = try await root.model.install(grant: expired); return false }
             catch AuthorizationError.grantExpired { return true }
             catch { return false }
         } }
-        let entered = await Task.detached { clock.wait() }.value
         for _ in 0..<5000 { if root.pendingOwnedWork == 32 { break }; try await Task.sleep(for: .milliseconds(1)) }
         let full = root.pendingOwnedWork == 32 && root.retainedOwnedRuns == 0
         var rejected = false
         do { _ = try await root.mcp.install(grant: valid) }
         catch AuthorizationError.pendingLimit { rejected = true }
-        clock.release.signal()
+        barrier.release.signal()
+        await hold.value
         var failedExpected = true
         for task in tasks { failedExpected = await task.value && failedExpected }
         let empty = root.pendingOwnedWork == 0 && root.retainedOwnedRuns == 0
         _ = try await root.install(valid)
         let closed = await root.close()
-        try ConnectionSettingsChecks.require(entered && !clock.timedOut && full && rejected && failedExpected && empty && closed,
+        try ConnectionSettingsChecks.require(entered && !barrier.timedOut && full && rejected && failedExpected && empty && closed,
             "pending cap rejects before allocation and releases all failed reservations for reuse")
         print("PASS bounds pending cap+1 before allocation and failure recovery")
     }

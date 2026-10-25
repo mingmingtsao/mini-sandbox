@@ -36,7 +36,7 @@ final class CloseFixtureProtocol: URLProtocol {
 }
 
 final class CloseCredentials: ModelCredentialProvider, @unchecked Sendable {
-    let barrier = CloseClock()
+    let barrier = CloseBarrier()
     private let lock = NSLock()
     private var reads = 0
     private let fail: Bool
@@ -44,25 +44,24 @@ final class CloseCredentials: ModelCredentialProvider, @unchecked Sendable {
     var count: Int { lock.withLock { reads } }
     func credential(for model: FixedModel) throws -> String {
         lock.withLock { reads += 1 }
-        _ = barrier.now()
+        barrier.block()
         if fail { throw CredentialProviderError.unavailable }
         return "synthetic-" + UUID().uuidString
     }
 }
 
-final class CloseClock: @unchecked Sendable {
+final class CloseBarrier: @unchecked Sendable {
     private let lock = NSLock()
     private var armed = false
     private var timeout = false
     let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
     func arm() { lock.withLock { armed = true } }
-    func now() -> Date {
+    func block() {
         let hold = lock.withLock { let result = armed; armed = false; return result }
         if hold {
             entered.signal()
             if release.wait(timeout: .now() + 10) != .success { lock.withLock { timeout = true } }
         }
-        return Date()
     }
     var timedOut: Bool { lock.withLock { timeout } }
     func wait() -> Bool { entered.wait(timeout: .now() + 5) == .success }
@@ -100,14 +99,13 @@ final class CloseClock: @unchecked Sendable {
 #if DEBUG
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("ownership-pending-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: path) }
-        let clock = CloseClock()
-        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore(), now: clock.now)
+        let barrier = CloseBarrier()
+        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore())
         let grant = try ConnectionSettingsChecks.makeGrant(nil)
         let handle = try await root.authority.install(grant: grant)
-        clock.arm()
-        let audit = Task { try await root.authority.recordGuestDiagnostic(runID: grant.runID,
-            operation: "fixture", resourceSummary: "fixture", message: "fixture") }
-        let entered = await Task.detached { clock.wait() }.value
+        barrier.arm()
+        let hold = Task { await root.authority.withPreAcquisitionBarrier { barrier.block() } }
+        let entered = await Task.detached { barrier.wait() }.value
         let attaching = Task { try await attach(entry, root: root, grant: grant, handle: handle) }
         // Acknowledged ledger admission, not a guessed actor scheduling delay.
         for _ in 0..<5000 {
@@ -117,12 +115,12 @@ final class CloseClock: @unchecked Sendable {
         let registered = root.pendingOwnedWork == 1
         root.beginClose()
         let terminalBeforeRelease = handle.lifecycle.currentStatus == .stopped
-        clock.release.signal()
+        barrier.release.signal()
         var rejected = false
         do { try await attaching.value } catch AuthorizationError.runRevoked { rejected = true }
-        try await audit.value
+        await hold.value
         let closed = await root.close(), repeated = await root.close()
-        try ConnectionSettingsChecks.require(entered && registered && !clock.timedOut && terminalBeforeRelease &&
+        try ConnectionSettingsChecks.require(entered && registered && !barrier.timedOut && terminalBeforeRelease &&
             rejected && closed && repeated && root.pendingOwnedWork == 0 && root.workbench.grants.isEmpty,
             "genuine local intake must be owned before suspended authority validation and sealed synchronously")
         print("PASS composition local pending \(entry) terminal before validation release")
@@ -225,9 +223,9 @@ final class CloseClock: @unchecked Sendable {
 #if DEBUG
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("composition-storage-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: path) }
-        let store = SettingsStore(), barrier = CloseClock()
+        let store = SettingsStore(), barrier = CloseBarrier()
         let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: store)
-        root.connectionSettings.storageStartBarrier = { barrier.arm(); _ = barrier.now() }
+        root.connectionSettings.storageStartBarrier = { barrier.arm(); barrier.block() }
         let checking = Task { await root.connectionSettings.checkStoredCredential() }
         let entered = await Task.detached { barrier.wait() }.value
         root.beginClose()
@@ -271,7 +269,7 @@ final class CloseClock: @unchecked Sendable {
             root.beginClose()
             let terminalBeforeRelease = lifecycle.currentStatus != .active
             let readsAtClose = credentials.count
-            let cleanupSignal = CloseClock()
+            let cleanupSignal = CloseBarrier()
             let cleanup = root.workbench.closeOwnedRuns!
             root.workbench.closeOwnedRuns = { cleanupSignal.entered.signal(); return await cleanup() }
             let closing = Task { await root.close() }
@@ -320,10 +318,10 @@ final class CloseClock: @unchecked Sendable {
         for phase in RunComposition.InstallationPhase.allCases {
             let path = FileManager.default.temporaryDirectory.appendingPathComponent("composition-phase-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: path) }
-            let store = SettingsStore(), barrier = CloseClock()
+            let store = SettingsStore(), barrier = CloseBarrier()
             let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: store)
             root.installationBarrier = { observed in
-                if observed == phase { await Task.detached { barrier.arm(); _ = barrier.now() }.value }
+                if observed == phase { await Task.detached { barrier.arm(); barrier.block() }.value }
             }
             let grant = try ConnectionSettingsChecks.makeGrant(nil)
             let installing = Task { try await root.install(grant) }
@@ -351,23 +349,30 @@ final class CloseClock: @unchecked Sendable {
         for model in [true, false] {
             let path = FileManager.default.temporaryDirectory.appendingPathComponent("composition-gateway-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: path) }
-            let clock = CloseClock()
-            let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore(), now: clock.now)
+            let barrier = CloseBarrier()
+            let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore())
             let grant = try ConnectionSettingsChecks.makeGrant(nil)
-            // For implicit gateway installs the authority's first sample is an
-            // acknowledged barrier inside install, after owner registration.
-            clock.arm()
+            // Hold actor acquisition, not the data-only final clock. Gateway
+            // reservations enter before awaiting authority installation.
+            barrier.arm()
+            let hold = Task { await root.authority.withPreAcquisitionBarrier { barrier.block() } }
+            let entered = await Task.detached { barrier.wait() }.value
             let attaching = Task { () throws -> Void in
                 if model { _ = try await root.model.install(grant: grant) }
                 else { _ = try await root.mcp.install(grant: grant) }
             }
-            let entered = await Task.detached { clock.wait() }.value
+            for _ in 0..<5000 {
+                if root.pendingOwnedWork == 1 { break }
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            let registered = root.pendingOwnedWork == 1
             root.beginClose()
-            clock.release.signal()
+            barrier.release.signal()
+            await hold.value
             var rejected = false
             do { try await attaching.value } catch AuthorizationError.runRevoked { rejected = true }
             let closed = await root.close()
-            try ConnectionSettingsChecks.require(entered && !clock.timedOut && rejected && closed && root.workbench.grants.isEmpty,
+            try ConnectionSettingsChecks.require(entered && registered && !barrier.timedOut && rejected && closed && root.workbench.grants.isEmpty,
                 "pending implicit gateway installation must retire before exposing its handle")
             print("PASS composition pending \(model ? "model" : "MCP") attachment close")
         }
@@ -375,14 +380,13 @@ final class CloseClock: @unchecked Sendable {
     static func delayedWorkbenchAttachment() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("composition-attach-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: path) }
-        let clock = CloseClock()
-        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore(), now: clock.now)
+        let barrier = CloseBarrier()
+        let root = try RunComposition(audit: WorkbenchAuditSink(newFileAt: path), credentialStore: SettingsStore())
         let grant = try ConnectionSettingsChecks.makeGrant(nil)
         let handle = try await root.authority.install(grant: grant)
-        clock.arm()
-        let audit = Task { try await root.authority.recordGuestDiagnostic(runID: grant.runID,
-            operation: "fixture", resourceSummary: "fixture", message: "fixture") }
-        let entered = await Task.detached { clock.wait() }.value
+        barrier.arm()
+        let hold = Task { await root.authority.withPreAcquisitionBarrier { barrier.block() } }
+        let entered = await Task.detached { barrier.wait() }.value
         var attachment: Task<Void, Error>?
         await withCheckedContinuation { ack in
             attachment = Task { @MainActor in
@@ -392,13 +396,13 @@ final class CloseClock: @unchecked Sendable {
         let attachmentPending = root.workbench.isBusy
         root.workbench.beginClose()
         let terminalBeforeRelease = handle.lifecycle.currentStatus != .active
-        clock.release.signal()
+        barrier.release.signal()
         var rejected = false
         do { try await attachment!.value } catch AuthorizationError.runRevoked { rejected = true }
-        try await audit.value
+        await hold.value
         let closed = await root.close()
-        print("COMPOSITION_ATTACH entered=\(entered) timeout=\(clock.timedOut) pending=\(attachmentPending) terminal_before_release=\(terminalBeforeRelease) rejected=\(rejected) closed=\(closed) grants=\(root.workbench.grants.count)")
-        try ConnectionSettingsChecks.require(entered && !clock.timedOut && attachmentPending && terminalBeforeRelease && rejected && closed && root.workbench.grants.isEmpty,
+        print("COMPOSITION_ATTACH entered=\(entered) timeout=\(barrier.timedOut) pending=\(attachmentPending) terminal_before_release=\(terminalBeforeRelease) rejected=\(rejected) closed=\(closed) grants=\(root.workbench.grants.count)")
+        try ConnectionSettingsChecks.require(entered && !barrier.timedOut && attachmentPending && terminalBeforeRelease && rejected && closed && root.workbench.grants.isEmpty,
             "close must own pending workbench attachment before authority validation and reject late publication")
         print("PASS composition delayed workbench attachment terminal before barrier release")
     }

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞（私密报告）
+    url: https://github.com/mingmingtsao/mini-sandbox/security/advisories/new
+    about: 请通过私密渠道报告安全问题，不要公开提交 Issue。
+  - name: 运行指南
+    url: https://github.com/mingmingtsao/mini-sandbox/blob/main/docs/getting-started.md
+    about: 环境准备、构建、运行、测试与常见问题。

@@ -6,10 +6,10 @@
 
 | 检查 | Runner | 内容 |
 |---|---|---|
-| Workflow and Python syntax | GitHub 托管 Ubuntu 24.04 | 固定版本 actionlint；`scripts`、`Tests`、`Tools` 的 Python 语法 |
+| Workflow syntax and Python lint | GitHub 托管 Ubuntu 24.04 | 固定版本 actionlint；`scripts`、`Tests`、`Tools` 的 Python 语法；校验 SHA-256 后的 ruff 0.17.1 执行 `ruff check` 与 `ruff format --check`（配置见 `ruff.toml`） |
 | Python safety and host fixtures | GitHub 托管 Ubuntu 24.04 / Python 3.13 | 打包路径与所有权；回环 OAuth/MCP fixtures；覆盖率计数；guest builder、runtime、capture 和 VM 构建器安全回归 |
 | Go guest protocol | GitHub 托管 Ubuntu 24.04 / go.mod 固定版本 | guest 协议与身份解析的 `-race` 检查；交叉编译 Linux ARM64 guest probe |
-| macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；无凭据 CLI selector 和 driver 超时/子进程清理；Release App 构建、ad-hoc 签名及严格签名验证 |
+| macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 工具链 `swift format lint --strict`（配置见 `.swift-format`）；全部 Debug targets；`ContractChecks`；公共 API 编译边界；无凭据 CLI selector 和 driver 超时/子进程清理；Release App 构建、ad-hoc 签名及严格签名验证 |
 | Swift line coverage | GitHub 托管 macOS 26 / Apple Silicon | 独立插桩构建；运行离线 Swift、运行时/镜像边界、原生视图及认证回环检查；统计全部 `Sources/` 行覆盖率；保存报告 artifact 与摘要 |
 | CI | GitHub 托管 Ubuntu 24.04 | 汇总以上五项结果；任何失败、跳过或取消都不能被当作通过 |
 | Publish main coverage badge | GitHub 托管 Ubuntu 24.04 | 仅主线成功运行后，将覆盖率徽章与报告更新到 `ci-coverage` 分支 |
@@ -20,15 +20,23 @@ Python 按测试目录分别发现，避免没有包标记的子目录被顶层 
 
 回环 HTTP fixture 直接使用数字地址绑定，跳过 `HTTPServer` 默认的反向 DNS 查询；回归检查在禁止 `socket.getfqdn` 的情况下验证启动与 HTTP 行为，避免宿主 DNS 延迟吞掉 driver 的超时预算。
 
+## 代码扫描与依赖更新
+
+[`CodeQL` 工作流](../../.github/workflows/codeql.yml) 在 PR、`main` push、每周一定时及手动触发时运行，分别分析 GitHub Actions、Python、Go（交叉编译 guest probe 与协议测试）和 Swift（macOS 26 上 `swift build`）。结果上传到仓库的 Code scanning；该工作流只申请 `security-events: write`、`contents: read` 与 `actions: read`。
+
+[Dependabot](../../.github/dependabot.yml) 每周检查 GitHub Actions 更新，新版本发布满 7 天后才会提出 PR，SHA 与版本注释一并更新。仓库同时启用 Dependabot 安全告警、secret scanning 与 push protection。
+
+## 工具链
+
 macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift 工具链保持一致。[2026-10-25 的主线运行](https://github.com/mingmingtsao/mini-sandbox/actions/runs/40199585315) 已通过全部 CI 检查，日志记录 macOS 26.6.2、Xcode 26.6、Swift 6.3.3；最新结果以徽章及运行页面为准。
 
 ## 权限与运行边界
 
 - 只使用 GitHub 托管临时 runner，不使用自托管 Mac。
 - 检查任务仅允许 `contents: read`，汇总 job 无仓库权限。仅覆盖率发布 job 使用 `contents: write`；该 job 不在 PR 上运行，且依赖全部检查成功。
-- 检查任务的 checkout 不持久化凭据；覆盖率发布任务使用 checkout 管理的临时凭据，仅向 `ci-coverage` 分支普通推送报告，不强制覆盖历史。Actions 固定到完整 commit SHA；actionlint 下载校验固定 SHA-256。
+- 检查任务的 checkout 不持久化凭据；覆盖率发布任务使用 checkout 管理的临时凭据，仅向 `ci-coverage` 分支普通推送报告，不强制覆盖历史。Actions 固定到完整 commit SHA；actionlint 与 ruff 下载后校验固定 SHA-256。
 - 不引用仓库 secrets、不配置产品凭据，不使用 `pull_request_target` 或特权 `workflow_run` 链。
-- 仅上传覆盖率报告 artifact（保留 14 天），不发布 Release、不上传分发包、不执行自动合并，也不改分支保护。维护者可在确认运行稳定后将汇总检查 `CI` 设为必需检查。
+- 仅上传覆盖率报告 artifact（保留 14 天），不发布 Release、不上传分发包、不执行自动合并，也不改分支保护。版本发布由维护者按 [CHANGELOG](../../CHANGELOG.md) 打 tag 并创建 GitHub Release。
 - 同一 PR 的旧运行会在新提交到来时取消；每个 job 有超时。工具链具体版本记录在运行日志，runner 镜像仍会由 GitHub 更新。
 
 ## 不代表通过的项目
@@ -40,6 +48,8 @@ macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift �
 在受支持的 Apple Silicon Mac 上：
 
 ```sh
+git ls-files -z '*.swift' | xargs -0 swift format lint --strict --parallel
+uvx ruff@0.17.1 check . && uvx ruff@0.17.1 format --check .
 python3 -m compileall -q scripts Tests Tools
 python3 -m unittest discover -s Tests/PackagingTests -v
 python3 -m unittest discover -s Tests/Fixtures/host_services -v

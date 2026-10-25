@@ -335,6 +335,10 @@ cp Tools/AgentRuntime/fixture/logic.py Tools/AgentRuntime/fixture/test_logic.py 
 ```sh
 export TMPDIR="$(cd "$TMPDIR" && pwd -P)"
 
+# 代码格式与静态检查（配置见 .swift-format 与 ruff.toml）
+git ls-files -z '*.swift' | xargs -0 swift format lint --strict --parallel
+uvx ruff@0.17.1 check . && uvx ruff@0.17.1 format --check .
+
 # Python 语法与单元测试
 python3 -m compileall -q scripts Tests Tools
 for suite in PackagingTests Fixtures/host_services CoverageTests \

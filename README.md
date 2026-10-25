@@ -1,7 +1,9 @@
 # mini-sandbox
 
 [![CI](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml?query=branch%3Amain)
+[![CodeQL](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/codeql.yml?query=branch%3Amain)
 [![Swift line coverage](https://raw.githubusercontent.com/mingmingtsao/mini-sandbox/ci-coverage/coverage.svg)](https://github.com/mingmingtsao/mini-sandbox/tree/ci-coverage)
+[![Release](https://img.shields.io/github/v/release/mingmingtsao/mini-sandbox?sort=semver)](https://github.com/mingmingtsao/mini-sandbox/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 ![Platform: macOS 14+ Apple Silicon](https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Apple%20Silicon-lightgrey)
 ![Swift 6](https://img.shields.io/badge/Swift-6-orange)
@@ -9,7 +11,7 @@
 **面向 Apple Silicon Mac 的 AI Agent 安全工作台。**
 Agent 在没有网卡、没有宿主共享目录的 Linux 虚拟机里修改项目副本；模型与 MCP 凭据只留在宿主，每一次外部请求和工具权限都由你在原生界面中逐次批准，结果审阅后导出到新目录。
 
-> **快速导航**：[运行指南](docs/getting-started.md) · [架构设计](docs/architecture.md) · [文档索引](docs/README.md) · [产品规格](docs/prd/desktop-sandbox/implementation-v2/FINAL_SPEC.md)
+> **快速导航**：[运行指南](docs/getting-started.md) · [架构设计](docs/architecture.md) · [文档索引](docs/README.md) · [产品规格](docs/prd/desktop-sandbox/implementation-v2/FINAL_SPEC.md) · [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md)
 
 ---
 
@@ -71,7 +73,7 @@ cd mini-sandbox
 swift build
 swift run --skip-build MiniSandbox --diagnostics-json
 
-# 2. 打包并打开应用（本地 ad-hoc 签名，带虚拟化权利）
+# 2. 打包、签名（含虚拟化权利）并打开应用
 python3 scripts/build-app.py --configuration release --sign-identity -
 open dist/MiniSandbox.app
 
@@ -81,8 +83,7 @@ swift run --skip-build ContractChecks
 swift run --skip-build WorkspaceChecks
 ```
 
-运行真实任务还需要准备 Linux 运行时镜像和固定版本 CLI 磁盘（均不在仓库中），步骤见 [运行指南 §7](docs/getting-started.md#7-准备-vm-运行时进阶)。不使用真实凭据体验完整界面流程，见 [本地 fixture 模式](docs/getting-started.md#8-本地-fixture-模式开发者)。
-
+Linux 运行时镜像与固定版本 CLI 磁盘按锁定哈希离线构建、不随源码分发，步骤见 [运行指南 §7](docs/getting-started.md#7-准备-vm-运行时进阶)。无需真实凭据也能走通完整界面流程，见 [本地 fixture 模式](docs/getting-started.md#8-本地-fixture-模式开发者)。
 
 ## 仓库结构
 
@@ -95,8 +96,9 @@ swift run --skip-build WorkspaceChecks
 | `Tools/` | guest 镜像构建、guest 驱动、协议探针、工作区传输与诊断 VM 工具 |
 | `Tests/` | Swift 可执行检查、Python/Go 测试与回环驱动、fixtures |
 | `scripts/` | App 与 VM 探针的构建签名脚本、覆盖率脚本、权利文件 |
-| `VERSION` | 应用版本号（`build-app.py` 读取，发版时只改这一处） |
 | `docs/` | [架构设计](docs/architecture.md)、[运行指南](docs/getting-started.md)、[工程文档](docs/README.md)、[产品规格](docs/prd/README.md) |
+| `.github/` | CI 与 CodeQL 工作流、Dependabot、Issue 与 PR 模板、CODEOWNERS |
+| `VERSION` | 应用版本号（`build-app.py` 读取，发版时只改这一处） |
 
 ## 文档
 
@@ -108,18 +110,19 @@ swift run --skip-build WorkspaceChecks
 | [持续集成](docs/engineering/ci.md) · [覆盖率](docs/engineering/coverage.md) | CI 检查范围与本地复现 |
 | [产品规格 v2](docs/prd/desktop-sandbox/implementation-v2/README.md) | 产品边界、验收用例与里程碑 |
 | [运行时来源与分发](docs/engineering/runtime-distribution.md) | 第三方依赖版本、哈希与许可 |
+| [更新日志](CHANGELOG.md) · [Releases](https://github.com/mingmingtsao/mini-sandbox/releases) | 各版本变更与发布说明 |
 
-## 参与开发
+## 参与贡献
 
-1. 从 `main` 新建分支，提交信息遵循 `feat:` / `fix:` / `docs:` / `test:` / `ci:` 前缀；
-2. 本地至少运行与改动相关的检查（见 [运行指南 §9](docs/getting-started.md#9-运行测试)）；
-3. 提交 Pull Request，CI 全部通过后合并。
+欢迎提交 Issue 与 Pull Request。开发环境、分支与提交规范、代码格式（swift-format、ruff）、测试要求以及安全敏感区域的评审规则见 **[贡献指南](CONTRIBUTING.md)**。所有 PR 需通过 CI 与 CodeQL 检查后以 squash 方式合并。
 
-安全相关的设计约束（不得把凭据放进 guest、不得放开网络、不得宿主裸跑 Agent）见 [产品规格](docs/prd/desktop-sandbox/implementation-v2/FINAL_SPEC.md)。
+## 安全
+
+发现安全问题请通过 [GitHub 私密漏洞报告](https://github.com/mingmingtsao/mini-sandbox/security/advisories/new) 提交，不要公开披露。支持版本、响应时限与范围见 **[安全策略](SECURITY.md)**。
 
 ## 许可证
 
-本仓库源码以 [Apache License 2.0](LICENSE) 发布。Linux、Alpine 软件包与 Claude Code 等第三方组件**不**因此重新授权，其分发要求见 [运行时来源与分发](docs/engineering/runtime-distribution.md) 与 [离线 guest 文档](docs/engineering/offline-diagnostic-guest.md#redistribution-checklist)。
+本仓库源码以 [Apache License 2.0](LICENSE) 发布，版权声明见 [NOTICE](NOTICE)。Linux、Alpine 软件包与 Claude Code 等第三方组件遵循各自的许可，分发要求见 [运行时来源与分发](docs/engineering/runtime-distribution.md) 与 [离线 guest 文档](docs/engineering/offline-diagnostic-guest.md#redistribution-checklist)。
 
 ## 使用演示
 

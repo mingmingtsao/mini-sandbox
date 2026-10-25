@@ -1,0 +1,11 @@
+mini-sandbox
+Copyright 2026 The mini-sandbox Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository contains no third-party binaries. Linux runtime images that are
+assembled locally with the tools in Tools/ (Linux kernel, Alpine packages,
+BusyBox, musl, Python, Node.js, Git, Bash and others) and the separately
+obtained Claude Code CLI are governed by their own licenses and terms; they are
+not relicensed by this project. See docs/engineering/runtime-distribution.md
+for pinned versions, sources and redistribution requirements.

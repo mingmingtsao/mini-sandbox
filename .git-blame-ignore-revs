@@ -1,0 +1,5 @@
+# Bulk formatting commits that `git blame` should skip.
+# Enable locally with: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: adopt swift-format and ruff and enforce them in CI (#44)
+f48ea5ec05446df3dc73c6c9f3c81b1db53494ca

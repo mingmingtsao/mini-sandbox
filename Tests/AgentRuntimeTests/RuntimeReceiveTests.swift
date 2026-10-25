@@ -6,6 +6,10 @@ import CryptoKit
 
 @main struct RuntimeReceiveTests {
  static func main() throws {
+  #if SWIFT_PACKAGE
+  try runtimeJSONChecks()
+  try runtimeStateChecks()
+  #endif
   var failures = 0, count = 0
   let hello = #"{"v":1,"type":"hello","id":0,"fresh":true,"interfaces":["lo"],"kernel":"test","workdir":"/work/project"}"#
   let exitFrame = #"{"v":1,"type":"exit","id":1,"code":0,"cancelled":false}"#

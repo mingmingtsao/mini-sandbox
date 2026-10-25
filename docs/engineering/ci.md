@@ -10,7 +10,7 @@
 | Python safety and host fixtures | GitHub 托管 Ubuntu 24.04 / Python 3.13 | 打包路径与所有权；回环 OAuth/MCP fixtures；覆盖率计数；guest builder、runtime、capture 和 VM 构建器安全回归 |
 | Go guest protocol | GitHub 托管 Ubuntu 24.04 / go.mod 固定版本 | guest 协议与身份解析的 `-race` 检查；交叉编译 Linux ARM64 guest probe |
 | macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；无凭据 CLI selector 和 driver 超时/子进程清理；Release App 构建、ad-hoc 签名及严格签名验证 |
-| Swift line coverage | GitHub 托管 macOS 26 / Apple Silicon | 独立插桩构建；运行全部离线 Swift 检查和认证回环集成；统计全部 `Sources/` 行覆盖率；保存报告 artifact 与摘要 |
+| Swift line coverage | GitHub 托管 macOS 26 / Apple Silicon | 独立插桩构建；运行离线 Swift、运行时/镜像边界、原生视图及认证回环检查；统计全部 `Sources/` 行覆盖率；保存报告 artifact 与摘要 |
 | CI | GitHub 托管 Ubuntu 24.04 | 汇总以上五项结果；任何失败、跳过或取消都不能被当作通过 |
 | Publish main coverage badge | GitHub 托管 Ubuntu 24.04 | 仅主线成功运行后，将覆盖率徽章与报告更新到 `ci-coverage` 分支 |
 
@@ -33,7 +33,7 @@ macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift �
 
 ## 不代表通过的项目
 
-本 CI 不启动 VM，不运行真实 Agent、真实模型服务、外部 OAuth/MCP 账户或 GUI 交互。环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目；真实凭据存取验收需另列证据。fixture 回环测试不等于真实外部服务联调；ad-hoc 签名不等于 Developer ID 签名、公证或分发许可。完整 App→VM→Agent→模型/工具→审阅导出→Stop 验收仍需单列真机证据。
+本 CI 不启动 VM，不运行真实 Agent、真实模型服务或外部 OAuth/MCP 账户。原生视图检查仅在自身进程的屏幕外窗口中，通过真实产品视图、合成控件事件和像素断言核对状态；不替代完整外部 GUI 验收。环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目；真实凭据存取验收需另列证据。fixture 回环测试不等于真实外部服务联调；ad-hoc 签名不等于 Developer ID 签名、公证或分发许可。完整 App→VM→Agent→模型/工具→审阅导出→Stop 验收仍需单列真机证据。
 
 ## 本地复现
 

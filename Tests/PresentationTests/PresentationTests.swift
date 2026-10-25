@@ -61,7 +61,10 @@ func expectPresentation(_ value: @autoclosure () throws -> Bool, _ message: Stri
         }
     }
     func contains(_ needle: String, in view: NSView? = nil) throws -> Bool {
-        try text(in: view).map(\.0).joined(separator: " ").contains(needle)
+        // Vision may split one rendered line into several observations or insert
+        // spaces around punctuation; compare whitespace-free text, as click() does.
+        func compact(_ text: String) -> String { text.filter { !$0.isWhitespace } }
+        return compact(try text(in: view).map(\.0).joined()).contains(compact(needle))
     }
     func click(_ label: String, in view: NSView? = nil) throws {
         let view = view ?? host

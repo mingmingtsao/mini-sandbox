@@ -59,11 +59,18 @@ class TCPFixture(unittest.TestCase):
 
     def exchange(self, wire):
         with socket.create_connection(self.server.server_address, timeout=2) as s:
-            s.sendall(wire)
-            s.shutdown(socket.SHUT_WR)
+            try:
+                s.sendall(wire)
+                s.shutdown(socket.SHUT_WR)
+            except OSError:
+                # A rejecting server may answer and close before the request is fully written.
+                pass
             result = b''
             while True:
-                chunk = s.recv(4096)
+                try:
+                    chunk = s.recv(4096)
+                except ConnectionResetError:
+                    break
                 if not chunk:
                     break
                 result += chunk
@@ -115,12 +122,14 @@ class TCPTests(TCPFixture):
         self.assertGreater(self.server.records[0]['body_bytes'], 65536)
 
     def test_aggregate_and_connection_caps(self):
+        # Send only what the server reads before rejecting, so it never closes
+        # with unread bytes (which makes the kernel reset the connection).
         self.server.max_wire = 20
-        self.assertIn(b'429', self.exchange(request()))
+        self.assertIn(b'429', self.exchange(request()[:20]))
         self.assertEqual(self.server.wire_bytes, 20)
         self.server.max_wire = 4194304
         self.server.max_connections = 1
-        self.assertIn(b'429', self.exchange(request()))
+        self.assertIn(b'429', self.exchange(b''))
 
 
 class DeadlineTests(TCPFixture):

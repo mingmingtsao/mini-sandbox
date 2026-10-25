@@ -73,6 +73,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             return try RunComposition.localBusinessFixture(port: port,
                 newRoot: URL(fileURLWithPath: args[rootIndex + 1], isDirectory: true))
         }
+        if let url = Bundle.main.url(forResource: "local-business-fixture", withExtension: "json") {
+            let bytes = try Data(contentsOf: url)
+            let value = try ModelJSON.parse(bytes, maxBytes: 4096)
+            guard let fields = value.object, Set(fields.keys) == ["port", "root"],
+                  let port = value["port"]?.integer, (1...65535).contains(port),
+                  let root = value["root"]?.string, root.hasPrefix("/"), !root.isEmpty else { throw BusinessTaskFailure.unavailable }
+            return try RunComposition.localBusinessFixture(port: UInt16(port),
+                newRoot: URL(fileURLWithPath: root, isDirectory: true))
+        }
 #endif
         return try RunComposition.application()
     }

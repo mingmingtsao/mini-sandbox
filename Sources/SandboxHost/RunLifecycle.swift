@@ -13,22 +13,39 @@ public struct RunObservation: Sendable {
 /// This is not a transferable execution permit: start/accept validate it again.
 package struct RunEffectScope: Sendable {
     let generation: UInt64
-    let connectionID: UUID
+    let connectionID: UUID?
     let connectionRevision: UInt64
+    let runHandle: HostRunHandle?
+    init(generation: UInt64, connectionID: UUID?, connectionRevision: UInt64, runHandle: HostRunHandle? = nil) {
+        self.generation = generation; self.connectionID = connectionID
+        self.connectionRevision = connectionRevision; self.runHandle = runHandle
+    }
 }
 
 /// Closed set of known synchronous starts. Never accepts a delayed start closure.
 enum RunPreparedEffect: Sendable {
     case model(ModelPreparedOperation)
     case mcp(MCPPreparedOperation)
-    func acquire() { switch self { case .model(let op): op.acquireForStart(); case .mcp(let op): op.acquireForStart() } }
-    func release() { switch self { case .model(let op): op.releaseForStart(); case .mcp(let op): op.releaseForStart() } }
+    case businessVM(BusinessVMPreparedStart)
+    func acquire() { switch self { case .model(let op): op.acquireForStart(); case .mcp(let op): op.acquireForStart(); case .businessVM(let op): op.acquireForStart() } }
+    func release() { switch self { case .model(let op): op.releaseForStart(); case .mcp(let op): op.releaseForStart(); case .businessVM(let op): op.releaseForStart() } }
+    func validateScope(_ scope: RunEffectScope, lifecycle: RunLifecycle) throws {
+        switch self {
+        case .model, .mcp:
+            guard scope.connectionID != nil else { throw AuthorizationError.connectionNotGranted }
+        case .businessVM(let operation):
+            guard scope.connectionID == nil, scope.runHandle === operation.handle,
+                  operation.handle.lifecycle === lifecycle, operation.generation == scope.generation else {
+                throw AuthorizationError.wrongRun
+            }
+        }
+    }
     func startLocked() throws {
         try Task.checkCancellation()
-        switch self { case .model(let op): try op.startLocked(); case .mcp(let op): try op.startLocked() }
+        switch self { case .model(let op): try op.startLocked(); case .mcp(let op): try op.startLocked(); case .businessVM(let op): try op.startLocked() }
     }
     func cancel() {
-        switch self { case .model(let op): op.cancel(); case .mcp(let op): op.cancel() }
+        switch self { case .model(let op): op.cancel(); case .mcp(let op): op.cancel(); case .businessVM(let op): op.cancel() }
     }
 }
 
@@ -119,10 +136,21 @@ public final class RunLifecycle: @unchecked Sendable {
         lock.withLock { RunEffectScope(generation: generation, connectionID: connectionID,
                                       connectionRevision: connectionRevisions[connectionID, default: 0]) }
     }
+    /// Immutable run provenance for the closed VM/task consumers. Not a permit:
+    /// each start/write validates the actual owner again after taking its locks.
+    package func runScope(for handle: HostRunHandle, epoch: UInt64) throws -> RunEffectScope {
+        guard handle.lifecycle === self, handle.installedEpoch == epoch else { throw AuthorizationError.wrongRun }
+        return RunEffectScope(generation: epoch, connectionID: nil, connectionRevision: 0, runHandle: handle)
+    }
     private func validate(_ scope: RunEffectScope) throws {
         guard status == .active, generation == scope.generation else { throw AuthorizationError.runRevoked }
-        guard !invalidConnections.contains(scope.connectionID),
-              connectionRevisions[scope.connectionID, default: 0] == scope.connectionRevision else { throw AuthorizationError.connectionRevoked }
+        if let connectionID = scope.connectionID {
+            guard !invalidConnections.contains(connectionID),
+                  connectionRevisions[connectionID, default: 0] == scope.connectionRevision else { throw AuthorizationError.connectionRevoked }
+        } else {
+            guard let handle = scope.runHandle, handle.lifecycle === self,
+                  handle.installedEpoch == scope.generation else { throw AuthorizationError.wrongRun }
+        }
     }
     /// The only gateway start entry: validation, registration and actual resume
     /// share the mutex with terminal/connection invalidation, with no await or Task.
@@ -138,6 +166,7 @@ public final class RunLifecycle: @unchecked Sendable {
             guard observation.wallTime >= notBefore else { throw AuthorizationError.grantNotYetValid }
             guard observation.effectiveTime < startDeadline else { throw AuthorizationError.actionExpired }
             guard operations[id] == nil else { throw AuthorizationError.ticketAlreadyConsumed }
+            try effect.validateScope(scope, lifecycle: self)
             try effect.startLocked()
             operations[id] = (scope, effect)
         }
@@ -165,4 +194,29 @@ public final class RunLifecycle: @unchecked Sendable {
             return try output.acceptLocked()
         }
     }
+    func acceptVMFrame(_ output: BusinessVMFrameOutput) throws -> Bool {
+        var cancelled: [RunPreparedEffect] = []
+        let owned = output.acquireForAcceptance()
+        defer {
+            if owned { output.releaseForAcceptance() }
+            cancelled.forEach { $0.cancel() }
+        }
+        if owned { try output.prepareAcceptanceLocked() }
+        return try lock.withLock {
+            let sample = clock.sample()
+            _ = reduce(sample.wall, sample.elapsed)
+            cancelled = drainTerminal()
+            guard output.lifecycle === self, output.handle.lifecycle === self,
+                  output.handle.installedEpoch == output.generation,
+                  output.scope.generation == output.generation else { throw AuthorizationError.wrongRun }
+            if output.scope.connectionID == nil {
+                guard output.scope.runHandle === output.handle else { throw AuthorizationError.wrongRun }
+            }
+            try validate(output.scope)
+            try Task.checkCancellation()
+            guard owned else { return false }
+            return try output.acceptLocked()
+        }
+    }
+
 }

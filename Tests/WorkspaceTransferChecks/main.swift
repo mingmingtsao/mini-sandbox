@@ -13,6 +13,7 @@ func framed(_ body:Data) -> Data {var size=UInt32(body.count).bigEndian;var resu
  static func main() async throws {
     let (root, oldLabels) = try legacyChecks()
     var labels = oldLabels
+    try await workspaceLifecycleChecks(root: root) { label in labels.append(label); print("PASS " + label); fflush(stdout) }
     try await taskQuotaChecks(root: root) { label in labels.append(label); print("PASS " + label); fflush(stdout) }
     try await taskExportDepthChecks(root: root) { label in labels.append(label); print("PASS " + label); fflush(stdout) }
     try await grantQuotaChecks(root: root) { label in labels.append(label); print("PASS " + label); fflush(stdout) }

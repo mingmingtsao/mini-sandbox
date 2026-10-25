@@ -48,6 +48,7 @@ func run() throws {
     let base = scratch.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     let fixture = "/" + base + "/workspace-checks-" + UUID().uuidString
     try mkdir(fixture)
+    if CommandLine.arguments.contains("--search-only") { try workspaceSearchChecks(fixture); return }
     let source = fixture + "/source"
     try mkdir(source)
     try put(source + "/hello.txt", "before\n")
@@ -157,6 +158,7 @@ func run() throws {
     try expect(.mutated) { _ = try replacing.importTree(from: changed) }
     namedPass("deterministic mid-read mutation/replacement")
     try additionalChecks(fixture, source)
+    try workspaceSearchChecks(fixture)
 }
 
 do {

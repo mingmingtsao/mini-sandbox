@@ -8,6 +8,7 @@ import SandboxContracts
 final class WorkspaceGrantQuota: @unchecked Sendable {
     let handle: HostRunHandle
     let snapshotID: UUID
+    let notBefore: Date
     let memory: WorkspaceTransferBudget
     let disk: WorkspaceTransferBudget
     let byteCeiling: Int
@@ -17,6 +18,20 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
     private let taskLock = NSLock()
     private var taskValue: TaskQuotaLedger?
     private var transferStarted = false
+    private var workspaceBindingValue: WorkspaceRunBinding?
+    var workspaceBinding: WorkspaceRunBinding? { taskLock.withLock { workspaceBindingValue } }
+
+    func bindWorkspace(storeOwner: UUID, snapshot: WorkspaceSnapshotID, workflow: WorkspaceWorkflowBinding) throws {
+        try taskLock.withLock {
+            guard snapshot.grantSnapshotID == snapshotID else { throw WorkspaceError.foreignSnapshot }
+            if let existing = workspaceBindingValue {
+                guard existing.storeOwner == storeOwner, existing.snapshot == snapshot,
+                      existing.workflowOwner == workflow.owner, existing.workflowGeneration == workflow.generation else { throw WorkspaceError.foreignSnapshot }
+                return
+            }
+            workspaceBindingValue = WorkspaceRunBinding(handle: handle, notBefore: notBefore, snapshot: snapshot, storeOwner: storeOwner, workflow: workflow)
+        }
+    }
     var task: TaskQuotaLedger? { taskLock.withLock { taskValue } }
 
     func createTask(storeOwner: UUID, limits: WorkspaceTaskLimits, store: WorkspaceLimits,
@@ -45,6 +60,7 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
     private init(handle: HostRunHandle, grant: RunGrant) {
         self.handle = handle
         snapshotID = grant.workspaceSnapshotID
+        notBefore = grant.createdAt
         // Clamp in UInt64 BEFORE conversion; UInt64.max must never trap/wrap.
         let memoryBytes = Int(min(UInt64(128 * 1024 * 1024), grant.resourceLimits.memoryBytes))
         let diskBytes = Int(min(UInt64(128 * 1024 * 1024), grant.resourceLimits.diskBytes))
@@ -66,6 +82,21 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
     static func authenticated(authority: RunAuthorizationController,
                               handle: HostRunHandle, grant: RunGrant) async throws -> WorkspaceGrantQuota {
         try await authority.validateAttachment(handle: handle, grant: grant)
+        return try installed(handle: handle, grant: grant)
+    }
+
+    /// Host-only synchronous attachment for a store whose exclusive ownership is
+    /// transferred into WorkspaceRunSession. Provenance is immutable; all future
+    /// effects still sample the existing lifecycle at their actual commit.
+    static func authenticatedForSession(authority: RunAuthorizationController,
+                                        handle: HostRunHandle, grant: RunGrant) throws -> WorkspaceGrantQuota {
+        guard try authority.installedGrantForOwnership(of: handle) == grant else { throw AuthorizationError.grantBindingMismatch }
+        let observation = handle.lifecycle.observeAndReduce(reason: "workspace-session-install")
+        guard observation.status == .active, observation.generation == grant.epoch else { throw AuthorizationError.runRevoked }
+        guard observation.wallTime >= grant.createdAt else { throw AuthorizationError.grantNotYetValid }
+        return try installed(handle: handle, grant: grant)
+    }
+    private static func installed(handle: HostRunHandle, grant: RunGrant) throws -> WorkspaceGrantQuota {
         return try registry.lock.withLock {
             let key = ObjectIdentifier(handle)
             if let existing = registry.runs[key] { return existing }
@@ -90,17 +121,28 @@ final class WorkspaceGrantQuota: @unchecked Sendable {
 
 /// NEW host task policy. These fields were never present in RunGrant. They are
 /// chosen only at WorkspaceStore task creation, not decoded from guest frames.
-struct WorkspaceTaskLimits: Equatable {
-    let retainedPayloadBytes: UInt64
-    let diskBytes: UInt64
-    let cumulativeInputBytes: UInt64
-    var fileBytes: UInt64 = 4 * 1024 * 1024
-    var entries: UInt64 = 1000
-    var depth: UInt64 = 15
-    var pathBytes: UInt64 = 1024
-    var messageBytes: UInt64 = 16384
-    var transferInstances: UInt64 = 64
-    var materializations: UInt64 = 64
+package struct WorkspaceTaskLimits: Equatable, Sendable {
+    package let retainedPayloadBytes: UInt64
+    package let diskBytes: UInt64
+    package let cumulativeInputBytes: UInt64
+    package var fileBytes: UInt64 = 4 * 1024 * 1024
+    package var entries: UInt64 = 1000
+    package var depth: UInt64 = 15
+    package var pathBytes: UInt64 = 1024
+    package var messageBytes: UInt64 = 16384
+    package var transferInstances: UInt64 = 64
+    package var materializations: UInt64 = 64
+    package init(retainedPayloadBytes: UInt64, diskBytes: UInt64, cumulativeInputBytes: UInt64,
+                 fileBytes: UInt64 = 4 * 1024 * 1024, entries: UInt64 = 1000, depth: UInt64 = 15,
+                 pathBytes: UInt64 = 1024, messageBytes: UInt64 = 16384,
+                 transferInstances: UInt64 = 64, materializations: UInt64 = 64) {
+        self.retainedPayloadBytes = retainedPayloadBytes; self.diskBytes = diskBytes
+        self.cumulativeInputBytes = cumulativeInputBytes; self.fileBytes = fileBytes
+        self.entries = entries; self.depth = depth; self.pathBytes = pathBytes
+        self.messageBytes = messageBytes; self.transferInstances = transferInstances
+        self.materializations = materializations
+    }
+
 }
 
 /// One task domain retained by the authenticated run's bounded registry. It

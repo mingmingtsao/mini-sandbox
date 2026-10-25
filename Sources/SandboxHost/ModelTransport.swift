@@ -47,6 +47,15 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     private let credentialProvider: any ModelCredentialProvider
     private let configuration: URLSessionConfiguration
     private let limiter: RequestLimiter
+#if SANDBOX_TEST_FIXTURES
+    private let fixtureLoopbackPort: UInt16?
+#endif
+    package var claudeRouteEnabled: Bool {
+#if SANDBOX_TEST_FIXTURES
+        if fixtureLoopbackPort != nil { return true }
+#endif
+        return BusinessModelActivation.credentialEgressEnabled
+    }
 
     package init(credentialProvider: any ModelCredentialProvider, configuration: URLSessionConfiguration? = nil) {
         self.credentialProvider = credentialProvider
@@ -59,8 +68,30 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         configuration.timeoutIntervalForResource = Self.resourceTimeout
         self.configuration = configuration.copy() as! URLSessionConfiguration
         self.limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
+#if SANDBOX_TEST_FIXTURES
+        fixtureLoopbackPort = nil
+#endif
         super.init()
     }
+
+#if SANDBOX_TEST_FIXTURES
+    /// Test binary only. Neither a caller key, endpoint host, configuration nor
+    /// credential provider is accepted. Redirects remain unconditionally denied.
+    package init(localClaudeFixturePort port: UInt16) throws {
+        guard port > 0 else { throw ModelTransportError.invalidRequest("fixture port") }
+        credentialProvider = LocalClaudeFixtureCredential()
+        let configuration = Self.defaultConfiguration()
+        configuration.httpCookieStorage = nil; configuration.urlCache = nil
+        configuration.httpShouldSetCookies = false; configuration.httpCookieAcceptPolicy = .never
+        configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForRequest = Self.requestTimeout
+        configuration.timeoutIntervalForResource = Self.resourceTimeout
+        self.configuration = configuration
+        limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
+        fixtureLoopbackPort = port
+        super.init()
+    }
+#endif
 
     private static func defaultConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -126,7 +157,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
 
     package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors) throws -> ModelPreparedOperation {
         // Immutable production gate, before credential preparation or URLSession.
-        guard BusinessModelActivation.credentialEgressEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
         guard request.dialect == .claude else { throw ModelTransportError.invalidRequest("claude dialect") }
         try selectors.validate()
         return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
@@ -136,7 +167,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
                                 claudeSelectors: ClaudeRequestSelectors? = nil) throws -> ModelPreparedOperation {
         if claudeSelectors != nil {
-            guard BusinessModelActivation.credentialEgressEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+            guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
         }
         try limiter.acquire()
         do {
@@ -152,7 +183,13 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
 
             if let claudeSelectors { try claudeSelectors.validate(); guard kind == .anthropic else { throw ModelTransportError.invalidRequest("claude protocol") } }
             // The closed host route is unreachable while activation is disabled.
-            let endpoint = claudeSelectors == nil ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
+            var endpoint = claudeSelectors == nil ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
+#if SANDBOX_TEST_FIXTURES
+            if let port = fixtureLoopbackPort {
+                guard claudeSelectors != nil, kind == .anthropic else { throw ModelTransportError.invalidRequest("fixture dialect") }
+                endpoint = URL(string: "http://127.0.0.1:\(port)/anthropic/v1/messages?beta=true")!
+            }
+#endif
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = Self.requestTimeout

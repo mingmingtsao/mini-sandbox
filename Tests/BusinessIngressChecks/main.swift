@@ -111,6 +111,13 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             do { try await gateway.execute(handle: modelHandle, approval: approval, output: output); throw CheckFailure.failed("activation bypass") }
             catch HostModelGatewayError.businessRouteDisabled {}
             let transport = ModelTransport(credentialProvider: credential)
+#if SANDBOX_TEST_FIXTURES
+            let local = try ModelTransport(localClaudeFixturePort: 49152)
+            try check(local.claudeRouteEnabled && !transport.claudeRouteEnabled, "only dedicated fixed-loopback fixture route is enabled")
+            try rejected("fixture zero port") { _ = try ModelTransport(localClaudeFixturePort: 0) }
+            let fixture = try HostModelConnection.localClaudeFixture(port: 49152)
+            try check(fixture.model == .deepSeekFlash && fixture.protocol == .anthropic, "fixture fixed model dialect")
+#endif
             try rejected("direct transport gate") { _ = try transport.prepareClaude(request, selectors: .pinned) }
             try rejected("native fallback gate") { _ = try transport.prepareNative(request) }
             try check(!BusinessModelActivation.credentialEgressEnabled, "immutable product gate")

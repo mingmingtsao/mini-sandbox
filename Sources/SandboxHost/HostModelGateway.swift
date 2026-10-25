@@ -22,6 +22,16 @@ package struct HostModelConnection: Sendable {
         self.model = model; self.protocol = kind
         transport = ModelTransport(credentialProvider: credentialProvider, configuration: configuration)
     }
+#if SANDBOX_TEST_FIXTURES
+    package static func localClaudeFixture(port: UInt16, connectionID: UUID = UUID(), accountID: UUID = UUID()) throws -> Self {
+        Self(connectionID: connectionID, accountID: accountID, fixtureTransport: try ModelTransport(localClaudeFixturePort: port))
+    }
+    private init(connectionID: UUID, accountID: UUID, fixtureTransport: ModelTransport) {
+        self.connectionID = connectionID; self.accountID = accountID
+        accountBindingVersion = 1; routeVersion = 1; model = .deepSeekFlash; self.protocol = .anthropic
+        transport = fixtureTransport
+    }
+#endif
 }
 
 package enum HostModelGatewayError: Error, Equatable, Sendable {
@@ -305,7 +315,9 @@ package actor HostModelGateway {
         let proposal = approval.proposal
         let activationEnvelope = try JSONDecoder().decode(Envelope.self, from: proposal.pending.binding.canonicalRequest)
         if activationEnvelope.schemaVersion == 4 {
-            guard BusinessModelActivation.credentialEgressEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+            guard try live(run, connectionID: activationEnvelope.connectionID).connection.transport.claudeRouteEnabled else {
+                throw HostModelGatewayError.businessRouteDisabled
+            }
         }
         if let output, !output.matches(run.authorityHandle.lifecycle, effectScope(proposal), actionID: proposal.pending.actionID) { throw HostModelGatewayError.invalidApproval }
         var ownerRegistration: UUID?

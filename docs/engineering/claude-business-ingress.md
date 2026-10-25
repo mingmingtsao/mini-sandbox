@@ -117,3 +117,18 @@ reply is a concrete bounded VM writer with connection-scoped final checks. The
 gateway never runs tools or constructs tool results. Native response, repair and
 final-clock regression groups passed; actual VZ model-delivery evidence remains
 a separate acceptance step.
+
+## Compile-time local provider fixture
+
+Only a binary explicitly compiled with `-DSANDBOX_TEST_FIXTURES` contains
+`HostModelConnection.localClaudeFixture(port:)`. Its constructor accepts a TCP
+port but no host, credential, provider, URLSession configuration or headers. The
+route is fixed to `http://127.0.0.1:<port>/anthropic/v1/messages?beta=true`, uses
+an embedded public fake canary and disables proxies/cookies/cache. Redirects are
+still denied. All schema-4 proposal, exact approval, dispatch and concrete VZ
+output gates remain shared. Ordinary connections remain blocked before consume
+and credential reads even in a fixture build. The fixture constructor, provider
+and alternate endpoint do not exist in normal Debug or Release builds.
+
+Evidence from this test is real VM/CLI execution with a local scripted provider;
+it is not evidence of external provider compatibility or Release readiness.

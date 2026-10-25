@@ -10,7 +10,7 @@ Reproduce a normal optimized application build and inspect the final signature:
 ```sh
 python3 scripts/build-app.py --configuration release --sign-identity -
 codesign --verify --strict --verbose=2 dist/MiniSandbox.app
-codesign -d --entitlements :- dist/MiniSandbox.app
+codesign -d --entitlements - --xml dist/MiniSandbox.app
 ```
 
 The packaging regression verifies that the application signing invocation uses

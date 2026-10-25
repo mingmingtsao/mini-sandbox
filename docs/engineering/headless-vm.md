@@ -7,7 +7,7 @@ This is a separate, real Virtualization.framework executable, not a simulation a
 ```sh
 python3 scripts/build-vm-probe.py --configuration debug
 codesign --verify --strict --verbose=2 dist/VMProbe/VMProbe
-codesign --display --entitlements :- dist/VMProbe/VMProbe
+codesign --display --entitlements - --xml dist/VMProbe/VMProbe
 dist/VMProbe/VMProbe --capabilities
 swift run VMChecks
 python3 Tests/VMChecks/test_build_vm_probe.py

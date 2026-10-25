@@ -595,6 +595,14 @@ private func testPreparedRepeatedCancellationExactOnce() async throws {
     try check(FixtureURLProtocol.snapshotRequests().isEmpty, "repeated cancel/deinit never dispatches or over-releases limiter")
 }
 
+private func testInvalidKeychainInputBeforeStorage() throws {
+    let store = KeychainModelCredentialProvider(service: "dev.mini-sandbox.invalid-input." + UUID().uuidString, account: UUID().uuidString)
+    for value in ["", "line\nbreak", "null\0byte", "delete\u{7f}", String(repeating: "a", count: 16 * 1024 + 1)] {
+        do { try store.setCredential(value); throw CheckFailure.failed("invalid credential entered storage") }
+        catch CredentialProviderError.invalid {}
+    }
+}
+
 private func testKeychainCRUDIsolated() throws {
     let service = "dev.mini-sandbox.test." + UUID().uuidString
     let account = "account." + UUID().uuidString
@@ -619,6 +627,7 @@ private struct NamedCheck: Sendable {
 }
 
 private let checks: [NamedCheck] = [
+    NamedCheck(name: "invalid Keychain input rejected before OS storage", run: { try testInvalidKeychainInputBeforeStorage() }),
     NamedCheck(name: "Anthropic unsupported thinking rejected", run: testAnthropicUnsupportedThinkingRejected),
     NamedCheck(name: "Anthropic incomplete legacy lifecycle rejected", run: testAnthropicIncompleteLegacyLifecycleRejected),
     NamedCheck(name: "Anthropic bare legacy stop rejected", run: testAnthropicBareLegacyStopRejected),

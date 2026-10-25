@@ -126,6 +126,13 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     private let ownership: CompositionRunOwnership
     private var configurationGeneration = UUID()
     private var modelConnectionIDs: Set<UUID>
+    private var businessStorage: BusinessTaskController?
+    package var business: BusinessTaskController {
+        if let businessStorage { return businessStorage }
+        let controller = BusinessTaskController(composition: self)
+        businessStorage = controller
+        return controller
+    }
 
     package enum InstallationPhase: String, CaseIterable, Sendable {
         case beforeAuthority, afterAuthority, beforeModel, afterModel
@@ -171,7 +178,8 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         workbench.attachmentOwner = ownership
         workbench.willClose = { [weak self] in self?.beginClose() }
         connectionSettings.willClose = { [weak self] in self?.beginClose() }
-        workbench.closeOwnedRuns = { [ownership, authority] in
+        workbench.closeOwnedRuns = { [weak self, ownership, authority] in
+            await self?.businessStorage?.waitForCleanup()
             await ownership.drainAttachments()
             var succeeded = true
             for handle in ownership.handles {
@@ -223,17 +231,34 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
               !workbench.isClosing, handle.lifecycle.currentStatus == .active else { throw HostModelGatewayError.revoked }
     }
 
+    /// Retain the concrete VM/workspace owner until its asynchronous cleanup
+    /// settles; native close cannot finish merely because F03 was revoked.
+    package func beginBusinessOwnership(_ run: InstalledRun) throws -> UUID {
+        try validateInstallation(configurationGeneration, run.authorityHandle)
+        let token = try ownership.beginAttachment(grant: run.grant, existing: run.authorityHandle)
+        do {
+            try ownership.registerAttachment(token, grant: run.grant, handle: run.authorityHandle)
+            return token
+        } catch { ownership.endAttachment(token); throw error }
+    }
+    package func finishBusinessOwnership(_ token: UUID, succeeded: Bool) {
+        if !succeeded { ownership.attachmentCleanupFailed(token) }
+        ownership.endAttachment(token)
+    }
+
     /// Native termination must call this synchronously, before creating a Task.
     package func beginClose() {
         guard !isClosing else { return }
         isClosing = true
         configurationGeneration = UUID()
         ownership.seal()
+        businessStorage?.beginClose()
         connectionSettings.close()
         workbench.beginClose()
     }
     package func close() async -> Bool {
         beginClose()
+        await businessStorage?.waitForCleanup()
         return await workbench.close()
     }
 
@@ -242,6 +267,7 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
         let retired = ModelConfigurationRetirement(gateway: model, connectionIDs: modelConnectionIDs)
         configurationGeneration = UUID()
         ownership.retire(modelConnectionIDs)
+        businessStorage?.retireModelConnections(modelConnectionIDs)
         workbench.retireModelConnections(modelConnectionIDs)
         modelConnectionIDs = []
         if !isClosing {

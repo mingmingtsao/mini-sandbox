@@ -31,11 +31,16 @@ struct MiniSandboxEntry {
 
 struct MiniSandboxApplication: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var delegate
+    @State private var selectedTab = "tasks"
     var body: some Scene {
         Window("Mini Sandbox", id: "workbench") {
-            TabView {
-                WorkbenchView(model: delegate.model, connectionSettings: delegate.connectionSettings).tabItem { Label("Workbench", systemImage: "checkmark.shield") }
-                EnvironmentView().tabItem { Label("Environment", systemImage: "desktopcomputer") }
+            TabView(selection: $selectedTab) {
+                if let taskController = delegate.taskController, let connections = delegate.connectionSettings {
+                    BusinessTaskView(controller: taskController, connections: connections)
+                        .tabItem { Label("Tasks", systemImage: "folder") }.tag("tasks")
+                }
+                WorkbenchView(model: delegate.model, connectionSettings: delegate.connectionSettings).tabItem { Label("Workbench", systemImage: "checkmark.shield") }.tag("workbench")
+                EnvironmentView().tabItem { Label("Environment", systemImage: "desktopcomputer") }.tag("environment")
             }
             .background(WindowCloseGuard())
         }
@@ -48,10 +53,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private let composition: RunComposition?
     let model: WorkbenchModel
     let connectionSettings: ConnectionSettingsController?
+    let taskController: BusinessTaskController?
     override init() {
         let composition = try? RunComposition.application()
         self.composition = composition
         self.connectionSettings = composition?.connectionSettings
+        self.taskController = composition?.business
         self.model = composition?.workbench ?? WorkbenchModel(unavailable: "App composition unavailable; authority disabled")
         super.init()
     }
@@ -138,7 +145,7 @@ struct EnvironmentView: View {
             }
             Label(report.foundationReady ? "基础环境检查通过" : "请先处理不可用的基础环境", systemImage: report.foundationReady ? "checkmark.circle" : "exclamationmark.triangle")
                 .foregroundStyle(report.foundationReady ? .green : .orange)
-            Text("此版本提供环境检查与部分原生模型连接设置（仅主机钥匙串、固定模型和协议）。保存不是授权或连通性测试；Linux / VM / Agent 执行、项目导入与完整安全验收尚未完成。")
+            Text("环境检查仅验证本机条件。项目导入、任务授权、Agent 运行、停止与结果审阅请在 Tasks 中操作；环境通过不代表任务执行或模型请求成功。")
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Text("检查时间：\(report.checkedAt.formatted(date: .abbreviated, time: .standard))")

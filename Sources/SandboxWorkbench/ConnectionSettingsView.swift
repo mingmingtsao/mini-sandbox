@@ -6,7 +6,7 @@ import SwiftUI
     @State private var input = ""
     package init(controller: ConnectionSettingsController) { self.controller = controller }
     package var body: some View {
-        GroupBox("Model connection · partial native increment") {
+        GroupBox("Model connection") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("DeepSeek flash · Anthropic protocol").font(.headline)
                 Text("Host Keychain only. No custom endpoint, guest credential, or provider test.").foregroundStyle(.secondary)
@@ -33,7 +33,7 @@ import SwiftUI
                     Text("Future-run configuration · account version \(configuration.accountBindingVersion) · route version \(configuration.routeVersion)")
                         .font(.caption)
                 }
-                Text("Save, Check and Delete retire existing model-bound runs first. A successful Save or Check configures future runs only; it creates no grant, approval, or request. VM / Agent execution is not connected.")
+                Text("Save, Check and Delete retire existing model-bound runs first. Save or Check configures future runs only. Each task and model request requires separate authorization in Tasks.")
                     .font(.caption).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
         }

@@ -174,7 +174,12 @@ func claudeClientChecks(_ port: UInt16, _ token: String) async throws {
     output("RELEASE modern-catalog-race")
     do { _ = try await second.value; throw Failure(message: "concurrent changed catalog replaced frozen catalog") }
     catch HostMCPGatewayError.outcomeUnknown {}
-    try check(try await raceGateway.discovery(connectionID: raceID) == .unknown, "conflicting catalog not invalidated")
+    try await denied(.invalidConnection) { _ = try await raceGateway.discovery(connectionID: raceID) }
+    let readsAfterConflict = credentials.count
+    for method in ["tools/list", "tools/call"] {
+        try await denied(.invalidConnection) { _ = try await race.propose(clientIngress(method)) }
+    }
+    try check(credentials.count == readsAfterConflict, "retired catalog read credentials")
     try await raceGateway.stop(handle: race.handle)
     try report("modern-catalog-race", hits: 2, reads: 2)
     try check(!String(reflecting: audit.snapshot).contains(token), "MCP audit excludes fake credential")

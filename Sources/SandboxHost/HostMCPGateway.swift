@@ -309,7 +309,7 @@ package actor HostMCPGateway {
                 try op.validateOutboundJSON(response.wire, joinedText: text)
                 let current = try live(run, e.connectionID)
                 if let catalog, current.discovery != .unknown, catalog.1 != current.schemaDigest {
-                    try invalidateCatalog(connectionID: e.connectionID)
+                    try retireChangedCatalog(connectionID: e.connectionID)
                     throw HostMCPGatewayError.invalidResponse
                 }
             } else {
@@ -334,7 +334,7 @@ package actor HostMCPGateway {
                     // freeze the catalog. Never write the pre-await snapshot back.
                     var updated = try live(run, e.connectionID)
                     if updated.discovery != .unknown, catalog.1 != updated.schemaDigest {
-                        try invalidateCatalog(connectionID: e.connectionID)
+                        try retireChangedCatalog(connectionID: e.connectionID)
                         throw HostMCPGatewayError.invalidResponse
                     }
                     updated.discovery = catalog.0; updated.schemaDigest = catalog.1
@@ -405,6 +405,18 @@ package actor HostMCPGateway {
             run.authorityHandle.lifecycle.advanceConnection(connectionID)
         }
         registry[connectionID] = entry; cancelConnection(connectionID)
+    }
+    /// A conflicting frozen catalog requires a newly configured connection.
+    /// Clearing discovery alone would let the same run learn the changed schema
+    /// with another approval, despite its original connection binding.
+    private func retireChangedCatalog(connectionID: UUID) throws {
+        guard var entry = registry[connectionID], !entry.revoked else { throw HostMCPGatewayError.invalidConnection }
+        entry.revoked = true; entry.generation &+= 1; entry.discovery = .unknown
+        registry[connectionID] = entry
+        for run in runs.values where run.grant.connections.contains(where: { $0.connectionID == connectionID }) {
+            run.authorityHandle.lifecycle.invalidateConnection(connectionID)
+        }
+        cancelConnection(connectionID)
     }
     package func updateConnection(_ c: HostMCPConnection) async throws {
         guard let old = registry[c.connectionID], !old.revoked, c.accountBindingVersion >= old.connection.accountBindingVersion, c.routeVersion >= old.connection.routeVersion,

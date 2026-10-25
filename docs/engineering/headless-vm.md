@@ -15,7 +15,7 @@ python3 Tests/VMChecks/test_build_vm_probe.py
 
 The executable is signed ad hoc with **only** `com.apple.security.virtualization`. This does not change the app's signing or packaging. The builder refuses symlinked/unowned output, preserves previous owned output in a backup, and does not recursively delete directories. Ad-hoc signing is local-only, not notarization or distribution signing.
 
-Capability inspection reports the actual framework support flag, CPU/memory limits and the executable's entitlement. It does not construct/start a VM, inspect the environment for credentials, or query Keychain. Configuration validation remains `NOT_RUN` until a real verified bundle is provided.
+Capability inspection reports the actual framework support flag, CPU/memory limits and the executable's entitlement. It does not construct/start a VM, inspect the environment for credentials, or query Keychain. Configuration validation uses the verified bundle supplied to `--run`.
 
 ## Real run (explicit, after bundle verification)
 
@@ -69,4 +69,4 @@ Without `--live` this command refuses to launch. Each invocation creates unique 
 
 The original signed binary was reproduced with this runner: SIGINT after `vm.start` and before its callback produced SIGABRT (Python return code **-6**), the serial-attachment `NSFileHandleOperationException`, and no stopped/result record. After the lifetime fix, a real normal run exited **0** and three pending-start cancellations each exited **1** with ordering `vm.start → vm.stopping(cancelled) → vm.start.callback → vm.stop.callback → vm.stopped → vm.console.released`. Deterministic VMChecks also cover pending-start initial-stopped and pending-stop release gates plus one-shot run admission.
 
-These results are local diagnostic evidence, not a general guarantee. Framework-start failure, wedged callbacks, and forced deadline paths still require separate live fault injection; no such result is claimed. The checks do not establish full cross-VM, host-file, credential, resource-exhaustion or Agent isolation, desktop integration, or end-to-end authorization guarantees.
+These results describe the local normal-run and pending-start cancellation cases above. Framework-start failure, wedged callbacks, forced deadlines, cross-VM isolation, host-file access, credentials, resource exhaustion, and application authorization are outside the scope of these cases.

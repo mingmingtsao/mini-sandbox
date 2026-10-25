@@ -1,8 +1,8 @@
 # Actual business VM boundary evidence
 
 These checks run the concrete `BusinessVMSession` and pinned Claude CLI in an
-actual Apple Virtualization VM. They are diagnostic evidence, not App acceptance
-or evidence that a real provider task completed. No provider or Keychain is used.
+actual Apple Virtualization VM. This document records the standalone VM and
+connection-boundary cases. No provider or Keychain is used.
 The guest has zero general network devices and zero host directory shares.
 
 The 2026-10-26 local evidence root is

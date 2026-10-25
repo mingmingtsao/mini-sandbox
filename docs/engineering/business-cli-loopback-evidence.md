@@ -2,8 +2,8 @@
 
 On 2026-10-26, `cli-loop-fixture-v6` passed the complete diagnostic below using
 the real pinned Claude Code 2.1.309 Linux CLI inside a no-NIC VZ VM. The model
-was an intentionally scripted HTTP fixture on host loopback. This is not a
-real-provider, App UI, strict C08 task-fixture or MCP acceptance claim.
+was an intentionally scripted HTTP fixture on host loopback. The scope is the
+standalone two-file CLI tool loop; provider, App UI, C08 and MCP records are separate.
 
 The evidence root is
 `/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025`.

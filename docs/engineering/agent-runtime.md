@@ -2,7 +2,7 @@
 
 ## Proven scope
 
-This is a standalone VZ acceptance harness, not an Agent, App, model gateway, or completed file bridge. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. The workspace quota increment adds only its concrete native-check target to Package.swift and links the real Host/Contracts sources for standalone builds; it does not modify diagnostic sessions, App, workbench, or shared authority sources.
+This document describes the standalone VZ command harness. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. The workspace quota increment adds only its concrete native-check target to Package.swift and links the real Host/Contracts sources for standalone builds; it does not modify diagnostic sessions, App, workbench, or shared authority sources.
 
 The real Linux VM runs Node, Python and Git, reads a synthetic project, observes its Python test fail, changes subtraction to addition, reruns the actual Python test successfully, and reads the changed bytes again in the same VM. The host checks the expected before/after SHA256, exit statuses, stdout/stderr chunk hashes, cancellation, and original fixture hashes. A second session starts on a distinct fresh disk. A startup cancellation check requires settled framework callbacks and actual stopped state before serial handles are released.
 

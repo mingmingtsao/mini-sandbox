@@ -1,5 +1,7 @@
 # mini-sandbox
 
+[![CI](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml?query=branch%3Amain)
+[![Swift line coverage](https://raw.githubusercontent.com/mingmingtsao/mini-sandbox/ci-coverage/coverage.svg)](https://github.com/mingmingtsao/mini-sandbox/tree/ci-coverage)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 面向 Apple Silicon Mac 的 Agent 安全工作台。通过 Linux 虚拟机隔离 Agent 运行环境，在宿主侧管理模型连接、MCP 工具、逐次审批、审计和项目副本。

@@ -157,12 +157,11 @@ private final class CompositionRunOwnership: HostRunAttachmentOwner, @unchecked 
     package init(audit: WorkbenchAuditSink, modelConnections: [HostModelConnection] = [],
                  credentialStore: (any FixedModelCredentialStore)? = nil,
                  mcpConnections: [HostMCPConnection] = [],
-                 now: @escaping @Sendable () -> Date = { Date() },
-                 monotonic: (@Sendable () -> Duration)? = nil) throws {
+                 clock: RunClock = .system()) throws {
         self.audit = audit
         modelConnectionIDs = Set(modelConnections.map(\.connectionID))
         connectionSettings = ConnectionSettingsController(store: credentialStore ?? KeychainFixedModelStore())
-        let authority = RunAuthorizationController(auditSink: audit, now: now, monotonic: monotonic)
+        let authority = RunAuthorizationController(auditSink: audit, clock: clock)
         self.authority = authority
         let ownership = CompositionRunOwnership(authority: authority)
         self.ownership = ownership

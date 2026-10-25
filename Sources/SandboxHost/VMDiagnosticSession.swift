@@ -21,7 +21,8 @@ public final class VMDiagnosticSession {
     public private(set) var rejections: Set<VMProtocolError> = []
     public private(set) var positiveReplies = 0
     public init(owner: AnyObject, runID: UUID, epoch: UInt64, workloadDigest: String, sink: any SynchronousAuditSink, frameBudget: Int = 64, authorityHandle: HostRunHandle? = nil, installedGrant: RunGrant? = nil) throws {
-        let created = Date()
+        let clock = RunClock.system(), installed = clock.sample()
+        let created = installed.wall
         let policy = Data("diagnostic-v1;cpu=2;memory=536870912;network=0;shares=0;disks=0;port=4050;frames=64;deadline=60".utf8)
         let policyDigest = SHA256.hash(data: policy).map { String(format: "%02x", $0) }.joined()
         // Host-created identifiers refer to this explicit CLI diagnostic request, not model approval.
@@ -36,9 +37,7 @@ public final class VMDiagnosticSession {
         } else {
             guard installedGrant == nil && authorityHandle == nil else { throw VMProtocolError.crossContext }
             grant = diagnosticGrant
-            let clock = ContinuousClock(); let origin = clock.now
-            lifecycle = RunLifecycle(expiresAt: grant.expiresAt, epoch: epoch, installedAt: created,
-                                     wall: { Date() }, monotonic: { origin.duration(to: clock.now) })
+            lifecycle = RunLifecycle(expiresAt: grant.expiresAt, epoch: epoch, installedAt: created, clock: clock, installedElapsed: installed.elapsed)
         }
         grantDigest = RunAuthorizationController.grantDigest(for: grant)
         self.owner = owner; self.runID = runID; self.epoch = epoch; self.workloadDigest = workloadDigest; self.sink = sink; self.frameBudget = min(64, max(1, frameBudget))

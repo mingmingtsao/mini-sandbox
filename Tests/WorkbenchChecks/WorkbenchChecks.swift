@@ -74,7 +74,7 @@ import SandboxWorkbench
                 let clock = Clock(grant.createdAt.addingTimeInterval(1))
                 let path = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
                 defer { try? FileManager.default.removeItem(at: path) }
-                let subject = WorkbenchModel(newAuditFileAt: path, now: { clock.now() })
+                let subject = WorkbenchModel(newAuditFileAt: path, clock: clock.source)
                 try await subject.installTrustedGrant(grant)
                 let action = try await subject.proposeTrustedAction(binding: binding, display: "<b>literal native text</b>")
                 let view = WorkbenchView(model: subject)
@@ -101,7 +101,7 @@ import SandboxWorkbench
                 let clock = Clock(grant.createdAt.addingTimeInterval(1))
                 let path = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
                 defer { try? FileManager.default.removeItem(at: path) }
-                let subject = WorkbenchModel(newAuditFileAt: path, now: { clock.now() })
+                let subject = WorkbenchModel(newAuditFileAt: path, clock: clock.source)
                 try await subject.installTrustedGrant(grant)
                 let a = try await subject.proposeTrustedAction(binding: binding, display: "A expires before B")
                 clock.advance(301)
@@ -166,11 +166,10 @@ import SandboxWorkbench
         checks += 1
     }
     final class Clock: @unchecked Sendable {
-        private let lock = NSLock()
-        private var date: Date
-        init(_ date: Date) { self.date = date }
-        func now() -> Date { lock.lock(); defer { lock.unlock() }; return date }
-        func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; date.addTimeInterval(seconds) }
+        let source: RunClock
+        init(_ date: Date) { source = .manual(wall: date) }
+        func now() -> Date { source.now() }
+        func advance(_ seconds: TimeInterval) { source.advance(seconds) }
     }
     struct Failure: Error { let message: String }
 }

@@ -17,7 +17,7 @@ package struct MCPCompletion: Sendable {
     package let text: String
     package let sourceToolUseID: String?
     fileprivate init(text: String, sourceToolUseID: String?) { self.text = text; self.sourceToolUseID = sourceToolUseID }
-#if DEBUG
+#if DEBUG || SANDBOX_TEST_FIXTURES
     // Synthetic receiver-defense fixture; not an authenticated transport result.
     static func testOnlyUnvalidated(text: String, sourceToolUseID: String?) -> MCPCompletion {
         MCPCompletion(text: text, sourceToolUseID: sourceToolUseID)
@@ -74,11 +74,11 @@ package actor HostMCPGateway {
     private var attachmentBarrier: (@Sendable (HostAttachmentPhase) async -> Void)?
     package func setAttachmentBarrier(_ barrier: (@Sendable (HostAttachmentPhase) async -> Void)?) { attachmentBarrier = barrier }
 #endif
-    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil,
+    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, clock: RunClock = .system(), authority: RunAuthorizationController? = nil,
                  owner: (any HostRunAttachmentOwner)? = nil) throws {
         guard connections.count <= 32, Set(connections.map(\.connectionID)).count == connections.count else { throw HostMCPGatewayError.invalidConnection }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, clock: clock)
         self.owner = owner
     }
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostMCPRunHandle {

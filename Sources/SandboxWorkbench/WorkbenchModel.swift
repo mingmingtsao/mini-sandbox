@@ -370,13 +370,13 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
         self.authorityAvailable = true
     }
 
-    public init(newAuditFileAt url: URL, now: @escaping @Sendable () -> Date = { Date() },
+    public init(newAuditFileAt url: URL, clock: RunClock = .system(),
                 authority: RunAuthorizationController? = nil) {
         auditURL = url
         do {
             let sink = try WorkbenchAuditSink(newFileAt: url)
             audit = sink
-            controller = authority ?? RunAuthorizationController(auditSink: sink, now: now)
+            controller = authority ?? RunAuthorizationController(auditSink: sink, clock: clock)
             authorityAvailable = true
         } catch { errorMessage = "Audit unavailable; authority disabled: \(error)" }
     }

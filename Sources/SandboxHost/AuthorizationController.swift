@@ -192,16 +192,13 @@ public actor RunAuthorizationController {
     private static let historyLimit = 64
 
     private let auditSink: any SynchronousAuditSink
-    private let now: @Sendable () -> Date
-    private let monotonic: @Sendable () -> Duration
+    private let clock: RunClock
+    private func now() -> Date { clock.now() }
     private var runs: [UUID: RunState] = [:]
 
-    public init(auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() },
-                monotonic: (@Sendable () -> Duration)? = nil) {
+    public init(auditSink: any SynchronousAuditSink, clock: RunClock = .system()) {
         self.auditSink = auditSink
-        self.now = now
-        let clock = ContinuousClock(); let origin = clock.now
-        self.monotonic = monotonic ?? { origin.duration(to: clock.now) }
+        self.clock = clock
     }
 
     // Do not hash RunGrant's Codable Set representations: their array order is unspecified.
@@ -262,12 +259,13 @@ public actor RunAuthorizationController {
     }
 
     public func install(grant: RunGrant) throws -> HostRunHandle {
-        let current = now()
+        let installed = clock.sample()
+        let current = installed.wall
         guard current >= grant.createdAt else { throw AuthorizationError.grantNotYetValid }
         guard current < grant.expiresAt else { throw AuthorizationError.grantExpired }
         guard runs[grant.runID] == nil else { throw AuthorizationError.duplicateRun }
 
-        let handle = HostRunHandle(token: UUID(), lifecycle: RunLifecycle(expiresAt: grant.expiresAt, epoch: grant.epoch, installedAt: current, wall: now, monotonic: monotonic), grant: grant, authorityIdentity: attachmentIdentity)
+        let handle = HostRunHandle(token: UUID(), lifecycle: RunLifecycle(expiresAt: grant.expiresAt, epoch: grant.epoch, installedAt: current, clock: clock, installedElapsed: installed.elapsed), grant: grant, authorityIdentity: attachmentIdentity)
         let state = RunState(grant: grant, grantDigest: Self.grantDigest(for: grant), handle: handle)
         runs[grant.runID] = state
         return handle

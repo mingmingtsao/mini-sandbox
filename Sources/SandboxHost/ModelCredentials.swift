@@ -44,7 +44,8 @@ package struct FixedMessage: Codable, Equatable, Sendable {
     package init(role: FixedMessageRole, blocks: [ModelBlock]) throws {
         guard !blocks.isEmpty, blocks.count <= 128 else { throw ModelTransportError.invalidRequest("blocks") }
         do {
-            _ = try ModelJSON.parse(JSONEncoder().encode(blocks))
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes]
+            _ = try ModelJSON.parse(encoder.encode(blocks))
             for block in blocks {
                 _ = try ModelBlock(wire: block.wire)
                 switch block {

@@ -158,3 +158,11 @@ queue bytes/events, total enqueued HTTP bytes and actual committed socket bytes.
 Growing paired tool history at 1/8/16/24 turns retains every original message and
 tool result (24 turns: 54,511 raw, 54,542 canonical, 55,007 approval bytes). A
 32-turn 72,631-byte request rejects without truncation or any credential read.
+
+Actual CLI Bash and Write permission captures include `display_name`,
+`description`, and optional `decision_reason_type`. These bounded presentation
+fields are retained in the full approved request. `permission_suggestions`
+(including `setMode:acceptEdits` and `addRules`) are bound advisory metadata only:
+the sole allow response is `{behavior:allow,updatedInput:<exact approved input>}`.
+No session mode, persistent rule or `updatedPermissions` is installed. Unknown
+request keys and wrong metadata types still reject.

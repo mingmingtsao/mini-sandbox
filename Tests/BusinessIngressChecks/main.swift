@@ -145,6 +145,17 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             let permission = #"{"type":"control_request","request_id":"request-1","request":{"subtype":"can_use_tool","tool_use_id":"tool-1","tool_name":"Edit","input":{"file_path":"/work/project/logic.py","old_string":"-","new_string":"+"}}}"#
             let tool = try CLIPermissionRequest.parse(Data(permission.utf8))
             try check(tool.operation == "write" && tool.input["old_string"]?.string == "-", "normal CLI permission retains exact input")
+            let metadata = permission.replacingOccurrences(of: "\"subtype\":", with: "\"display_name\":\"Edit\",\"description\":\"logic.py\",\"decision_reason_type\":\"other\",\"permission_suggestions\":[{\"type\":\"setMode\",\"mode\":\"acceptEdits\",\"destination\":\"session\"}],\"subtype\":")
+            let withMetadata = try CLIPermissionRequest.parse(Data(metadata.utf8))
+            try check(withMetadata.root == ModelJSON.parse(Data(metadata.utf8)) && withMetadata.input == tool.input,
+                "SDK suggestions retained as metadata without changing one-action input")
+            try rejected("unknown permission semantics") { _ = try CLIPermissionRequest.parse(Data(permission.replacingOccurrences(of: "\"subtype\":", with: "\"updatedPermissions\":[],\"subtype\":").utf8)) }
+            if let index = CommandLine.arguments.firstIndex(of: "--captured-permission"), index + 1 < CommandLine.arguments.count {
+                let captured = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                let parsed = try CLIPermissionRequest.parse(captured)
+                try check(parsed.root == ModelJSON.parse(captured), "real permission metadata preserved")
+                print("PASS captured real CLI permission bytes=\(captured.count) input_bytes=\(parsed.argumentsJSON.utf8.count) operation=\(parsed.operation) session_suggestions_applied=0")
+            }
             for path in ["/etc/passwd", "/work/project/../private", "../outside", "logic.py", "~/logic.py", "~user/logic.py", "/work/project/", "/work/project//logic.py"] {
                 try rejected("permission path") { _ = try CLIPermissionRequest.parse(Data(permission.replacingOccurrences(of: "/work/project/logic.py", with: path).utf8)) }
             }

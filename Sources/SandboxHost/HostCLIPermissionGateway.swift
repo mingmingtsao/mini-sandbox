@@ -18,11 +18,27 @@ package struct CLIPermissionRequest: Sendable {
               fields["type"]?.string == "control_request",
               let requestID = fields["request_id"]?.string, validID(requestID),
               let request = fields["request"]?.object,
-              Set(request.keys).isSubset(of: ["subtype", "tool_name", "input", "tool_use_id", "permission_suggestions", "blocked_path", "decision_reason", "agent_id"]),
+              Set(request.keys).isSubset(of: ["subtype", "tool_name", "input", "tool_use_id", "permission_suggestions", "blocked_path", "decision_reason", "decision_reason_type", "agent_id", "display_name", "description"]),
               request["subtype"]?.string == "can_use_tool",
               let toolUseID = request["tool_use_id"]?.string, validID(toolUseID),
               let name = request["tool_name"]?.string,
               let input = request["input"], let values = input.object else { throw HostModelGatewayError.denied }
+        // The pinned SDK includes presentation metadata and proposed session
+        // permission changes. Bind them verbatim but never apply any suggestion.
+        for key in ["decision_reason", "decision_reason_type", "display_name", "description"] {
+            if let value = request[key] {
+                guard let text = value.string, text.utf8.count <= 8192 else { throw HostModelGatewayError.denied }
+            }
+        }
+        for key in ["blocked_path", "agent_id"] {
+            if let value = request[key], value != .null {
+                guard let text = value.string, text.utf8.count <= 1024 else { throw HostModelGatewayError.denied }
+            }
+        }
+        if let suggestions = request["permission_suggestions"] {
+            guard let values = suggestions.array, values.count <= 32,
+                  values.allSatisfy({ $0.object != nil }) else { throw HostModelGatewayError.denied }
+        }
         let operation: String
         switch name {
         case "Read", "Edit", "Write":

@@ -89,6 +89,8 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             ] { try rejected("invalid body") { _ = try BusinessHTTPIngress.parse(wire(changed))?.claudeRequest() } }
             let credential = Credential()
             let (authority, handle, connection) = try await installed(credential)
+            try await workspaceSessionBoundaryChecks()
+            try displayBoundaryChecks(handle: handle)
             try businessBudgetChecks(authority: authority, handle: handle, connection: connection)
             if let index = CommandLine.arguments.firstIndex(of: "--captured-http"), index + 1 < CommandLine.arguments.count {
                 let captured = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @testable import SandboxHost
 
 var passed = 0
@@ -122,6 +123,22 @@ check("business resource bounded reads reject symlinks hardlinks and oversized i
     try FileManager.default.removeItem(at: alias)
     do { _ = try BusinessRuntimeBundle.fileDigest(file, maximum: 4, exact: 3); return false } catch {}
     do { _ = try BusinessRuntimeBundle.fileDigest(file, maximum: 4, immutable: true); return false } catch {}
+    // Hash a multi-buffer resource, then enforce exact length and immutable mode
+    // on the same real file. No pinned runtime manifest is fabricated.
+    let large = Data(repeating: 97, count: 65_537)
+    try large.write(to: file)
+    guard try BusinessRuntimeBundle.read(file, maximum: large.count) == large,
+          try BusinessRuntimeBundle.fileDigest(file, maximum: large.count, exact: large.count) == WorkspaceTransferWire.hash(large) else { return false }
+    try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: file.path)
+    guard try BusinessRuntimeBundle.fileDigest(file, maximum: large.count, exact: large.count, immutable: true) == WorkspaceTransferWire.hash(large) else { return false }
+    let empty = root.appendingPathComponent("empty"), fifo = root.appendingPathComponent("fifo")
+    try Data().write(to: empty)
+    do { _ = try BusinessRuntimeBundle.fileDigest(empty, maximum: 4); return false } catch {}
+    guard mkfifo(fifo.path, 0o600) == 0 else { return false }
+    do { _ = try BusinessRuntimeBundle.read(fifo, maximum: 4); return false } catch {}
+    guard BusinessRuntimeBundle.isDigest(String(repeating: "a", count: 64)),
+          !BusinessRuntimeBundle.isDigest(String(repeating: "A", count: 64)),
+          !BusinessRuntimeBundle.isDigest(String(repeating: "a", count: 63)) else { return false }
     return true
 }
 verifiedBundleChecks()

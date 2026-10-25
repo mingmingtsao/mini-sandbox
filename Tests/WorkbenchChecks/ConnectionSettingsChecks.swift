@@ -76,6 +76,17 @@ final class SettingsStore: FixedModelCredentialStore, @unchecked Sendable {
         let noIdentity = SettingsStore()
         let rejected = KeychainCanarySelfCheck.exercise(store: noIdentity, packagedIdentity: false)
         try require(rejected.verdict == "BLOCKED" && noIdentity.count == 0, "unpackaged selfcheck touches no storage")
+        for mode in [CanaryFaultStore.Mode.preexisting, .mismatch, .readFailure, .cleanupFailure, .cleanupBlocked, .cleanupRetained] {
+            let store = CanaryFaultStore(mode: mode)
+            let report = KeychainCanarySelfCheck.exercise(store: store, packagedIdentity: true)
+            if mode == .preexisting {
+                try require(report.verdict == "BLOCKED" && store.writes == 0 && store.deletions == 0, "preexisting item was modified")
+            } else if mode == .cleanupBlocked {
+                try require(report.verdict == "BLOCKED" && report.osStatus == -25308 && !report.cleanup, "cleanup OS denial became PASS")
+            } else {
+                try require(report.verdict == "FAIL" && report.cleanup == (mode == .mismatch || mode == .readFailure), "readback or cleanup fault became PASS")
+            }
+        }
         print("PASS synthetic canary runner statuses cleanup and identity gate (not actual Keychain)")
     }
     static func nativeBindings() throws {
@@ -209,5 +220,29 @@ final class SettingsStore: FixedModelCredentialStore, @unchecked Sendable {
         await settings.save("synthetic-" + UUID().uuidString)
         try require(settings.configuration == nil, "failed replacement cannot restore previous routing")
         print("PASS connection replacement retires old authority before storage and keeps busy Stop reachable")
+    }
+}
+
+private final class CanaryFaultStore: FixedModelCredentialStore, @unchecked Sendable {
+    enum Mode { case preexisting, mismatch, readFailure, cleanupFailure, cleanupBlocked, cleanupRetained }
+    enum Fault: Error { case read, cleanup }
+    let mode: Mode
+    private var value: String?
+    private(set) var writes = 0, deletions = 0
+    init(mode: Mode) { self.mode = mode }
+    func check() throws -> Bool { mode == .preexisting || value != nil }
+    func save(_ value: String) throws { writes += 1; self.value = value }
+    func credential(for model: FixedModel) throws -> String {
+        if mode == .readFailure { throw Fault.read }
+        return mode == .mismatch ? "synthetic-wrong-readback" : value ?? ""
+    }
+    func delete() throws {
+        deletions += 1
+        if deletions == 2 {
+            if mode == .cleanupFailure { throw Fault.cleanup }
+            if mode == .cleanupBlocked { throw CredentialProviderError.storageUnavailable(-25308) }
+            if mode == .cleanupRetained { value = "synthetic-retained"; return }
+        }
+        value = nil
     }
 }

@@ -16,6 +16,9 @@ CHECKS = (
     "HostIntegrationChecks", "StructuredModelChecks", "WorkbenchChecks",
     "SharedAuthorityChecks", "WorkspaceChecks", "WorkspaceTransferChecks", "VMChecks", "RuntimeReceiveChecks",
     "PresentationChecks (validated)",
+    "BusinessIngressChecks",
+    "MCPGatewayChecks (Claude loopback)",
+    "ExecutionBoundaryChecks (reflection loopback)",
     "ExecutionBoundaryChecks", "ExecutionBoundaryChecks --final-effect-clock",
     "ExecutionBoundaryChecks --native-repairs", "ExecutionBoundaryChecks --native-response",
     "MCPGatewayChecks --transport-unit",
@@ -29,7 +32,13 @@ CHECKS = (
 
 def check_commands(binary_dir):
     for name in CHECKS:
-        if name == "PresentationChecks (validated)":
+        if name == "MCPGatewayChecks (Claude loopback)":
+            yield [sys.executable, str(ROOT / "Tests/MCPGatewayChecks/claude_loopback.py"),
+                   "--binary", str(binary_dir / "MCPGatewayChecks")]
+        elif name == "ExecutionBoundaryChecks (reflection loopback)":
+            yield [sys.executable, str(ROOT / "Tests/ModelReflectionTests/loopback.py"),
+                   "--binary", str(binary_dir / "ExecutionBoundaryChecks")]
+        elif name == "PresentationChecks (validated)":
             yield [sys.executable, str(ROOT / "Tests/PresentationTests/run.py"),
                    "--binary", str(binary_dir / "PresentationChecks")]
         elif name.endswith("(validated)"):

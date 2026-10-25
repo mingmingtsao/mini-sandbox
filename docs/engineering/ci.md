@@ -14,7 +14,7 @@
 | CI | GitHub 托管 Ubuntu 24.04 | 汇总以上五项结果；任何失败、跳过或取消都不能被当作通过 |
 | Publish main coverage badge | GitHub 托管 Ubuntu 24.04 | 仅主线成功运行后，将覆盖率徽章与报告更新到 `ci-coverage` 分支 |
 
-Swift 运行集合由 `scripts/swift-coverage.py` 的 `CHECKS` 统一维护。包括 `ContractChecks`、`AuthorizationChecks`、`ModelTransportChecks --offline`（32 组，排除隔离 Keychain CRUD）、`HostIntegrationChecks`、`StructuredModelChecks`、`WorkbenchChecks`、`SharedAuthorityChecks`、`WorkspaceChecks`、`WorkspaceTransferChecks`、`VMChecks` 和 `RuntimeReceiveChecks`，以及执行边界额外 selector、MCP transport、认证回环和 App 只读诊断。仓库使用这些可执行入口，而非 `swift test`。所有回环 driver 显式使用插桩构建的二进制，计数随子进程合并。
+Swift 运行集合由 `scripts/swift-coverage.py` 的 `CHECKS` 统一维护。包括 `ContractChecks`、`AuthorizationChecks`、`ModelTransportChecks --offline`（排除隔离 Keychain CRUD）、`HostIntegrationChecks`、`StructuredModelChecks`、`WorkbenchChecks`、`SharedAuthorityChecks`、`WorkspaceChecks`、`WorkspaceTransferChecks`、`VMChecks`、`RuntimeReceiveChecks` 和 `BusinessIngressChecks`，以及任务/连接原生视图、执行边界额外 selector、MCP transport、Claude MCP 与模型反射等认证回环和 App 只读诊断。仓库使用这些可执行入口，而非 `swift test`。所有回环 driver 显式使用插桩构建的二进制，计数随子进程合并。
 
 Python 按测试目录分别发现，避免没有包标记的子目录被顶层 discovery 静默跳过。故意包含错误逻辑、供 Agent 修复的 `Tools/AgentRuntime/fixture/test_logic.py` 不作为成功回归运行。CI 不构建完整 guest 镜像、不下载真实 CLI 产物。
 

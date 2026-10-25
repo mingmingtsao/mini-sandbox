@@ -5,6 +5,7 @@ The Swift gateway must enforce the narrower grant. No personal credential,
 external service, imported code, VM or vendor CLI is used by this driver.
 """
 import hmac
+import argparse
 import http.server
 import json
 import pathlib
@@ -107,7 +108,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    binary = pathlib.Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('binary', nargs='?', type=pathlib.Path)
+    parser.add_argument('--binary', dest='selected_binary', type=pathlib.Path)
+    args = parser.parse_args()
+    if (args.binary is None) == (args.selected_binary is None):
+        parser.error('select exactly one binary')
+    binary = (args.selected_binary or args.binary).resolve()
     state = dict(lock=threading.Lock(), token='mcp-canary-' + secrets.token_hex(24), hits=0, writes=0,
                  repos={'A': 'repo-A-initial', 'B': 'repo-B-initial'}, mode='normal',
                  second_arrived=threading.Event(), release_second=threading.Event())

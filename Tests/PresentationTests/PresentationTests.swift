@@ -59,7 +59,13 @@ func expectPresentation(_ value: @autoclosure () throws -> Bool, _ message: Stri
             button.performClick(nil)
             return
         }
-        guard let owner = view.window, let rect = try text(in: view).first(where: { $0.0 == label })?.1 else { throw PresentationFailure(message: "missing control: " + label) }
+        // Vision may insert/remove spaces around punctuation. Preserve the
+        // complete label while normalizing only whitespace; authority state
+        // assertions below still require the selected control to act.
+        let expected = label.filter { !$0.isWhitespace }
+        guard let owner = view.window, let rect = try text(in: view).first(where: {
+            $0.0.filter { !$0.isWhitespace } == expected
+        })?.1 else { throw PresentationFailure(message: "missing control: " + label) }
         let point = NSPoint(x: rect.midX * view.bounds.width, y: (view.isFlipped ? 1 - rect.midY : rect.midY) * view.bounds.height)
         let location = view.convert(point, to: nil)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
@@ -112,6 +118,7 @@ final class PresentationStore: FixedModelCredentialStore, @unchecked Sendable {
         print("PASS unavailable workbench pixels expose authority failure and no pending actions")
         try await workbench()
         try await environment()
+        try await BusinessPresentationChecks.run()
     }
     @MainActor static func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
     @MainActor static func workbench() async throws {

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SandboxContracts
 
 package enum HostMCPGatewayError: Error, Equatable, Sendable {
@@ -12,6 +13,8 @@ package struct HostMCPProposal: Sendable {
     fileprivate let pending: PendingAction
     fileprivate let generation: UInt64
     fileprivate let effectScope: RunEffectScope
+    fileprivate let vmConnection: BusinessVMConnection?
+    fileprivate let localTestConsumer: Bool
 }
 package struct HostMCPApproval: Sendable { fileprivate let proposal: HostMCPProposal; fileprivate let approved: ApprovedAction }
 /// A validated JSON-RPC response from the owned MCP exchange. Only this gateway
@@ -71,6 +74,9 @@ package actor HostMCPGateway {
         let operation: String
         let sourceToolUseID: String?
         let payload: ModelJSON
+        let runtimeID: UUID?
+        let channelID: UUID?
+        let httpSelectors: MCPHTTPSelectors?
     }
     package let authority: RunAuthorizationController
     private var registry: [UUID: Entry]
@@ -120,15 +126,45 @@ package actor HostMCPGateway {
         return entry.discovery
     }
     package func propose(handle: HostMCPRunHandle, connectionID: UUID, raw: Data, sourceToolUseID: String? = nil) async throws -> HostMCPProposal {
+        try await proposeImpl(handle: handle, connectionID: connectionID, raw: raw, sourceToolUseID: sourceToolUseID)
+    }
+    package func proposeVMClient(handle: HostMCPRunHandle, connectionID: UUID,
+        ingress: ClaudeMCPIngress, connection: BusinessVMConnection) async throws -> HostMCPProposal {
+        let run = try get(handle)
+        guard connection.service == .mcp, connection.lifecycle === run.authorityHandle.lifecycle,
+              connection.runID == run.grant.runID, connection.epoch == run.grant.epoch,
+              !connection.isRetired else { throw HostMCPGatewayError.invalidHandle }
+        return try await proposeImpl(handle: handle, connectionID: connectionID, raw: ingress.body,
+                                     ingress: ingress, vmConnection: connection)
+    }
+#if DEBUG || SANDBOX_TEST_FIXTURES
+    package func proposeLocalClientForTesting(handle: HostMCPRunHandle, connectionID: UUID,
+        ingress: ClaudeMCPIngress) async throws -> HostMCPProposal {
+        try await proposeImpl(handle: handle, connectionID: connectionID, raw: ingress.body,
+                              ingress: ingress, localTestConsumer: true)
+    }
+#endif
+    private func proposeImpl(handle: HostMCPRunHandle, connectionID: UUID, raw: Data,
+        sourceToolUseID: String? = nil, ingress: ClaudeMCPIngress? = nil,
+        vmConnection: BusinessVMConnection? = nil, localTestConsumer: Bool = false) async throws -> HostMCPProposal {
         let run = try get(handle)
         do {
             let entry = try live(run, connectionID)
-            let request = try MCPProtocol.ingress(raw, maxBytes: min(run.grant.resourceLimits.messageBytes, 65536))
+            let request: MCPResolved
+            if entry.connection.profile == .fixture {
+                guard ingress == nil, vmConnection == nil, !localTestConsumer else { throw HostMCPGatewayError.denied }
+                request = try MCPProtocol.ingress(raw, maxBytes: min(run.grant.resourceLimits.messageBytes, 65536))
+            } else {
+                guard let ingress, raw.count <= min(run.grant.resourceLimits.messageBytes, 65536),
+                      vmConnection != nil || localTestConsumer, sourceToolUseID == nil else { throw HostMCPGatewayError.denied }
+                request = ingress.request
+            }
             if let sourceToolUseID { guard ModelBlock.validID(sourceToolUseID), request.method == "tools/call" else { throw HostMCPGatewayError.denied } }
             switch request.method {
+            case "server/discover": guard entry.connection.profile == .claudeRepository else { throw HostMCPGatewayError.denied }
             case "initialize": guard !entry.initialized else { throw HostMCPGatewayError.denied }
             case "notifications/initialized": guard entry.initialized, !entry.notified else { throw HostMCPGatewayError.denied }
-            case "tools/list": guard entry.notified else { throw HostMCPGatewayError.denied }
+            case "tools/list": guard entry.connection.profile == .claudeRepository || entry.notified else { throw HostMCPGatewayError.denied }
             case "tools/call": guard entry.discovery == .knownReady, request.resource == "A" else { throw HostMCPGatewayError.denied }
             default: throw HostMCPGatewayError.denied
             }
@@ -136,14 +172,15 @@ package actor HostMCPGateway {
             let current = try time(run)
             guard run.grant.decision(for: scope, connectionID: connectionID, at: current) == .allowed else { throw HostMCPGatewayError.denied }
             let c = entry.connection
-            let envelope = Envelope(runID: run.grant.runID, epoch: run.grant.epoch, grantDigest: RunAuthorizationController.grantDigest(for: run.grant), connectionID: connectionID, accountID: c.accountID, accountBindingVersion: c.accountBindingVersion, routeVersion: c.routeVersion, audience: c.audience, route: "POST /mcp", protocolVersion: MCPProtocol.version, adapter: MCPProtocol.adapter, server: MCPProtocol.server, catalogGeneration: entry.generation, schemaDigest: entry.schemaDigest, resource: request.resource, operation: request.operation, sourceToolUseID: sourceToolUseID, payload: request.payload)
+            let envelope = Envelope(runID: run.grant.runID, epoch: run.grant.epoch, grantDigest: RunAuthorizationController.grantDigest(for: run.grant), connectionID: connectionID, accountID: c.accountID, accountBindingVersion: c.accountBindingVersion, routeVersion: c.routeVersion, audience: c.audience, route: "POST /mcp", protocolVersion: c.profile.version, adapter: c.profile.adapter, server: c.profile.server, catalogGeneration: entry.generation, schemaDigest: entry.schemaDigest, resource: request.resource, operation: request.operation, sourceToolUseID: sourceToolUseID, payload: request.payload, runtimeID: vmConnection?.runtimeID, channelID: vmConnection?.id, httpSelectors: ingress?.selectors)
             let bytes = try MCPProtocol.canonical(envelope)
             guard bytes.count <= min(run.grant.resourceLimits.messageBytes, 65536) else { throw HostMCPGatewayError.denied }
             let binding = try ActionBinding(runID: run.grant.runID, epoch: run.grant.epoch, grantDigest: envelope.grantDigest, connectionID: connectionID, operation: request.operation, schemaDigest: entry.schemaDigest, resolvedResource: request.resource, canonicalRequest: bytes)
             let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
             let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "MCP \(request.operation): \(request.resource)")
             try validate(run, connectionID, entry.generation)
-            return HostMCPProposal(handle: handle, pending: pending, generation: entry.generation, effectScope: effectScope)
+            return HostMCPProposal(handle: handle, pending: pending, generation: entry.generation, effectScope: effectScope,
+                                   vmConnection: vmConnection, localTestConsumer: localTestConsumer)
         } catch { throw await reconcile(error, run) }
     }
     package func hostApprove(handle: HostMCPRunHandle, proposal: HostMCPProposal) async throws -> HostMCPApproval {
@@ -169,6 +206,7 @@ package actor HostMCPGateway {
     }
     package func makeOutput(handle: HostMCPRunHandle, approval: HostMCPApproval) throws -> ControlledRunOutput {
         let run = try get(handle); try validate(run, approval.proposal)
+        guard try live(run, approval.proposal.pending.binding.connectionID).connection.profile == .fixture else { throw HostMCPGatewayError.denied }
         // Discovery is still the legacy registry-mutation surface, not this consumer.
         guard approval.proposal.pending.binding.resolvedResource == "A" else { throw HostMCPGatewayError.denied }
         return ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: approval.proposal.effectScope, actionID: approval.proposal.pending.actionID)
@@ -176,8 +214,41 @@ package actor HostMCPGateway {
     package func execute(handle: HostMCPRunHandle, approval: HostMCPApproval, output: ControlledRunOutput) async throws {
         _ = try await executeImpl(handle: handle, approval: approval, output: output)
     }
+    package func makeVMNativeOutput(handle: HostMCPRunHandle, approval: HostMCPApproval,
+        connection: BusinessVMConnection) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred { connection.retire() } }
+        let run = try get(handle); let proposal = approval.proposal; try validate(run, proposal)
+        guard proposal.vmConnection === connection, connection.service == .mcp,
+              connection.lifecycle === run.authorityHandle.lifecycle, connection.runID == run.grant.runID,
+              connection.epoch == run.grant.epoch,
+              try live(run, proposal.pending.binding.connectionID).connection.profile == .claudeRepository else { throw HostMCPGatewayError.invalidHandle }
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: proposal.effectScope,
+            actionID: proposal.pending.actionID, takingVMConnection: connection, streaming: false, mcp: true)
+    }
+#if DEBUG || SANDBOX_TEST_FIXTURES
+    package func makeLocalClientTestOutput(handle: HostMCPRunHandle, approval: HostMCPApproval,
+        takingAcceptedSocket fd: Int32) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred, fd >= 0 { Darwin.close(fd) } }
+        let run = try get(handle); let proposal = approval.proposal; try validate(run, proposal)
+        guard proposal.localTestConsumer, proposal.vmConnection == nil,
+              try live(run, proposal.pending.binding.connectionID).connection.profile == .claudeRepository else { throw HostMCPGatewayError.denied }
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: proposal.effectScope,
+            actionID: proposal.pending.actionID, takingAcceptedSocket: fd, streaming: false, mcp: true)
+    }
+#endif
     private func executeImpl(handle: HostMCPRunHandle, approval: HostMCPApproval, output: ControlledRunOutput?) async throws -> MCPCompletion {
         let run = try get(handle); let proposal = approval.proposal
+        let profile = try live(run, proposal.pending.binding.connectionID).connection.profile
+        if profile == .claudeRepository {
+            guard let output, output.isMCPNative else { throw HostMCPGatewayError.denied }
+            if let channel = proposal.vmConnection {
+                guard output.matchesVMConnection(channel), !channel.isRetired else { throw HostMCPGatewayError.invalidHandle }
+            } else { guard proposal.localTestConsumer else { throw HostMCPGatewayError.denied } }
+        }
         if let output, !output.matches(run.authorityHandle.lifecycle, proposal.effectScope, actionID: proposal.pending.actionID) { throw HostMCPGatewayError.invalidApproval }
         var ownerRegistration: UUID?
         do {
@@ -197,10 +268,18 @@ package actor HostMCPGateway {
             let entry = try live(run, e.connectionID); let c = entry.connection
             guard e.runID == run.grant.runID, e.epoch == run.grant.epoch, e.grantDigest == RunAuthorizationController.grantDigest(for: run.grant),
                   e.accountID == c.accountID, e.accountBindingVersion == c.accountBindingVersion, e.routeVersion == c.routeVersion,
-                  e.audience == c.audience, e.route == "POST /mcp", e.protocolVersion == MCPProtocol.version, e.adapter == MCPProtocol.adapter,
-                  e.server == MCPProtocol.server, e.schemaDigest == entry.schemaDigest, e.catalogGeneration == entry.generation else { throw HostMCPGatewayError.invalidApproval }
+                  e.audience == c.audience, e.route == "POST /mcp", e.protocolVersion == c.profile.version, e.adapter == c.profile.adapter,
+                  e.server == c.profile.server, e.schemaDigest == entry.schemaDigest, e.catalogGeneration == entry.generation else { throw HostMCPGatewayError.invalidApproval }
+            if profile == .claudeRepository {
+                guard e.runtimeID == proposal.vmConnection?.runtimeID, e.channelID == proposal.vmConnection?.id,
+                      e.httpSelectors?.version == ClaudeMCPProtocol.version,
+                      e.httpSelectors?.method == e.payload["method"]?.string,
+                      e.httpSelectors?.name == e.payload["params"]?["name"]?.string else { throw HostMCPGatewayError.invalidApproval }
+                _ = try ClaudeMCPProtocol.ingress(MCPProtocol.canonical(e.payload), maxBytes: min(run.grant.resourceLimits.messageBytes, 65536))
+            }
             try time(run, deadline: proposal.pending.expiresAt)
-            let op = try MCPPreparedOperation(connection: c, payload: e.payload, limit: run.grant.resourceLimits.messageBytes)
+            let op = try MCPPreparedOperation(connection: c, payload: e.payload, limit: run.grant.resourceLimits.messageBytes,
+                                               vmOwner: proposal.vmConnection)
             run.operations[operationID] = (e.connectionID, op)
             try validate(run, proposal); try Task.checkCancellation(); try time(run, deadline: proposal.pending.expiresAt)
             try run.authorityHandle.lifecycle.start(.mcp(op), id: operationID, scope: proposal.effectScope,
@@ -213,23 +292,47 @@ package actor HostMCPGateway {
             } onCancel: { op.cancel() }
             try validate(run, proposal); try Task.checkCancellation()
             guard let body else { throw HostMCPGatewayError.invalidResponse }
-            let result = try MCPProtocol.response(body, request: e.payload)
             let method = e.payload["method"]!.string!
             var text = ""; var catalog: (MCPDiscoveryState, String)?
-            switch method {
-            case "initialize": try MCPProtocol.validateInitialization(result)
-            case "notifications/initialized": break
-            case "tools/list": catalog = try MCPProtocol.catalog(result)
-            case "tools/call": text = try MCPProtocol.toolText(result)
-            default: throw HostMCPGatewayError.invalidResponse
+            var wire: ModelJSON?
+            if profile == .claudeRepository {
+                let response = try ClaudeMCPProtocol.response(body, request: e.payload)
+                wire = response.wire
+                if let result = response.result {
+                    switch method {
+                    case "server/discover": try ClaudeMCPProtocol.discovery(result)
+                    case "tools/list": catalog = try ClaudeMCPProtocol.catalog(result)
+                    case "tools/call": text = try ClaudeMCPProtocol.toolText(result)
+                    default: throw HostMCPGatewayError.invalidResponse
+                    }
+                } else if method != "tools/call" { throw HostMCPGatewayError.invalidResponse }
+                try op.validateOutboundJSON(response.wire, joinedText: text)
+                if let catalog, entry.discovery != .unknown, catalog.1 != entry.schemaDigest {
+                    try invalidateCatalog(connectionID: e.connectionID)
+                    throw HostMCPGatewayError.invalidResponse
+                }
+            } else {
+                let result = try MCPProtocol.response(body, request: e.payload)
+                switch method {
+                case "initialize": try MCPProtocol.validateInitialization(result)
+                case "notifications/initialized": break
+                case "tools/list": catalog = try MCPProtocol.catalog(result)
+                case "tools/call": text = try MCPProtocol.toolText(result)
+                default: throw HostMCPGatewayError.invalidResponse
+                }
+                try op.validateOutboundText(text)
             }
             // Check the actual decoded/joined text, before success audit or any
             // caller/model DTO can exist (JSON escapes and split items included).
-            try op.validateOutboundText(text)
             completionAttempted = true
             try await authority.complete(handle: run.authorityHandle, ticket: ticket, outcome: .completed)
             try validate(run, proposal); try Task.checkCancellation()
-            if method != "tools/call" {
+            if profile == .claudeRepository {
+                if let catalog {
+                    var updated = entry; updated.discovery = catalog.0; updated.schemaDigest = catalog.1
+                    registry[e.connectionID] = updated
+                }
+            } else if method != "tools/call" {
                 var updated = entry; updated.generation &+= 1
                 if method == "initialize" { updated.initialized = true }
                 if method == "notifications/initialized" { updated.notified = true }
@@ -240,7 +343,10 @@ package actor HostMCPGateway {
                 registry[e.connectionID] = updated; cancelConnection(e.connectionID)
             }
             let completion = MCPCompletion(text: text, sourceToolUseID: e.sourceToolUseID)
-            if let output { try output.enqueue(.mcpCompletion(completion)) }
+            if let output {
+                if profile == .claudeRepository { try output.enqueue(.mcpResponse(MCPWireResponse(payload: wire))) }
+                else { try output.enqueue(.mcpCompletion(completion)) }
+            }
             return completion
         } catch {
             if completionAttempted, error as? AuthorizationError == .auditFailed, let ownerRegistration {

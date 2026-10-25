@@ -17,7 +17,10 @@ final class MCPPreparedOperation: NSObject, URLSessionDataDelegate, @unchecked S
     private var finished = false
     private let notification: Bool
     private let limit: Int
-    init(connection: HostMCPConnection, payload: ModelJSON, limit: Int) throws {
+    private let vmOwner: BusinessVMConnection?
+    init(connection: HostMCPConnection, payload: ModelJSON, limit: Int, vmOwner: BusinessVMConnection? = nil) throws {
+        self.vmOwner = vmOwner
+        if let vmOwner { guard vmOwner.service == .mcp else { throw HostMCPGatewayError.invalidHandle } }
         self.limit = min(limit, 65536)
         notification = payload["method"] == .string("notifications/initialized")
         let pair = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -42,21 +45,58 @@ final class MCPPreparedOperation: NSObject, URLSessionDataDelegate, @unchecked S
         request.httpMethod = "POST"; request.httpBody = bytes
         request.setValue("Bearer " + credential.bearer, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(MCPProtocol.version, forHTTPHeaderField: "MCP-Protocol-Version")
+        request.setValue(connection.profile == .fixture ? "application/json" : "application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(connection.profile.version, forHTTPHeaderField: "MCP-Protocol-Version")
+        if connection.profile == .claudeRepository {
+            request.setValue(payload["method"]?.string, forHTTPHeaderField: "Mcp-Method")
+            request.setValue(payload["params"]?["name"]?.string, forHTTPHeaderField: "Mcp-Name")
+        }
         task = session.dataTask(with: request) // suspended; no HTTP start here
     }
-    func acquireForStart() { lock.lock() }
-    func releaseForStart() { lock.unlock() }
+    func acquireForStart() { lock.lock(); vmOwner?.acquireNativeStart() }
+    func releaseForStart() { vmOwner?.releaseNativeEffect(); lock.unlock() }
+    func validateVMOwner(scope: RunEffectScope, lifecycle: RunLifecycle) throws {
+        guard let vmOwner else { return }
+        guard vmOwner.lifecycle === lifecycle, vmOwner.epoch == scope.generation,
+              vmOwner.service == .mcp, scope.connectionID != nil else { throw AuthorizationError.wrongRun }
+    }
     func startLocked() throws {
         guard !started, !finished, let task else { throw HostMCPGatewayError.notStarted }
+        try vmOwner?.validateNativeEffectLocked()
         started = true; task.resume(); resumes += 1
     }
-    func start() throws { try lock.withLock { try startLocked() } }
+    func start() throws {
+        guard vmOwner == nil else { throw HostMCPGatewayError.denied }
+        acquireForStart(); defer { releaseForStart() }; try startLocked()
+    }
     func validateOutboundText(_ text: String) throws {
         try lock.withLock {
             defer { activeCredential = nil }
             guard let activeCredential, !text.contains(activeCredential) else { throw HostMCPGatewayError.invalidResponse }
+        }
+    }
+    /// Validate every returned JSON field before a native MCP response exists.
+    /// Includes raw canonical spelling and decoded scalar/key representations;
+    /// this remains exact matching, not arbitrary encoded-secret detection.
+    func validateOutboundJSON(_ value: ModelJSON, joinedText: String) throws {
+        try lock.withLock {
+            defer { activeCredential = nil }
+            guard let secret = activeCredential else { throw HostMCPGatewayError.invalidResponse }
+            func reject(_ text: String) throws {
+                guard !text.contains(secret) else { throw HostMCPGatewayError.invalidResponse }
+            }
+            func visit(_ item: ModelJSON) throws {
+                switch item {
+                case .object(let fields): for (key, child) in fields { try reject(key); try visit(child) }
+                case .array(let values): for child in values { try visit(child) }
+                case .string(let text): try reject(text)
+                case .integer(let number): try reject(String(number))
+                case .bool(let value): try reject(value ? "true" : "false")
+                case .null: try reject("null")
+                }
+            }
+            try reject(String(decoding: MCPProtocol.canonical(value), as: UTF8.self))
+            try reject(joinedText); try visit(value)
         }
     }
     func cancel() {

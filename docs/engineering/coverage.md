@@ -10,7 +10,7 @@ README 的覆盖率徽章显示最近一次成功主线 CI 的 **Swift 源码行
 - 运行时检查覆盖原始 JSON 文法、Unicode、数值边界、编解码、取消消息只发送一次、队列上限和终态；镜像清单检查覆盖真实 SHA-256 及规范摘要和路径/文件类型拒绝。
 - `PresentationChecks` 链接本次插桩构建中未改写的产品对象，在自身进程的屏幕外 AppKit 窗口中渲染真实 SwiftUI 视图。系统 Vision OCR 核对动态字段，原生控件事件验证 Review/Deny/Approve/Cancel、Save/Check、Stop 和只读环境刷新；同步核对实际授权、零自动派发和合成存储状态。删除只验证真实控制器操作后的渲染投影，不声称覆盖 destructive 按钮的外部点击验收。
 - 不包含 `Tests/`、`Tools/`、自动生成代码、Python 和 Go。公开 API 编译检查、Release 打包及签名验证也不产生这个指标的运行计数。
-- 不设置最低百分比门槛；统计失败、缺失源码映射或缺少原始计数会使覆盖率 job 失败，不会用虚构数值代替。
+- 不设置最低百分比门槛。导出同时读取相同完整对象列表的 LLVM 空计数基线：仅含常量或被编译条件排除、没有可执行行映射的文件保留为 `0/0`，表格显示 `n/a`；有可执行映射但未命中的行仍计入分母。实际报告遗漏基线中的可执行源码、映射行数不一致或缺少原始计数都会使 job 失败。
 
 ## 生成与查看
 
@@ -24,6 +24,7 @@ SwiftPM 不会把可执行目标的对象自动链接到另一个可执行目标
 - `coverage-report/coverage.json`：可执行行数、命中行数、每文件明细、提交及 CI 运行地址。
 - `coverage-report/README.md`：可直接查看的逐文件报告。
 - `coverage-report/llvm.json`：完整 LLVM 段和函数明细，用于定位未覆盖分支；保存在 artifact，不推送到徽章分支。
+- `coverage-report/llvm-baseline.json`：相同对象列表的空计数映射，用于区分没有可执行行与遗漏源码；随 artifact 保存。
 
 报告会写入 Actions 运行摘要，并作为 `swift-coverage` artifact 保存 14 天。只有 `main` 上全部 CI 检查成功后，独立发布任务才会更新 [`ci-coverage` 分支](https://github.com/mingmingtsao/mini-sandbox/tree/ci-coverage)。发布任务会核对报告提交，并在主线已向前移动时跳过旧报告；PR 不具有覆盖率发布权限。
 

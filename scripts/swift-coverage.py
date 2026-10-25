@@ -51,9 +51,8 @@ def check_commands(binary_dir):
                    "--binary", str(binary_dir / "WorkbenchChecks")]
 
 
-def source_totals(export, root, sources):
-    """Filter LLVM's merged report; count uncovered source files in the denominator."""
-    expected = {str(path.resolve()): path.relative_to(root).as_posix() for path in sources}
+def source_rows(export, expected):
+    """Read LLVM mappings without inferring execution from absent files."""
     rows = {}
     for unit in export["data"]:
         for entry in unit["files"]:
@@ -68,7 +67,28 @@ def source_totals(export, root, sources):
             if type(total) is not int or type(covered) is not int or not 0 <= covered <= total:
                 raise ValueError(f"invalid line counts: {path}")
             rows[path] = {"path": path, "lines": total, "covered": covered}
+    return rows
+
+
+def source_totals(export, root, sources, *, baseline=None):
+    """Count every compiled executable line, retaining unmapped sources as 0/0."""
+    expected = {str(path.resolve()): path.relative_to(root).as_posix() for path in sources}
+    rows = source_rows(export, expected)
     missing = set(expected.values()) - rows.keys()
+    if baseline is not None:
+        # This empty-profile export uses the exact same complete object list.
+        # LLVM omits constant-only and conditionally excluded source files.
+        # A file with executable baseline lines must still be in the real report.
+        baseline_rows = source_rows(baseline, expected)
+        if any(row["covered"] != 0 for row in baseline_rows.values()):
+            raise ValueError("baseline contains execution counts")
+        for path, row in rows.items():
+            if path not in baseline_rows or row["lines"] != baseline_rows[path]["lines"]:
+                raise ValueError(f"coverage mapping differs from baseline: {path}")
+        for path in tuple(missing):
+            if baseline_rows.get(path, {}).get("lines", 0) == 0:
+                rows[path] = {"path": path, "lines": 0, "covered": 0}
+                missing.remove(path)
     if missing:
         raise ValueError(f"source files missing from LLVM report: {sorted(missing)}")
     total = sum(row["lines"] for row in rows.values())
@@ -157,12 +177,14 @@ def run(args):
         merged = profile_dir / "merged.profdata"
         subprocess.run(["xcrun", "llvm-profdata", "merge", "-sparse", *map(str, profiles),
                         "-o", str(merged)], check=True)
-        command = ["xcrun", "llvm-cov", "export", f"-instr-profile={merged}", str(objects[0])]
+        command = ["xcrun", "llvm-cov", "export", str(objects[0])]
         for obj in objects[1:]:
             command += ["-object", str(obj)]
-        exported = json.loads(subprocess.check_output(command, text=True))
+        baseline = json.loads(subprocess.check_output(command + ["--empty-profile"], text=True))
+        exported = json.loads(subprocess.check_output(command + [f"-instr-profile={merged}"], text=True))
+        (output / "llvm-baseline.json").write_text(json.dumps(baseline) + "\n")
         (output / "llvm.json").write_text(json.dumps(exported) + "\n")
-    totals = source_totals(exported, ROOT, sources)
+    totals = source_totals(exported, ROOT, sources, baseline=baseline)
     commit = os.environ.get("GITHUB_SHA") or subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     repository = os.environ.get("GITHUB_REPOSITORY", "mingmingtsao/mini-sandbox")

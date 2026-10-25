@@ -16,15 +16,15 @@ final class Barrier: @unchecked Sendable {
     }
 }
 final class Clock: @unchecked Sendable {
-    let lock = NSLock(); var value = Date()
-    func now() -> Date { lock.withLock { value } }
-    func expire() { lock.withLock { value = value.addingTimeInterval(300) } }
+    let source = RunClock.manual(wall: Date())
+    func now() -> Date { source.now() }
+    func expire() { source.advance(300) }
 }
 func lifecycleBarriers(_ port: UInt16, _ token: String) async throws {
     for kind in ["barrier-stop", "barrier-revoke", "barrier-cancel", "barrier-expiry", "completion-stop"] {
         let id = UUID(); let account = UUID(); let audit = Audit(); let credentials = Credentials(token, audit); let clock = Clock()
         let connection = try HostMCPConnection.testOnlyLoopback(connectionID: id, accountID: account, port: port, provider: credentials)
-        let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, now: { clock.now() })
+        let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, clock: clock.source)
         let handle = try await gateway.install(grant: grant(id))
         let c = Context(gateway: gateway, handle: handle, id: id, account: account, audit: audit, credentials: credentials, port: port)
         try await discover(c, name: kind + "-discovery")

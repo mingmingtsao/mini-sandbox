@@ -46,12 +46,13 @@ final class MCPPreparedOperation: NSObject, URLSessionDataDelegate, @unchecked S
         request.setValue(MCPProtocol.version, forHTTPHeaderField: "MCP-Protocol-Version")
         task = session.dataTask(with: request) // suspended; no HTTP start here
     }
-    func start() throws {
-        try lock.withLock {
-            guard !started, !finished, let task else { throw HostMCPGatewayError.notStarted }
-            started = true; task.resume(); resumes += 1
-        }
+    func acquireForStart() { lock.lock() }
+    func releaseForStart() { lock.unlock() }
+    func startLocked() throws {
+        guard !started, !finished, let task else { throw HostMCPGatewayError.notStarted }
+        started = true; task.resume(); resumes += 1
     }
+    func start() throws { try lock.withLock { try startLocked() } }
     func validateOutboundText(_ text: String) throws {
         try lock.withLock {
             defer { activeCredential = nil }

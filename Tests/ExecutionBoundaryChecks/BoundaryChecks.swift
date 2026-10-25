@@ -3,9 +3,9 @@ import Foundation
 import SandboxContracts
 
 final class Clock: @unchecked Sendable {
-    let lock = NSLock(); var value = Date(timeIntervalSince1970: 1_800_000_000)
-    func now() -> Date { lock.withLock { value } }
-    func advance(_ amount: TimeInterval) { lock.withLock { value = value.addingTimeInterval(amount) } }
+    let source = RunClock.manual(wall: Date(timeIntervalSince1970: 1_800_000_000), elapsed: .zero)
+    func now() -> Date { source.now() }
+    func advance(_ amount: TimeInterval) { source.advance(amount) }
 }
 final class Gate: @unchecked Sendable {
     let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
@@ -21,7 +21,7 @@ final class BlockedCredentials: ModelCredentialProvider, @unchecked Sendable {
     var count: Int { lock.withLock { reads } }
 }
 func lifecycle(_ clock: Clock) -> RunLifecycle {
-    RunLifecycle(expiresAt: clock.now().addingTimeInterval(600), epoch: 1, installedAt: clock.now(), wall: { clock.now() }, monotonic: { .zero })
+    RunLifecycle(expiresAt: clock.now().addingTimeInterval(600), epoch: 1, installedAt: clock.now(), clock: clock.source)
 }
 func transportRequest() throws -> FixedModelRequest {
     try FixedModelRequest(model: .deepSeekFlash, protocol: .openAI, messages: [FixedMessage(role: .user, content: "offline")], maxOutputTokens: 32)
@@ -103,24 +103,18 @@ func testMCPPreResumeStop() throws {
     print("PASS actual-mcp-pre-resume-stop credential_reads=1 actual_resume_calls=0")
 }
 final class StartClock: @unchecked Sendable {
-    let lock = NSLock(), gate = Gate(); var armed = false
+    let gate = Gate()
     let date = Date(timeIntervalSince1970: 1_800_000_000)
-    func now() -> Date {
-        let block = lock.withLock { let value = armed; armed = false; return value }
-        if block { gate.block() }
-        return date
-    }
-    func arm() { lock.withLock { armed = true } }
+    let source = RunClock.manual(wall: Date(timeIntervalSince1970: 1_800_000_000), elapsed: .zero)
 }
 func testStopDuringFinalObservation() async throws {
     let clock = StartClock(), credentials = Credentials()
-    let authority = RunLifecycle(expiresAt: clock.date.addingTimeInterval(600), epoch: 1, installedAt: clock.date, wall: { clock.now() }, monotonic: { .zero })
+    let authority = RunLifecycle(expiresAt: clock.date.addingTimeInterval(600), epoch: 1, installedAt: clock.date, clock: clock.source)
     let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OfflineProtocol.self]
     let op = try ModelTransport(credentialProvider: credentials, configuration: config).prepare(transportRequest(), streaming: false)
     defer { op.cancel() }
     let scope = authority.effectScope(connectionID: UUID())
-    clock.arm()
-    let start = Task.detached { try authority.start(.model(op), id: UUID(), scope: scope, notBefore: clock.date, startDeadline: clock.date.addingTimeInterval(300)) }
+    let start = Task.detached { clock.gate.block(); try authority.start(.model(op), id: UUID(), scope: scope, notBefore: clock.date, startDeadline: clock.date.addingTimeInterval(300)) }
     try check(clock.gate.awaitEntry(), "final observation not reached")
     authority.terminate(.stopped)
     clock.gate.open()

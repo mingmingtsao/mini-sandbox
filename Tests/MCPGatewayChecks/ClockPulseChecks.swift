@@ -17,7 +17,7 @@ func clockPulseChecks(_ port: UInt16, _ token: String) async throws {
             let clock = PulseClock(); let id = UUID(), account = UUID()
             let audit = Audit(); let credentials = Credentials(token, audit)
             let connection = try HostMCPConnection.testOnlyLoopback(connectionID: id, accountID: account, port: port, provider: credentials)
-            let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, now: { clock.now() })
+            let gateway = try HostMCPGateway(connections: [connection], auditSink: audit, clock: clock.source)
             let handle = try await gateway.install(grant: boundedGrant(id, at: clock.base))
             let pending = operation == "propose" ? nil : try await gateway.propose(handle: handle, connectionID: id, raw: control("initialize"))
             clock.arm(position)

@@ -1,23 +1,9 @@
 import Foundation
+import SharedClockSupport
 import SandboxHost
 import SandboxContracts
 
-final class SharedModelPulseClock: @unchecked Sendable {
-    let base = Date(timeIntervalSince1970: 1_900_000_000)
-    private let lock = NSLock()
-    private var target = Int.max
-    private var reads = 0
-    private var fired = false
-    func arm(_ position: Int) { lock.withLock { target = position; reads = 0; fired = false } }
-    func now() -> Date {
-        lock.withLock {
-            reads += 1
-            if reads == target { fired = true; return base.addingTimeInterval(900) }
-            return base
-        }
-    }
-    var observation: (Int, Bool) { lock.withLock { (reads, fired) } }
-}
+typealias SharedModelPulseClock = SharedHostClock
 final class SharedModelPulseAudit: SynchronousAuditSink, @unchecked Sendable {
     let audit = Audit()
     let clock: SharedModelPulseClock

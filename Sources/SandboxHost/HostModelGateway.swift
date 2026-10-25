@@ -46,7 +46,8 @@ package struct HostModelApproval: Sendable {
 }
 
 /// A host-only integration slice, not a guest listener or an F10 approval UI.
-/// This actor owns both the F03 authority and the actual F04 task start boundary.
+/// Uses the injected F03 authority; retains only gateway/transport bookkeeping.
+/// A shared check-to-start fence and controlled consumer receiver remain pending.
 package actor HostModelGateway {
     private struct Entry {
         let connection: HostModelConnection
@@ -57,8 +58,8 @@ package actor HostModelGateway {
         let handle: HostModelRunHandle
         let authorityHandle: HostRunHandle
         let grant: RunGrant
-        var generation: UInt64 = 0
-        var revoked = false
+        var generation: UInt64 { authorityHandle.lifecycle.currentGeneration }
+        var revoked: Bool { authorityHandle.lifecycle.currentStatus != .active }
         var reserved = 0
         var operations: [UUID: (UUID, ModelPreparedOperation)] = [:]
         init(handle: HostModelRunHandle, authorityHandle: HostRunHandle, grant: RunGrant) {
@@ -76,25 +77,25 @@ package actor HostModelGateway {
         let streaming: Bool
         let request: FixedModelRequest
     }
-    private let authority: RunAuthorizationController
-    private let now: @Sendable () -> Date
+    package let authority: RunAuthorizationController
     private var registry: [UUID: Entry] = [:]
     private var runs: [UUID: Run] = [:]
     private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v2".utf8)).map { String(format: "%02x", $0) }.joined()
 
     package init(connections: [HostModelConnection], auditSink: any SynchronousAuditSink,
-        now: @escaping @Sendable () -> Date = { Date() }) throws {
+        now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
         guard Set(connections.map(\.connectionID)).count == connections.count,
               connections.allSatisfy({ $0.accountBindingVersion > 0 && $0.routeVersion > 0 }) else {
             throw HostModelGatewayError.invalidConnection
         }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
-        self.now = now
-        authority = RunAuthorizationController(auditSink: auditSink, now: now)
+        self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
     }
 
-    package func install(grant: RunGrant) async throws -> HostModelRunHandle {
-        let authorityHandle = try await authority.install(grant: grant)
+    package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostModelRunHandle {
+        let authorityHandle: HostRunHandle
+        if let existing { try await authority.validateAttachment(handle: existing, grant: grant); authorityHandle = existing }
+        else { authorityHandle = try await authority.install(grant: grant) }
         // Installation creates no dispatch permission; all registry/time checks repeat at use.
         let handle = HostModelRunHandle()
         runs[handle.token] = Run(handle: handle, authorityHandle: authorityHandle, grant: grant)
@@ -244,15 +245,18 @@ package actor HostModelGateway {
 
     package func stop(handle: HostModelRunHandle) async throws {
         let run = try get(handle)
+        run.authorityHandle.lifecycle.terminate(.stopped)
         revoke(run) // The linearization point precedes the first await.
         try await authority.stop(handle: run.authorityHandle)
     }
     package func isRevoked(handle: HostModelRunHandle) throws -> Bool { try get(handle).revoked }
+    package func lifecycle(handle: HostModelRunHandle) throws -> RunLifecycle { try get(handle).authorityHandle.lifecycle }
 
     package func revokeConnection(_ connectionID: UUID) async throws {
         guard var entry = registry[connectionID] else { throw HostModelGatewayError.invalidConnection }
         entry.revoked = true; entry.generation &+= 1; registry[connectionID] = entry
         let affected = affectedRuns(connectionID)
+        for run in affected { run.authorityHandle.lifecycle.invalidateConnection(connectionID) }
         for run in affected { cancelConnection(run, connectionID) }
         for run in affected { try? await authority.revokeConnection(handle: run.authorityHandle, connectionID: connectionID) }
     }
@@ -267,6 +271,7 @@ package actor HostModelGateway {
         }
         registry[connection.connectionID] = Entry(connection: connection, generation: old.generation &+ 1)
         let affected = affectedRuns(connection.connectionID)
+        for run in affected { run.authorityHandle.lifecycle.invalidateConnection(connection.connectionID) }
         for run in affected { cancelConnection(run, connection.connectionID) }
         for run in affected {
             try? await authority.updateConnection(handle: run.authorityHandle, connectionID: connection.connectionID,
@@ -285,19 +290,21 @@ package actor HostModelGateway {
     @discardableResult
     private func validatedRunTime(_ run: Run, startDeadline: Date? = nil) throws -> Date {
         guard !run.revoked else { throw HostModelGatewayError.revoked }
-        let current = now()
-        if current >= run.grant.expiresAt {
+        let observation = run.authorityHandle.lifecycle.observeAndReduce(reason: "model")
+        let current = observation.effectiveTime
+        if observation.status != .active {
             revoke(run) // Latch and cancel synchronously; callers await F03 reconciliation.
             throw HostModelGatewayError.revoked
         }
-        guard current >= run.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
+        guard observation.wallTime >= run.grant.createdAt else { throw AuthorizationError.grantNotYetValid }
         // Action expiry limits dispatch, never already-started chunks/completion.
         if let startDeadline, current >= startDeadline { throw AuthorizationError.actionExpired }
         return current
     }
     private func live(_ run: Run, connectionID: UUID) throws -> Entry {
         try validatedRunTime(run)
-        guard let entry = registry[connectionID], !entry.revoked,
+        guard run.authorityHandle.lifecycle.permitsConnection(connectionID),
+              let entry = registry[connectionID], !entry.revoked,
               let granted = run.grant.connections.first(where: { $0.connectionID == connectionID }),
               granted.accountBindingVersion == entry.connection.accountBindingVersion,
               granted.routeVersion == entry.connection.routeVersion else { throw HostModelGatewayError.invalidConnection }
@@ -313,8 +320,7 @@ package actor HostModelGateway {
     }
 
     private func revoke(_ run: Run) {
-        guard !run.revoked else { return }
-        run.revoked = true; run.generation &+= 1
+        run.authorityHandle.lifecycle.terminate(.revoked)
         for (_, pair) in run.operations { pair.1.cancel() }
     }
     private func handleError(_ error: Error, run: Run) async -> Error {

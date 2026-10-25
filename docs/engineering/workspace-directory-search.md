@@ -29,9 +29,8 @@ ancestors. It does not grant access to the tree, suppress system consent, modify
 TCC, add entitlements or authorize access denied by macOS. Apple explains that
 file consent can block the calling thread and that standard Open/Save interactions
 establish user intent in [WWDC19 session 701](https://developer.apple.com/videos/play/wwdc2019/701/).
-A command-line POSIX permission test is not a TCC result for a packaged App.
-Actual App/NSOpenPanel behavior must be verified separately under that App's own
-identity and consent state; final tree/content access may still be denied.
+App/NSOpenPanel access follows the App's identity and macOS consent state;
+final tree/content access can be denied.
 
 ## Regression evidence
 

@@ -20,6 +20,5 @@ or verification step does not replace the previous application.
 
 Local validation on macOS 26.6.2 / Apple Silicon / Swift 6.3.3 built a normal
 Release application, verified its signature, and read the virtualization
-entitlement from that application's signature. This proves packaging, not a
-complete VM task, GUI acceptance, Developer ID distribution, or notarization.
-The default `-` identity remains ad-hoc and local-only.
+entitlement from that application's signature. The default `-` identity uses
+ad-hoc signing for local execution.

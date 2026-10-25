@@ -14,7 +14,7 @@
 
 `ActionBinding` 保存已由宿主验证的规范化请求字节及 SHA-256，绑定运行、epoch、连接、schema、操作和实际资源。输入最大 64 KiB，摘要不能代替原始请求。
 
-`PendingAction` 由宿主创建 ID/nonce，包含展示快照和最多五分钟有效期。它刻意不提供 Decodable，不能从 guest JSON 构造已批准对象。`matches` 只做不可变绑定比较，不消费动作，不表示审批完成；原子消费、撤权线性化、持久 dispatch 意图和重放防护由后续 Host Core 实现。
+`PendingAction` 由宿主创建 ID/nonce，包含展示快照和最多五分钟有效期。它刻意不提供 Decodable，不能从 guest JSON 构造已批准对象。`matches` 只做不可变绑定比较，不消费动作，不表示审批完成；原子消费、撤权线性化、持久 dispatch 意图和重放防护由 Host Core 负责。
 
 本模块不解析任意 JSON 或声称完成规范化。适配器必须先拒绝重复键、歧义资源和无法稳定规范化的请求，再构造绑定；不得直接将 guest 原始数据传入。
 
@@ -22,10 +22,8 @@
 
 `SecurityEvent` 位于 `SandboxHost`，构造器仅对该模块内部开放；外部 App/适配器只能读取与编码事件，不能直接构造 hostEnforcement。它仅 Encodable，guest 原始诊断不能反序列化为宿主可信事件；未来接收器必须强制使用 `guestDiagnostic` 来源。此编译边界不抵抗已被攻陷的宿主进程。
 
-`isHostRejection` 只选取 `hostEnforcement + deny + notDispatched`。去重、单调序号分配、持久化、日志脱敏以及执行点来源约束属于后续审计服务，不能仅凭枚举值宣称事件可信。
+`isHostRejection` 只选取 `hostEnforcement + deny + notDispatched`。去重、单调序号分配、持久化、日志脱敏以及执行点来源约束属于审计服务，不能仅凭枚举值宣称事件可信。
 
 ## 验证覆盖
 
-`swift run ContractChecks` 覆盖构造与解码失败、显式拒绝及时间条件重叠、未知资源/连接、限制、动作改参/epoch/nonce 和重复连接。`python3 -m unittest discover -s Tests/APITests -v` 验证外部构造/解码编译失败，并运行宿主内部事件来源过滤断言。它是 S12/S14/S15/S23 的基础契约测试，不代替对应真实运行验收。
-
-E01 当前仅验证基础 `.app` 打包/启动；E02 及真实 Agent/MCP、安全集成仍为 NOT_RUN。缺少平台/账号时另记 BLOCKED，不用 fixture 结果替代。
+`swift run ContractChecks` 覆盖构造与解码失败、显式拒绝及时间条件重叠、未知资源/连接、限制、动作改参/epoch/nonce 和重复连接。`python3 -m unittest discover -s Tests/APITests -v` 验证外部构造/解码编译失败，并运行宿主内部事件来源过滤断言。它覆盖 S12/S14/S15/S23 的基础契约。

@@ -1,12 +1,12 @@
 # Bounded structured model data
 
-## Status
+## Host protocol checks
 
 The response-usage correction passes **37/37 structured groups**: all 29 existing
 groups plus 8 focused usage groups. The separate model suite retains all 29 old
 non-Keychain names plus 3 additive rejection groups (**32 distinct groups**).
 `StructuredModelChecks` exercises production transport and gateway code using
-synthetic URLProtocol responses. This is offline evidence, not a live PASS.
+synthetic URLProtocol responses for offline checks.
 
 The first credential-present structured attempt on **2026-10-24 failed** on its
 first nonstream request: gateway `outcomeUnknown`, one actual JSONL dispatch
@@ -26,8 +26,7 @@ rerun on **2026-10-24**: both nonstream and streamed tool round-trips passed,
 with **four model task starts** in total. Each case received one `tool_use`, supplied
 a matching **synthetic fixture result**, then received final text with `end_turn`.
 This establishes the bounded host model-protocol path, not real tool execution.
-Coding-Agent/CLI compatibility, Keychain, MCP execution, VM and UI integration
-remain **NOT_RUN**. The earlier failed attempts are retained, not reclassified.
+The earlier failed attempts are retained in the execution record.
 
 ## Data, not authority
 

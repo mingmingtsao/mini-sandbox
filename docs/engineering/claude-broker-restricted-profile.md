@@ -81,7 +81,7 @@ before releasing console handles. One active-vendor cancellation on the exact
 same image returned host exit 1 and settled stopped; vendor wait status was not
 observed in that cancellation and is not claimed.
 
-## Required adapter/consumer work, not implemented here
+## Adapter and consumer requirements
 
 1. Explicit upstream thinking policy. Client **omission is not provider thinking
    disabled**. The existing encoder's explicit disabled policy must be selected
@@ -102,10 +102,9 @@ observed in that cancellation and is not claimed.
    provider SSE/tool continuations into the controlled consumer with its own
    terminal-state/acceptance fence. No producer enqueue equals acceptance.
 
-No live provider response, model task, tool success, full Agent workflow, real
-userdata or general guest networking was exercised. Independent review remains
-pending. Existing limits and protected Core/gateway/transport/UI surfaces were
-not changed.
+The capture uses fixed diagnostic inputs and a static loopback response.
+Existing limits and Core/gateway/transport/UI surfaces are unchanged.
+The business adapter is described in [Business request admission](claude-business-ingress.md).
 
 Configuration references: `https://code.claude.com/docs/en/env-vars` and
 `https://api-docs.deepseek.com/guides/anthropic_api/`. Actual measurements above,

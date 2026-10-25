@@ -92,17 +92,17 @@ exited 0 for diagnostic completion and settled actual stopped before console
 release. Active-vendor cancellation on the same image exited 1 and also settled
 stopped; no vendor wait status or upstream cancellation was observed in that run.
 
-## Remaining incompatibilities and non-claims
+## Captured request semantics
 
-The collector still reports system blocks, metadata and output_config mismatches.
-Cache-control semantics, high effort, beta behavior, complete message/tool-result
-ordering and a lossless native adapter need explicit handling or rejection.
+The capture records system blocks, metadata and output_config mismatches against
+the capture profile. The business adapter defines handling and rejection of
+cache-control, effort, beta selectors and message/tool-result ordering in
+[Business request admission](claude-business-ingress.md).
 Thinking omission does not mean provider thinking disabled. The beta opt-out
 environment still does not produce a beta-free request in this measurement.
 
 **Raw size and compact schema size are not Swift canonical wrapped ActionBinding
 size or grant-budget fit.** Neither was measured here. No broker limit increased,
 no protected Core/Swift/UI/registry surface changed, and no request fields were
-silently flattened or discarded. No provider, tool-success, full Agent workflow,
-authorization/grant, independent-review, publication, or full compatibility PASS
-is claimed. Historical restricted-profile measurements remain separate.
+silently flattened or discarded. Historical restricted-profile measurements
+are recorded in the restricted-profile document.

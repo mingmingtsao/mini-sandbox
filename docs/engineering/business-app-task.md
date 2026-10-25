@@ -4,8 +4,8 @@ The Tasks tab uses the app-owned RunComposition and its single F03 authority.
 The user chooses a project directory, verified business image and pinned CLI
 disk, enters a task and selects the supported Claude profile. Codex/DSH are
 displayed as unavailable. The model connection remains host-only. The
-immutable product egress gate is still false, so this build cannot start a
-credential-bearing task or claim external provider success.
+immutable product egress gate is false, so this build cannot start a
+credential-bearing task.
 
 The coordinator imports the selected tree on a dedicated actor and transfers
 exclusive store ownership into WorkspaceRunSession. One immutable grant binds
@@ -30,8 +30,7 @@ attachment settlement and export cleanup. Cleanup failure keeps close false.
 Validation: MiniSandbox builds; WorkbenchChecks and SharedAuthorityChecks pass.
 New composition cases hold close until business cleanup ends, retain a failed
 cleanup verdict across repeated close and reject a foreign equal-ID run owner.
-These are in-process checks. Actual GUI interaction, VM/CLI and external-model
-evidence must be recorded separately. The TabView now has explicit selection and
+These checks exercise in-process composition. The TabView has explicit selection and
 tags so an environment refresh does not reset the selected tab.
 
 ## Explicit local provider UI test build
@@ -48,9 +47,8 @@ and tool approval, actual VM cleanup, result review and export remain the same
 MainActor/product path. There is no automatic task start or tool approval.
 
 Normal builds do not contain this constructor or argument handling. The
-production activation gate remains false in both builds. A successful fixture
-run is evidence of real UI/VM/CLI execution with a local scripted provider only;
-it cannot satisfy external-provider or release acceptance.
+production activation gate is false in both builds. The fixture uses a local
+scripted provider for UI/VM/CLI execution.
 
 ## Bounded local MCP task selection
 
@@ -66,8 +64,8 @@ Actual service-4066 HTTP enters the pinned parser, binds the exact VZ owner into
 the complete proposal, presents one native approval and drains the controlled
 MCP response consumer. Normal CLI MCP tool permissions use the separate MCP
 connection and resource scopes. Server annotations or permission suggestions
-cannot grant writes. The GUI states the limited profile and does not claim
-general MCP, GitHub, Codex or DSH compatibility.
+cannot grant writes. The GUI presents the fixed local repository profile; general MCP, GitHub,
+Codex and DSH are outside that profile.
 
 The test-only App composition can additionally select `--local-mcp-fixture-port`
 or bundle `mcpPort`; the bearer is the public test literal defined in

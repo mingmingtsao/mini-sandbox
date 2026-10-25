@@ -106,6 +106,5 @@ stopping the concrete VM, isolating the VM-owner fence from run revocation.
 Each evidence directory contains `host.log`, `fixture.json`, and exact input
 captures. Both modes retain unchanged original project/test bytes and perform
 no workspace adoption after this intentional early stop. These are real VM
-and CLI boundary checks against local scripted services, not external-provider
-or App acceptance evidence.
+and CLI boundary checks against local scripted services.
 

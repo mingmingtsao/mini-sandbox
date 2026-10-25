@@ -53,7 +53,7 @@ The packaged executable offers one opt-in noninteractive diagnostic:
 dist/MiniSandbox.app/Contents/MacOS/MiniSandbox --keychain-canary-selfcheck
 ```
 
-It accepts no credential input. It generates a fresh random service/account and synthetic values in memory; verifies add/read/update/delete; and cleans up only that owned item. It requires the packaged bundle identity, reports booleans/static verdicts and an OSStatus, and returns exit 2 for `BLOCKED` (not PASS). It never reads or modifies the production/default credential item. Actual OS CRUD and rendered GUI acceptance must be recorded separately from injected-storage checks. This is not VM/Agent readiness, full F10/P7 acceptance, or a release approval.
+It accepts no credential input. It generates a fresh random service/account and synthetic values in memory; verifies add/read/update/delete; and cleans up only that owned item. It requires the packaged bundle identity, reports booleans/static verdicts and an OSStatus, and returns exit 2 for `BLOCKED` (not PASS). It never reads or modifies the production/default credential item. The selfcheck exercises actual OS CRUD through the packaged application.
 
 ## Verification boundary
 

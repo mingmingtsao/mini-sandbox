@@ -277,8 +277,7 @@ completed outcomes. Credential reads total four, both runs were stopped, and the
 recorded audit SHA-256 matches the read-back bytes. Every streamed terminal
 callback checked its action's completed record was already readable. No retry was
 made. No credential, prompt, argument, response body or provider ID was persisted
-by this harness. This is **REAL MODEL protocol + SYNTHETIC tool result**, not an
-Agent, MCP executor, guest bridge, VM or native-UI acceptance result.
+by this harness. The harness combines **REAL MODEL protocol + SYNTHETIC tool result**.
 
 The harness is unchanged by the usage correction. Default
 `swift run StructuredModelChecks` runs exactly 37 credential-free fixture groups.

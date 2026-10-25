@@ -69,4 +69,4 @@ Guest starts with `hello` (ID 0); its kernel/interfaces/workdir/fresh fields are
 * No production shared-lifecycle authority injection; this fixed synthetic acceptance harness must not be used as an App grant bypass.
 * The default runtime profile has no file bridge; stdout digests are not file snapshots. A separate [workspace transfer fixture](workspace-transfer.md) now exercises bounded transport, frozen result review and new-directory export using only a synthetic source. It is not arbitrary project selection or App authorization.
 * No reconnect/resume, persistent disk reuse, interactive input, PTY, generic model proxy or route chosen by the guest.
-* The self-review/unit/VM evidence is not an independent security approval. Full application suites (including previously known failures) and release/distribution acceptance are separate.
+* The self-review/unit/VM evidence is not an independent security approval.

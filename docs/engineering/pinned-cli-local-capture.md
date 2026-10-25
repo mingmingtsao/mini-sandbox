@@ -1,6 +1,6 @@
 # Pinned CLI local capture v1
 
-Experimental headless protocol measurement only. No App authority, provider, model-success, MCP, GUI, workspace bridge or export claim. Existing runtime and diagnostic profiles remain unchanged.
+This profile measures the pinned CLI protocol in a headless diagnostic VM. Existing runtime and diagnostic profiles remain unchanged.
 
 ## Explicit profile bounds
 

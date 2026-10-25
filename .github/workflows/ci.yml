@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Check Python syntax
-        run: python3 -m compileall -q scripts Tests
+        run: python3 -m compileall -q scripts Tests Tools
       - name: Check workflow syntax with pinned actionlint
         env:
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -59,6 +59,36 @@ jobs:
         run: python3 -m unittest discover -s Tests/Fixtures/host_services -v
       - name: Coverage accounting regressions
         run: python3 -m unittest discover -s Tests/CoverageTests -v
+      - name: Guest builders, runtime protocol and capture regressions
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          for suite in AgentRuntimeTests GuestFixtureTests AgentProtocolProbeTests VMChecks; do
+            python3 -m unittest discover -s "Tests/$suite" -v
+          done
+
+  go:
+    name: Go guest protocol
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: Tests/GuestFixtureTests/go.mod
+          cache: false
+      - name: Race-checked guest wire protocol and identity parsing
+        working-directory: Tests/GuestFixtureTests
+        run: go test -race -count=1 -v ./...
+      - name: Compile the Linux ARM64 guest probe
+        working-directory: Tools/GuestFixture
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go build -o "$RUNNER_TEMP/guest-probe" ./cmd/probe
 
   macos:
     name: macOS build, contracts and packaging
@@ -84,6 +114,12 @@ jobs:
         run: swift run --skip-build ContractChecks
       - name: Public API compile-time boundaries
         run: python3 -m unittest discover -s Tests/APITests -v
+      - name: Credential-free CLI modes and loopback driver deadlines
+        run: |
+          TMPDIR=$(cd "$TMPDIR" && pwd -P)
+          export TMPDIR
+          python3 -m unittest discover -s Tests/StructuredModelCLITests -v
+          python3 -m unittest discover -s Tests/MCPIntegrationTests -v
       - name: Build and verify the Release app with ad-hoc signing
         run: |
           python3 scripts/build-app.py --configuration release --sign-identity -
@@ -100,7 +136,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - name: Measure existing CI checks against all Swift product sources
+      - name: Run all offline Swift checks and authenticated loopback slices with coverage
         run: python3 scripts/swift-coverage.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -112,7 +148,7 @@ jobs:
   ci:
     name: CI
     if: ${{ always() }}
-    needs: [lint, python, macos, coverage]
+    needs: [lint, python, go, macos, coverage]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions: {}
@@ -121,12 +157,14 @@ jobs:
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          GO_RESULT: ${{ needs.go.result }}
           MACOS_RESULT: ${{ needs.macos.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
         run: |
-          printf 'lint=%s python=%s macos=%s coverage=%s\n' "$LINT_RESULT" "$PYTHON_RESULT" "$MACOS_RESULT" "$COVERAGE_RESULT"
+          printf 'lint=%s python=%s go=%s macos=%s coverage=%s\n' "$LINT_RESULT" "$PYTHON_RESULT" "$GO_RESULT" "$MACOS_RESULT" "$COVERAGE_RESULT"
           test "$LINT_RESULT" = success
           test "$PYTHON_RESULT" = success
+          test "$GO_RESULT" = success
           test "$MACOS_RESULT" = success
           test "$COVERAGE_RESULT" = success
 

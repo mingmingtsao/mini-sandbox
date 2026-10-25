@@ -5,6 +5,7 @@ import json
 import socket
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -76,6 +77,18 @@ def decode(body):
 
 
 class FixtureTests(unittest.TestCase):
+    def test_numeric_loopback_startup_never_resolves_dns(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("fixture attempted DNS")):
+            fixture = HostFixture.start()
+            try:
+                for service in (fixture.auth, fixture.resource):
+                    self.assertEqual(service.server.server_name, "127.0.0.1")
+                    self.assertGreater(service.server.server_port, 0)
+                self.assertEqual(request(fixture.auth.origin + "/.well-known/oauth-authorization-server")[0], 200)
+                self.assertEqual(request(fixture.resource.origin + "/mcp")[0], 401)
+            finally:
+                fixture.stop()
+
     @classmethod
     def setUpClass(cls):
         cls.fixture = HostFixture.start()

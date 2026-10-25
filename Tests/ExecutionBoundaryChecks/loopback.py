@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline real-MCP receiver slice. Synthetic bearer only through stdin."""
 import json
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -9,14 +10,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Tests/MCPIntegrationTests"))
 from test_loopback import running_fixture, mint
 
-if sys.argv[1:] not in ([], ["--transaction"]):
-    raise SystemExit(64)
-transaction = sys.argv[1:] == ["--transaction"]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--binary", type=Path, default=ROOT / ".build/debug/ExecutionBoundaryChecks")
+parser.add_argument("--transaction", action="store_true")
+args = parser.parse_args()
+transaction = args.transaction
 
 with running_fixture() as fixture:
     token = mint(fixture)
     before = fixture.control.resource_hit_count
-    result = subprocess.run([str(ROOT / ".build/debug/ExecutionBoundaryChecks"), "--mcp-transaction" if transaction else "--mcp"],
+    result = subprocess.run([str(args.binary), "--mcp-transaction" if transaction else "--mcp"],
                             input=json.dumps({"port": fixture.resource.server.server_address[1], "token": token}) + "\n",
                             text=True, capture_output=True, timeout=30)
     lines = result.stdout.splitlines()

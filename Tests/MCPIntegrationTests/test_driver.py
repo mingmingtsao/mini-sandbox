@@ -27,7 +27,12 @@ class DriverChecks(unittest.TestCase):
                              + f"Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
                              + child_body)
             child.chmod(0o700)
-            process = subprocess.Popen([sys.executable, str(DRIVER), "--binary", str(child),
+            bootstrap = ("import faulthandler, os, runpy, sys; "
+                         "faulthandler.dump_traceback_later(6); "
+                         "driver = sys.argv.pop(1); "
+                         "sys.path.insert(0, os.path.dirname(driver)); "
+                         "runpy.run_path(driver, run_name='__main__')")
+            process = subprocess.Popen([sys.executable, "-c", bootstrap, str(DRIVER), "--binary", str(child),
                                         "--overall-timeout", str(overall),
                                         "--inactivity-timeout", str(inactivity)],
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -35,8 +40,9 @@ class DriverChecks(unittest.TestCase):
             try:
                 try:
                     stdout, stderr = process.communicate(timeout=8)
-                except subprocess.TimeoutExpired:
-                    self.fail("driver deadline did not bound silent child")
+                except subprocess.TimeoutExpired as error:
+                    details = (error.stderr or b"").decode(errors="replace")[-6000:]
+                    self.fail("driver deadline did not bound silent child\n" + details)
                 self.assertNotEqual(process.returncode, 0)
                 self.assertTrue(pidfile.exists(), "child did not execute: " + stdout + stderr)
                 pid = int(pidfile.read_text())

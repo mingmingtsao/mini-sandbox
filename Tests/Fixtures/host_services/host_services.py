@@ -11,6 +11,7 @@ import http.server
 import json
 import secrets
 import socket
+import socketserver
 import threading
 import time
 import urllib.parse
@@ -130,6 +131,12 @@ class FixtureState:
 class _Server(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def server_bind(self):
+        # HTTPServer.server_bind resolves the numeric host through getfqdn().
+        # These fixtures have explicit numeric loopback origins and need no DNS.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

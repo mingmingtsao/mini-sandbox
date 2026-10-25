@@ -20,6 +20,7 @@ let package = Package(
         .executable(name: "WorkspaceChecks", targets: ["WorkspaceChecks"]),
     ],
     targets: [
+        .executableTarget(name: "RuntimeReceiveChecks", dependencies: ["SandboxHost"], path: "Tests/AgentRuntimeTests", exclude: ["base_snapshot_check.py", "cli_ancestry.py", "vendor_host_check.py", "test_base_snapshot.py", "test_cancel_classifier.py", "test_image.py", "test_protocol.py", "test_supervisor.py", "test_vendor_data.py"], sources: ["RuntimeReceiveTests.swift"]),
         .executableTarget(name: "WorkspaceTransferChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/WorkspaceTransferChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .executableTarget(name: "ExecutionBoundaryChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ExecutionBoundaryChecks", exclude: ["loopback.py"]),
         .target(name: "SharedClockSupport", dependencies: ["SandboxHost"], path: "Tests/SharedClockSupport"),

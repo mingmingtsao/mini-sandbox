@@ -6,16 +6,19 @@
 
 | 检查 | Runner | 内容 |
 |---|---|---|
-| Workflow and Python syntax | GitHub 托管 Ubuntu 24.04 | 固定版本 actionlint；`scripts`、`Tests` 的 Python 语法 |
-| Python safety and host fixtures | GitHub 托管 Ubuntu 24.04 / Python 3.13 | 打包路径与所有权回归；仅回环监听、使用假资源的 OAuth/MCP fixtures；覆盖率计数回归 |
-| macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；Release App 构建、ad-hoc 签名及严格签名验证 |
-| Swift line coverage | GitHub 托管 macOS 26 / Apple Silicon | 独立插桩构建；执行现有 `ContractChecks`，统计全部 `Sources/` Swift 源码行覆盖率；保存报告 artifact 与运行摘要 |
-| CI | GitHub 托管 Ubuntu 24.04 | 汇总以上四项结果；任何失败、跳过或取消都不能被当作通过 |
+| Workflow and Python syntax | GitHub 托管 Ubuntu 24.04 | 固定版本 actionlint；`scripts`、`Tests`、`Tools` 的 Python 语法 |
+| Python safety and host fixtures | GitHub 托管 Ubuntu 24.04 / Python 3.13 | 打包路径与所有权；回环 OAuth/MCP fixtures；覆盖率计数；guest builder、runtime、capture 和 VM 构建器安全回归 |
+| Go guest protocol | GitHub 托管 Ubuntu 24.04 / go.mod 固定版本 | guest 协议与身份解析的 `-race` 检查；交叉编译 Linux ARM64 guest probe |
+| macOS build, contracts and packaging | GitHub 托管 macOS 26 / Apple Silicon | 全部 Debug targets；`ContractChecks`；公共 API 编译边界；无凭据 CLI selector 和 driver 超时/子进程清理；Release App 构建、ad-hoc 签名及严格签名验证 |
+| Swift line coverage | GitHub 托管 macOS 26 / Apple Silicon | 独立插桩构建；运行全部离线 Swift 检查和认证回环集成；统计全部 `Sources/` 行覆盖率；保存报告 artifact 与摘要 |
+| CI | GitHub 托管 Ubuntu 24.04 | 汇总以上五项结果；任何失败、跳过或取消都不能被当作通过 |
 | Publish main coverage badge | GitHub 托管 Ubuntu 24.04 | 仅主线成功运行后，将覆盖率徽章与报告更新到 `ci-coverage` 分支 |
 
-`ContractChecks` 是 CI 当前实际执行的 Swift 检查入口；其他 Swift 检查目标会被编译，但不会因此自动运行。`AuthorizationChecks`、`HostIntegrationChecks`、`MCPGatewayChecks`、`WorkbenchChecks`、`WorkspaceTransferChecks` 等组件检查仍需按各自文档显式执行。仓库使用这些可执行入口，而非 `swift test`。
+Swift 运行集合由 `scripts/swift-coverage.py` 的 `CHECKS` 统一维护。包括 `ContractChecks`、`AuthorizationChecks`、`ModelTransportChecks --offline`（32 组，排除隔离 Keychain CRUD）、`HostIntegrationChecks`、`StructuredModelChecks`、`WorkbenchChecks`、`SharedAuthorityChecks`、`WorkspaceChecks`、`WorkspaceTransferChecks`、`VMChecks` 和 `RuntimeReceiveChecks`，以及执行边界额外 selector、MCP transport、认证回环和 App 只读诊断。仓库使用这些可执行入口，而非 `swift test`。所有回环 driver 显式使用插桩构建的二进制，计数随子进程合并。
 
-仓库已包含 `Tools/GuestFixture/go.mod`，但当前工作流尚未接入 Go guest 协议测试、guest 镜像构建或 `Tools` 下的完整测试集合。绿色结果仅覆盖上表中的项目。
+Python 按测试目录分别发现，避免没有包标记的子目录被顶层 discovery 静默跳过。故意包含错误逻辑、供 Agent 修复的 `Tools/AgentRuntime/fixture/test_logic.py` 不作为成功回归运行。CI 不构建完整 guest 镜像、不下载真实 CLI 产物。
+
+回环 HTTP fixture 直接使用数字地址绑定，跳过 `HTTPServer` 默认的反向 DNS 查询；回归检查在禁止 `socket.getfqdn` 的情况下验证启动与 HTTP 行为，避免宿主 DNS 延迟吞掉 driver 的超时预算。
 
 macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift 工具链保持一致。[2026-10-25 的主线运行](https://github.com/mingmingtsao/mini-sandbox/actions/runs/40199585315) 已通过全部 CI 检查，日志记录 macOS 26.6.2、Xcode 26.6、Swift 6.3.3；最新结果以徽章及运行页面为准。
 
@@ -30,24 +33,32 @@ macOS runner 已从 `macos-15` 更新为 `macos-26`，与主线使用的 Swift �
 
 ## 不代表通过的项目
 
-本 CI 不启动 VM，不运行真实 Agent、真实模型服务、外部 OAuth/MCP 账户、GUI 交互或 Keychain CRUD。fixture 回环测试不等于真实外部服务联调；ad-hoc 签名不等于 Developer ID 签名、公证或分发许可。完整 App→VM→Agent→模型/工具→审阅导出→Stop 验收仍需单列真机证据。
+本 CI 不启动 VM，不运行真实 Agent、真实模型服务、外部 OAuth/MCP 账户或 GUI 交互。环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目；真实凭据存取验收需另列证据。fixture 回环测试不等于真实外部服务联调；ad-hoc 签名不等于 Developer ID 签名、公证或分发许可。完整 App→VM→Agent→模型/工具→审阅导出→Stop 验收仍需单列真机证据。
 
 ## 本地复现
 
 在受支持的 Apple Silicon Mac 上：
 
 ```sh
-python3 -m compileall -q scripts Tests
+python3 -m compileall -q scripts Tests Tools
 python3 -m unittest discover -s Tests/PackagingTests -v
 python3 -m unittest discover -s Tests/Fixtures/host_services -v
 python3 -m unittest discover -s Tests/CoverageTests -v
+for suite in AgentRuntimeTests GuestFixtureTests AgentProtocolProbeTests VMChecks; do
+  python3 -m unittest discover -s "Tests/$suite" -v
+done
+go test -C Tests/GuestFixtureTests -race -count=1 -v ./...
 swift build
 swift run --skip-build ContractChecks
 python3 -m unittest discover -s Tests/APITests -v
+python3 -m unittest discover -s Tests/StructuredModelCLITests -v
+python3 -m unittest discover -s Tests/MCPIntegrationTests -v
 python3 scripts/build-app.py --configuration release --sign-identity -
 codesign --verify --strict --verbose=2 dist/MiniSandbox.app
 python3 scripts/swift-coverage.py
 ```
+
+macOS 本地测试先设置 `export TMPDIR="$(cd "$TMPDIR" && pwd -P)"`，避免系统 `/var` 别名被防符号链接检查拒绝。覆盖率 runner 自动创建并使用物理临时目录；ACL fixture 会清除自己设置的 deny-delete ACL，保证退出清理。
 
 工作流语法由 actionlint 1.7.12 检查。以对应 PR 的确切提交及 Actions run 为准：本地通过、尚未运行、排队、取消与远端成功是不同状态。
 

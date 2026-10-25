@@ -1,5 +1,8 @@
 import Foundation
 import CryptoKit
+#if SWIFT_PACKAGE
+@testable import SandboxHost
+#endif
 
 @main struct RuntimeReceiveTests {
  static func main() throws {

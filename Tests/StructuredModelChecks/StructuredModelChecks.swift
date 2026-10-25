@@ -62,9 +62,9 @@ final class Audit: SynchronousAuditSink, @unchecked Sendable {
         }
     }
 }
-func gateway(_ credential: Credential, _ audit: Audit, streaming: Bool = false, messageBytes: Int = 65_536) async throws -> (HostModelGateway, HostModelRunHandle, UUID) {
+func gateway(_ credential: any ModelCredentialProvider, _ audit: Audit, streaming: Bool = false, messageBytes: Int = 65_536, kind: FixedProtocol = .anthropic) async throws -> (HostModelGateway, HostModelRunHandle, UUID) {
     let id = UUID()
-    let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash, protocol: .anthropic, credentialProvider: credential, configuration: configuration())
+    let connection = HostModelConnection(connectionID: id, accountID: UUID(), accountBindingVersion: 1, routeVersion: 1, model: .deepSeekFlash, protocol: kind, credentialProvider: credential, configuration: configuration())
     let g = try HostModelGateway(connections: [connection], auditSink: audit)
     let scope = try ResourceScope(service: "model", resource: "deepseek-flash", operation: streaming ? "stream" : "complete")
     let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: Date().addingTimeInterval(-10), expiresAt: Date().addingTimeInterval(600), workloadImageDigest: String(repeating: "a", count: 64), agentAdapterVersion: "fixture", workspaceSnapshotID: UUID(), policyDigest: String(repeating: "b", count: 64), approvalSnapshotID: UUID(), connections: [ConnectionGrant(connectionID: id, accountBindingVersion: 1, routeVersion: 1, scopes: [scope])], explicitDenies: [], resourceLimits: ResourceLimits(cpuCount: 1, memoryBytes: 1, diskBytes: 1, messageBytes: messageBytes, concurrentRequests: 2))
@@ -125,6 +125,18 @@ func malformedStreamRegression() async throws {
             Foundation.exit(64)
         }
         let checks: [(String, () async throws -> Void)] = [
+            ("CR01 primitive nonstream reflection", { try await primitiveReflectionTransport(streaming: false) }),
+            ("CR01 primitive SSE reflection", { try await primitiveReflectionTransport(streaming: true) }),
+            ("CR01 primitive gateway unknown outcome", { try await primitiveReflectionGateway(failedAudit: false) }),
+            ("CR01 primitive gateway pre-failed-audit emission", { try await primitiveReflectionGateway(failedAudit: true) }),
+            ("CR01 ordinary typed and raw positives", primitiveReflectionPositiveControls),
+            ("active credential reflection", activeCredentialReflection),
+            ("reflection pending audit gate", { try await reflectionPendingAudit(kind: .anthropic) }),
+            ("reflection OpenAI pending audit gate", { try await reflectionPendingAudit(kind: .openAI) }),
+            ("reflection early safe text", reflectionEarlySafeText),
+            ("reflection gateway counters and reuse", reflectionGatewayCounters),
+            ("reflection sanitized error channels", reflectionErrorChannels),
+            ("reflection complete valid tool ordering", reflectionValidTools),
             ("native slash user string projection", { try await nativeProjectionAccepted("string") }),
             ("native slash user text block projection", { try await nativeProjectionAccepted("blocks") }),
             ("native slash tool schema projection", { try await nativeProjectionAccepted("schema") }),

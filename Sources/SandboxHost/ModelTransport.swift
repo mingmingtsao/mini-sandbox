@@ -150,7 +150,7 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body
             let anthropicDecoder = AnthropicStreamDecoder()
-            return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming,
+            return ModelPreparedOperation(request: urlRequest, configuration: configuration, streaming: streaming, activeCredential: credential,
                 decodeText: { try self.decodeText($0, protocol: kind) },
                 decodeEvent: { kind == .anthropic ? try anthropicDecoder.consume($0) : try self.decodeSSEEvent($0, protocol: .openAI) },
                 release: { self.limiter.release() })
@@ -321,13 +321,13 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private var resumes = 0
     package var resumeCalls: Int { lock.withLock { resumes } }
 
-    fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool,
+    fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool, activeCredential: String,
         decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
         decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?,
         release: @escaping @Sendable () -> Void) {
         let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
         chunks = pair.stream
-        delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming,
+        delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming, activeCredential: activeCredential,
             decodeText: decodeText, decodeEvent: decodeEvent, release: release)
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         task = session.dataTask(with: request)
@@ -362,17 +362,20 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
     private var parser = SSEParser()
     private var data = Data()
     private var total = 0
+    private let reflection: ModelCredentialReflection
     private var isEnded: Bool { lock.withLock { ended } }
 
-    init(continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool,
+    init(continuation: AsyncThrowingStream<ModelStreamChunk, Error>.Continuation, streaming: Bool, activeCredential: String,
         decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
         decodeEvent: @escaping @Sendable (String) throws -> ModelStreamChunk?, release: @escaping @Sendable () -> Void) {
         self.continuation = continuation; self.streaming = streaming
+        reflection = ModelCredentialReflection(activeCredential)
         self.decodeText = decodeText; self.decodeEvent = decodeEvent; self.release = release
     }
     func finish(_ error: Error? = nil) {
         let first = lock.withLock { if ended { return false }; ended = true; return true }
         guard first else { return }
+        reflection.clear()
         release()
         if let error { continuation.finish(throwing: error) } else { continuation.finish() }
     }
@@ -401,7 +404,10 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
                     guard total <= ModelTransport.maxResponseBytes else { throw ModelTransportError.responseTooLarge }
                     for event in try parser.consume(byte: byte) {
                         if let chunk = try decodeEvent(event) {
-                            continuation.yield(chunk)
+                            for safe in try reflection.consume(chunk) {
+                                guard !isEnded else { return }
+                                continuation.yield(safe)
+                            }
                             if chunk.isFinal { finish(); session.invalidateAndCancel(); return }
                         }
                     }
@@ -425,6 +431,8 @@ private final class ModelOperationDelegate: NSObject, URLSessionDataDelegate, @u
         do {
             guard !streaming, !data.isEmpty else { throw ModelTransportError.invalidResponse }
             let result = try decodeText(data)
+            try reflection.validate(result)
+            guard !isEnded else { return }
             continuation.yield(ModelStreamChunk(text: result.text, isFinal: false))
             continuation.yield(ModelStreamChunk(event: .messageStop(result), completion: result))
             finish()

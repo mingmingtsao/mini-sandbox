@@ -93,6 +93,10 @@ func queuedOutputStopsAtConsumer() async throws {
 @main struct ExecutionBoundaryChecks {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments == ["--model-reflection-loopback"] {
+            do { try await nativeModelReflectionLoopback(); return }
+            catch { print("FAIL native-reflection loopback assertion"); exit(1) }
+        }
         if arguments == ["--final-effect-clock"] {
             do {
                 try r3FinalEffectChecks(); try r3ExpandedChecks()

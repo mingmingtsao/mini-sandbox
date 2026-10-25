@@ -13,8 +13,8 @@ import sys
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in {"fixture", "runtime-checks", "runtime-probe"}:
-        raise SystemExit("usage: build_host.py fixture|runtime-checks|runtime-probe NEW_OUTPUT_DIRECTORY")
+    if len(sys.argv) != 3 or sys.argv[1] not in {"fixture", "runtime-checks", "runtime-probe", "business-probe"}:
+        raise SystemExit("usage: build_host.py fixture|runtime-checks|runtime-probe|business-probe NEW_OUTPUT_DIRECTORY")
     root = Path(__file__).resolve().parents[2]
     out = Path(sys.argv[2]).absolute()
     os.umask(0o077)
@@ -25,6 +25,7 @@ def main():
         "fixture": "Tools/WorkspaceTransfer/main.swift",
         "runtime-checks": "Tests/AgentRuntimeTests/RuntimeReceiveTests.swift",
         "runtime-probe": "Tools/AgentRuntime/main.swift",
+        "business-probe": "Tools/AgentRuntime/BusinessVMProbe.swift",
     }
     # Compile the real shared authority/lifecycle, not a stub or duplicated grant.
     sources = sorted((root / "Sources/SandboxHost").glob("*.swift")) + [root / entries[sys.argv[1]]]

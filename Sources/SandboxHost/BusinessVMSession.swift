@@ -4,10 +4,19 @@ import Darwin
 @preconcurrency import Virtualization
 
 package struct BusinessVMStopReport: Sendable {
+    package let runtimeID: UUID
+    package let runID: UUID
+    package let epoch: UInt64
     package let actualStopped: Bool
     package let callbacksSettled: Bool
     package let diskRemoved: Bool
     package let consoleBytes: Int
+    fileprivate init(runtimeID: UUID, runID: UUID, epoch: UInt64, actualStopped: Bool,
+                     callbacksSettled: Bool, diskRemoved: Bool, consoleBytes: Int) {
+        self.runtimeID = runtimeID; self.runID = runID; self.epoch = epoch
+        self.actualStopped = actualStopped; self.callbacksSettled = callbacksSettled
+        self.diskRemoved = diskRemoved; self.consoleBytes = consoleBytes
+    }
 }
 
 package enum BusinessVMEvent: String, Sendable { case preparing, starting, running, stopping, stopped, failed }
@@ -204,7 +213,7 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
             queue.async { [self] in
                 if let stopReport { continuation.resume(returning: stopReport) }
                 else if stopWaiters.count < 16 { stopWaiters.append(continuation) }
-                else { continuation.resume(returning: BusinessVMStopReport(actualStopped: false, callbacksSettled: false, diskRemoved: false, consoleBytes: consoleBytes)) }
+                else { continuation.resume(returning: report(actualStopped: false, callbacksSettled: false, diskRemoved: false)) }
             }
         }
     }
@@ -232,7 +241,7 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
             machine = nil; socketDevice = nil
             let removed: Bool
             if let disk { removed = unlink(disk.path) == 0; self.disk = nil } else { removed = true }
-            let report = BusinessVMStopReport(actualStopped: true, callbacksSettled: true, diskRemoved: removed, consoleBytes: consoleBytes)
+            let report = report(actualStopped: true, callbacksSettled: true, diskRemoved: removed)
             finish(report); timer?.cancel(); timer = nil
             handle.lifecycle.finishEffect(effectID); prepared = nil; retention = nil
             return
@@ -240,8 +249,7 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
         if let deadline = stopDeadline, ContinuousClock.now >= deadline, stopReport == nil {
             // Keep framework attachments alive and continue servicing callbacks.
             // A timeout is not an actual stopped state or permission to unlink.
-            finish(BusinessVMStopReport(actualStopped: false, callbacksSettled: !startPending && !stopPending,
-                                        diskRemoved: false, consoleBytes: consoleBytes))
+            finish(report(actualStopped: false, callbacksSettled: !startPending && !stopPending, diskRemoved: false))
         }
         if !startPending, !stopIssued, let machine, machine.canStop {
             stopIssued = true; stopPending = true
@@ -255,6 +263,11 @@ package final class BusinessVMSession: NSObject, VZVirtioSocketListenerDelegate,
         startContinuation?.resume(throwing: BusinessVMError.closed); startContinuation = nil
         for waiter in stopWaiters { waiter.resume(returning: report) }; stopWaiters.removeAll()
         if report.actualStopped { eventContinuation.finish() }
+    }
+
+    private func report(actualStopped: Bool, callbacksSettled: Bool, diskRemoved: Bool) -> BusinessVMStopReport {
+        BusinessVMStopReport(runtimeID: id, runID: grant.runID, epoch: grant.epoch, actualStopped: actualStopped,
+                            callbacksSettled: callbacksSettled, diskRemoved: diskRemoved, consoleBytes: consoleBytes)
     }
 
     package func makeFrameOutput(connection: BusinessVMConnection, body: Data) throws -> BusinessVMFrameOutput {

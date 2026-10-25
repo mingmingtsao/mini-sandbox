@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "metric": "Swift executable line coverage",
+  "scope": "Sources/**/*.swift",
+  "checks": [
+    "ContractChecks"
+  ],
+  "commit": "3c9987c366fb99da00d20101edd61e9f47704233",
+  "repository": "mingmingtsao/mini-sandbox",
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40201955699",
+  "lines": 7104,
+  "covered": 101,
+  "percent": 1.42,
+  "files": [
+    {
+      "path": "Sources/MiniSandboxApp/MiniSandboxApp.swift",
+      "lines": 229,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxContracts/Contracts.swift",
+      "lines": 103,
+      "covered": 101
+    },
+    {
+      "path": "Sources/SandboxHost/AgentRuntimeProbe.swift",
+      "lines": 235,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/AnthropicNativeRequest.swift",
+      "lines": 133,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/AnthropicStreamDecoder.swift",
+      "lines": 114,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/AuthorizationController.swift",
+      "lines": 423,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ControlledRunOutput.swift",
+      "lines": 136,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/EnvironmentInspector.swift",
+      "lines": 33,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/HeadlessVMProbe.swift",
+      "lines": 281,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/HostMCPGateway.swift",
+      "lines": 291,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/HostModelGateway.swift",
+      "lines": 406,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/MCPCredentials.swift",
+      "lines": 11,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/MCPModelHandoff.swift",
+      "lines": 10,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/MCPProtocol.swift",
+      "lines": 62,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/MCPRepositoryAdapter.swift",
+      "lines": 15,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/MCPTransport.swift",
+      "lines": 105,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ModelCredentials.swift",
+      "lines": 148,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ModelJSON.swift",
+      "lines": 134,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ModelStructured.swift",
+      "lines": 121,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ModelTools.swift",
+      "lines": 69,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ModelTransport.swift",
+      "lines": 411,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/NativeResponseChannel.swift",
+      "lines": 90,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/NativeResponseSerializer.swift",
+      "lines": 266,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/RunClock.swift",
+      "lines": 73,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/RunLifecycle.swift",
+      "lines": 190,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/RuntimeJSON.swift",
+      "lines": 156,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/SecurityEvent.swift",
+      "lines": 25,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/VMDiagnosticSession.swift",
+      "lines": 69,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/VMProtocol.swift",
+      "lines": 41,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/VMVerifiedBundle.swift",
+      "lines": 48,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/WorkspaceCopy.swift",
+      "lines": 813,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/WorkspaceGrantQuota.swift",
+      "lines": 151,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/WorkspaceTransfer.swift",
+      "lines": 297,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/ConnectionSettings.swift",
+      "lines": 89,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/ConnectionSettingsView.swift",
+      "lines": 132,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/KeychainCanarySelfCheck.swift",
+      "lines": 50,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/RunComposition.swift",
+      "lines": 305,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/WorkbenchModel.swift",
+      "lines": 367,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/WorkbenchView.swift",
+      "lines": 472,
+      "covered": 0
+    }
+  ]
+}

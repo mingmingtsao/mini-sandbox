@@ -16,6 +16,14 @@ The default session is ephemeral, does not use cookies or a response cache, refu
 - Text chunks are delivered before EOF. SSE supports UTF-8 fragments, LF/CRLF/CR, comments and metadata fields, OpenAI `[DONE]`, and Anthropic lifecycle/`message_stop` events. EOF without a framed terminal event is an error. Non-text metadata is not represented as text output.
 - The URLSession task is cancelled when the caller cancels or processing exits, including rejection and size-limit errors.
 
+The prepared-operation refactor creates a suspended task; `start()` resumes it
+synchronously once. Cancel-before-start and deinit-before-start never dispatch.
+Repeated cancellation/deinitialization releases a reservation exactly once.
+Direct completion checks task cancellation again after stream iteration (which
+may otherwise end silently on cancellation) and requires a genuine final marker
+before returning. Successfully decoded empty text and empty terminal SSE remain
+valid; empty iteration alone is not success.
+
 OpenAI-compatible completion and SSE responses reject explicit `finish_reason` values `insufficient_system_resource` and `aborted` as `providerFailure` (`upstream generation failed`), even with HTTP 200 and partial text. No body, credential, or raw provider error is included. A failed SSE event emits neither its own text nor a success-final marker; previously delivered partial chunks cannot be retracted, and the consumer must handle the terminal error. A later `[DONE]` does not override the failure.
 
 Other finish reasons retain the text-only behavior: `stop`, `length`, `content_filter`, and `tool_calls` preserve any supplied string text, rather than becoming provider failures. This does not guarantee an untruncated/unfiltered answer or execute tools. Missing/null finish reasons remain compatible; unknown reasons are not interpreted. SSE still requires a framed `[DONE]` for successful termination, not merely a finish reason.
@@ -40,11 +48,24 @@ python3 -m unittest discover -s Tests/PackagingTests -v
 swift build --product MiniSandbox
 ```
 
-Final review-fix verification: `ModelTransportChecks`: **24 PASS, 0 FAIL, 1 BLOCKED, total 25**, exit **2** because the isolated Keychain CRUD check is blocked at initial creation (`-60008`); update/readback therefore remains unverified here. `ContractChecks`: **7/7 PASS**, exit **0**. A test failure exits 1; a completely passing run exits 0. A name fragment can select one check for diagnosis; an unmatched selector exits 64 rather than reporting success with zero tests. Selection is not a full-suite PASS.
+Current prepared-operation review-fix verification: `ModelTransportChecks`: **29 PASS, 0 FAIL, 1 BLOCKED, total 30**, exit **2** because the isolated Keychain CRUD check is blocked at initial creation (`-60008`); update/readback therefore remains unverified here. The original 25 checks are retained, with five additive checks. The new direct-completion cancellation regression first failed **50/50** as success (suite RED: **28 PASS, 1 FAIL, 1 BLOCKED**, exit **1**), then returned actual `.cancelled` task results **50/50**. Prepared cancel/deinit/repeated-cancel probes verify zero dispatch and four held reservations with a fifth `busy` after repeated cycles; valid empty finished responses remain accepted. `ContractChecks`: **7/7 PASS**, exit **0**. A test failure exits 1; a completely passing run exits 0. A name fragment can select one check for diagnosis; an unmatched selector exits 64 rather than reporting success with zero tests. Selection is not a full-suite PASS.
 
 Regression tests first reproduced explicit provider failures being accepted and malformed text blocks being dropped, then passed after the fixes. Both provider failure reasons are separately checked in completion and SSE, including partial output followed by `[DONE]`; positive finish-reason and mixed-block cases also pass.
 
-Final-tree regression verification also passed **4 API boundary tests, 7 packaging tests**, and the application build. The opt-in live transport smoke below was rerun against the corrected transport and passed **4/4**.
+Prior PR #7 transport-only live smoke **4/4** predates this refactor. The current prepared-operation transport and centralized gateway-time validation were exercised through `HostIntegrationChecks --live` on 2026-10-24: **4/4 PASS**, covering both protocols and completion/streaming with actual F03 approval and JSONL intent/completion. Fixture success alone is not used as external-service evidence.
+
+The centralized-time candidate reran **38/38 host integration**, **17/17 authorization**,
+**7/7 contracts**, **4/4 API boundary**, **7/7 packaging**, and the
+`MiniSandbox` application build, each exit **0**. The model suite's exit **2**
+is retained for Keychain BLOCKED, not converted to PASS.
+
+Gateway time checks now share one validated run-time primitive: run expiry latches
+revocation before suspension and takes priority over action expiry; each start
+gate compares run/action deadlines using the same sample. Not-yet-valid and
+action-only denials are nonterminal. Pre-credential and post-preparation expiry
+regressions check immediate revocation and zero additional reads/hits on rollback;
+the post-preparation case distinguishes its one prior authorized credential read.
+No transport implementation changes were made in this bounded repair.
 
 Transport tests use a URLProtocol fixture with synthetic credentials. They assert the captured request instead of swallowing callback assertion failures, check exact routes and headers, decode validation, real incremental delivery before EOF, Unicode fragments, terminal framing, redirects, cancellation, capacity reuse and request/response limits. These are not real remote service or guest isolation tests.
 
@@ -54,15 +75,15 @@ An opt-in host-only smoke test uses a test credential already placed in the host
 swift run ModelTransportChecks --live
 ```
 
-It requires `TEST_DEEPSEEK_KEY`; it never reads `.env` automatically. It prints only result labels, not the key or model response. Actual fixed-endpoint transport smoke on 2026-10-23 passed **4/4** (OpenAI and Anthropic, completion and streaming). This uses a test-only in-memory provider, **not Keychain**, and is not a production storage fallback.
+It requires `TEST_DEEPSEEK_KEY`; it never reads `.env` automatically. It prints only result labels, not the key or model response. Historical PR #7 fixed-endpoint transport-only smoke on 2026-10-23 passed **4/4**. The current centralized-time gateway result is from `HostIntegrationChecks --live` (**4/4**), not a rerun of the transport-only command above. Both smoke paths use a test-only in-memory provider, **not Keychain**, and are not production storage fallbacks. No GUI, VM or Agent verification is implied.
 
 ## Dependencies and outstanding acceptance
 
 Stacked on foundation PR #4 and dependent on candidate design #3; keep Draft pending design approval. This is only the transport increment, not completion of the model/Agent feature.
 
-- S07/S25 transport-level route, redirect and sanitized-error subchecks: covered by fixture tests; real host model calls separately verified.
+- S07/S25 transport-level route, redirect and sanitized-error subchecks: covered by fixture tests; current centralized-time gateway/prepared-transport real host calls **4/4 PASS**, separately from those security checks.
 - Keychain CRUD in the product's native context: **BLOCKED** as above.
-- Authenticated VM/vsock routing, authorization-to-network atomic dispatch, guest canary isolation (S01), DNS/adversarial network integration, stop/revocation of in-flight work, and a complete Agent loop (E03): **NOT_RUN**.
+- Authenticated VM/vsock and F10 routing, guest canary isolation (S01), DNS/adversarial network integration, end-to-end stop/revocation, and a complete Agent loop (E03): **NOT_RUN**. The standalone host gateway's dispatch-boundary checks are documented separately and do not establish those integrations.
 - Real GitHub/OAuth/MCP integration: **NOT_RUN**; this increment does not call those services.
 
 Provider field reference: DeepSeek's official “Using the Anthropic API” guide (`api-docs.deepseek.com/guides/anthropic_api`).

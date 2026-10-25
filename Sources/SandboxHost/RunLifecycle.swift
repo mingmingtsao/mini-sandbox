@@ -247,4 +247,35 @@ public final class RunLifecycle: @unchecked Sendable {
         }
     }
 
+    func acceptWorkspaceEffect(_ effect: WorkspacePreparedEffect) throws -> WorkspacePreparedEffect.Result {
+        var cancelled: [RunPreparedEffect] = []
+        let binding = effect.workflow
+        var workflowOwned = false
+        effect.acquire()
+        defer {
+            if workflowOwned { binding.gate.releaseEffect() }
+            effect.release()
+            cancelled.forEach { $0.cancel() }
+        }
+        try effect.prepare()
+        binding.gate.acquireEffect(); workflowOwned = true
+        let result = try lock.withLock {
+            let sample = clock.sample()
+            let observation = reduce(sample.wall, sample.elapsed)
+            cancelled = drainTerminal()
+            try binding.gate.validateLocked(binding)
+            guard let run = binding.run, run.handle.lifecycle === self, run.matches(binding),
+                  run.handle.installedEpoch == run.epoch else { throw AuthorizationError.wrongRun }
+            guard status == .active, generation == run.epoch else { throw AuthorizationError.runRevoked }
+            guard observation.wallTime >= run.notBefore else { throw AuthorizationError.grantNotYetValid }
+            try effect.validateOwner()
+            try Task.checkCancellation()
+            return try effect.commitLocked()
+        }
+        // Reservation locks and destruction are deliberately after lifecycle.
+        // If Stop wins next, these bytes were already accepted and stay charged.
+        effect.settle()
+        return result
+    }
+
 }

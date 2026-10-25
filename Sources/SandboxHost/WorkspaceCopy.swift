@@ -41,82 +41,66 @@ public final class WorkspaceExportCancellation: @unchecked Sendable {
             return WorkspaceWorkflowBinding(gate: self, owner: owner, generation: generation)
         }
     }
-    func validate(_ binding: WorkspaceWorkflowBinding) throws {
-        try lock.withLock { try validateLocked(binding) }
-    }
-    private func validateLocked(_ binding: WorkspaceWorkflowBinding) throws {
+    func acquireEffect() { lock.lock() }
+    func releaseEffect() { lock.unlock() }
+    func validateLocked(_ binding: WorkspaceWorkflowBinding) throws {
         guard binding.gate === self, binding.owner == owner, binding.generation == generation, !stopped else { throw WorkspaceError.cancelled }
-    }
-    func append(_ chunk: Data, to data: inout Data, binding: WorkspaceWorkflowBinding) throws {
-        try lock.withLock { try validateLocked(binding); data.append(chunk) }
-    }
-    fileprivate func write(fd: Int32, bytes: UnsafeRawPointer, count: Int,
-                           binding: WorkspaceWorkflowBinding) throws -> (Int, Int32) {
-        try lock.withLock {
-            try validateLocked(binding)
-            guard count > 0, count <= 4096 else { throw WorkspaceTransferError.rejected }
-            let written = Darwin.write(fd, bytes, count)
-            return (written, written < 0 ? errno : 0)
-        }
-    }
-    fileprivate func rename(parent: Int32, stage: String, name: String,
-                            binding: WorkspaceWorkflowBinding, reviewedDigest: String, stagedDigest: String) throws {
-        try lock.withLock {
-            try validateLocked(binding)
-            guard reviewedDigest == stagedDigest else { throw WorkspaceError.staleReview }
-            guard renameatx_np(parent, stage, parent, name, UInt32(RENAME_EXCL)) == 0 else {
-                throw WorkspaceError.io("exclusive export rename", errno)
-            }
-        }
+        if let run = binding.run { guard run.matches(binding) else { throw WorkspaceError.foreignSnapshot } }
     }
 }
 
-struct WorkspaceWorkflowBinding {
-    fileprivate let gate: WorkspaceExportCancellation
+struct WorkspaceWorkflowBinding: @unchecked Sendable {
+    let gate: WorkspaceExportCancellation
     let owner: UUID
     let generation: UInt64
-    func validate() throws { try gate.validate(self) }
+    let run: WorkspaceRunBinding?
+    init(gate: WorkspaceExportCancellation, owner: UUID, generation: UInt64, run: WorkspaceRunBinding? = nil) {
+        self.gate = gate; self.owner = owner; self.generation = generation; self.run = run
+    }
+    func validate() throws { try WorkspacePreparedEffect.validate(self).perform() }
     func matches(_ other: WorkspaceWorkflowBinding) -> Bool {
-        gate === other.gate && owner == other.owner && generation == other.generation
+        gate === other.gate && owner == other.owner && generation == other.generation && run === other.run
     }
     func cancel() { gate.cancel() }
-    func append(_ chunk: Data, to data: inout Data) throws { try gate.append(chunk, to: &data, binding: self) }
-    fileprivate func write(fd: Int32, bytes: UnsafeRawPointer, count: Int) throws -> (Int, Int32) {
-        try gate.write(fd: fd, bytes: bytes, count: count, binding: self)
+    func bound(to run: WorkspaceRunBinding) throws -> Self {
+        guard self.run == nil || self.run === run, owner == run.workflowOwner, generation == run.workflowGeneration else {
+            throw WorkspaceError.foreignSnapshot
+        }
+        return Self(gate: gate, owner: owner, generation: generation, run: run)
     }
 }
 
 /// Opaque, process-local handle; not a guest capability or a persisted authorization.
-public struct WorkspaceSnapshotID: Hashable {
+public struct WorkspaceSnapshotID: Hashable, Sendable {
     fileprivate let value = UUID()
     // Host-only binding when constructing the immutable RunGrant; not a lookup
     // selected from guest JSON and not an execution capability.
-    var grantSnapshotID: UUID { value }
+    package var grantSnapshotID: UUID { value }
 }
-public struct WorkspaceSnapshot {
+public struct WorkspaceSnapshot: Sendable {
     public let id: WorkspaceSnapshotID
     public let workingDirectory: String
     public let manifest: [WorkspaceManifestEntry]
     public let exclusions: [String]
 }
-public struct WorkspaceManifestEntry: Equatable {
+public struct WorkspaceManifestEntry: Equatable, Sendable {
     public let path: String
     public let directory: Bool
     public let bytes: Int
     public let sha256: String?
 }
-public enum WorkspacePreview: Equatable {
+public enum WorkspacePreview: Equatable, Sendable {
     case text(String)
     case noPreview(String)
 }
-public struct WorkspaceChange {
-    public enum Kind: String { case add, change, delete }
+public struct WorkspaceChange: Sendable {
+    public enum Kind: String, Sendable { case add, change, delete }
     public let path: String
     public let kind: Kind
     public let before: WorkspacePreview?
     public let after: WorkspacePreview?
 }
-public struct WorkspaceReview {
+public struct WorkspaceReview: Sendable {
     public let sha256: String
     public let changes: [WorkspaceChange]
     public let manifest: [WorkspaceManifestEntry]
@@ -127,7 +111,7 @@ public struct WorkspaceReview {
     fileprivate let task: TaskQuotaLedger?
 }
 
-private final class WorkspaceFD {
+final class WorkspaceFD {
     let value: Int32
     init(_ value: Int32) throws {
         guard value >= 0 else { throw WorkspaceError.io("open", errno) }
@@ -189,11 +173,11 @@ private struct WorkspaceStamp: Equatable {
         ct = s.st_ctimespec.tv_sec; cn = s.st_ctimespec.tv_nsec
     }
 }
-private struct WorkspaceNode: Equatable {
+private struct WorkspaceNode: Equatable, Sendable {
     let data: Data? // nil represents an empty or nonempty directory
     var digest: String? { data.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } }
 }
-fileprivate struct WorkspaceTree: Equatable {
+fileprivate struct WorkspaceTree: Equatable, Sendable {
     fileprivate var nodes: [String: WorkspaceNode] = [:]
     var exclusions: [String] = []
     var digest: String {
@@ -207,7 +191,7 @@ fileprivate struct WorkspaceTree: Equatable {
         }
     }
 }
-private struct WorkspaceRecord {
+fileprivate struct WorkspaceRecord {
     let baseline: WorkspaceTree
     let source: WorkspaceFD
     let sourcePath: String
@@ -225,8 +209,10 @@ public final class WorkspaceStore {
     var transferMemoryBudget: WorkspaceTransferBudget
     var transferDiskBudget: WorkspaceTransferBudget
     private let owner = UUID()
+    private let effectLock = NSRecursiveLock()
     private var records: [WorkspaceSnapshotID: WorkspaceRecord] = [:]
     private var transferQuotas: [WorkspaceSnapshotID: WorkspaceGrantQuota] = [:]
+    private var transferBindings: [WorkspaceSnapshotID: WorkspaceRunBinding] = [:]
     private let cancelled: () -> Bool
     private let cancellation: WorkspaceExportCancellation
 
@@ -236,6 +222,7 @@ public final class WorkspaceStore {
     var didWriteTransferChunk: ((Int) -> Void)?
     // Test observation only, outside cancellation ownership and before syscall.
     var beforeTransferWrite: (() -> Void)?
+    var beforeTransferAdoption: (() -> Void)?
     // Host instrumentation also permits deterministic mutation checks with real files.
     private let didReadChunk: ((String) throws -> Void)?
 
@@ -260,6 +247,7 @@ public final class WorkspaceStore {
     }
 
     public func importTree(from sourcePath: String) throws -> WorkspaceSnapshot {
+        effectLock.lock(); defer { effectLock.unlock() }
         try checkpoint()
         try validateBindings()
         let source = try Self.openDirectory(sourcePath)
@@ -290,6 +278,7 @@ public final class WorkspaceStore {
 
     // Internal transport fixture seam; no public App approval fallback.
     func transferFiles(_ id: WorkspaceSnapshotID) throws -> [String: Data] {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard let record = records[id] else { throw WorkspaceError.foreignSnapshot }
         try validateBindings()
         let tree = try stableScan(record.work)
@@ -305,34 +294,42 @@ public final class WorkspaceStore {
     }
 
     func transferFlow(files: [String: Data]) throws -> WorkspaceTransferFlow {
+        effectLock.lock(); defer { effectLock.unlock() }
         // Legacy synthetic checks only. A bound store cannot fall back to this.
         guard transferQuotas.isEmpty else { throw WorkspaceTransferError.rejected }
         return try WorkspaceTransferFlow(files: files, limits: limits, budget: transferMemoryBudget)
     }
 
     func bindTransferQuota(_ quota: WorkspaceGrantQuota, for id: WorkspaceSnapshotID) throws {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard records[id] != nil, id.value == quota.snapshotID else { throw WorkspaceError.foreignSnapshot }
         if let existing = transferQuotas[id], existing !== quota { throw WorkspaceTransferError.rejected }
+        try quota.bindWorkspace(storeOwner: owner, snapshot: id, workflow: cancellation.binding())
+        guard let binding = quota.workspaceBinding else { throw WorkspaceError.foreignSnapshot }
+        transferBindings[id] = binding
         transferQuotas[id] = quota
     }
 
     func transferFlow(for id: WorkspaceSnapshotID, channelLimits: WorkspaceLimits = WorkspaceLimits()) throws -> WorkspaceTransferFlow {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard let quota = transferQuotas[id] else { throw WorkspaceTransferError.rejected }
         try quota.beginTransfer()
-        return try WorkspaceTransferFlow(files: transferFiles(id), limits: quota.limits(store: limits, channel: channelLimits), budget: transferMemoryBudget, quota: quota, workflow: cancellation.binding())
+        return try WorkspaceTransferFlow(files: transferFiles(id), limits: quota.limits(store: limits, channel: channelLimits), budget: transferMemoryBudget, quota: quota, workflow: workspaceBinding(for: id))
     }
 
     /// Actual trusted-host task creation. Repeat calls return the SAME ledger;
     /// different limits, foreign owners and late creation are rejected.
     func createTransferTask(for id: WorkspaceSnapshotID, limits taskLimits: WorkspaceTaskLimits) throws -> TaskQuotaLedger {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard records[id] != nil, let quota = transferQuotas[id] else { throw WorkspaceTransferError.rejected }
-        return try quota.createTask(storeOwner: owner, limits: taskLimits, store: limits, workflow: cancellation.binding())
+        return try quota.createTask(storeOwner: owner, limits: taskLimits, store: limits, workflow: workspaceBinding(for: id))
     }
 
     // Receive bytes are already frozen by the queue-owned receiver. Independently
     // validate, exclusively materialize in quarantine, scan, then switch the handle.
     // No mutable guest path, chmod promise or incoming identifier is authority.
     func acceptTransfer(_ result: FrozenWorkspaceTransfer, for id: WorkspaceSnapshotID) throws -> String {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard let record = records[id] else { throw WorkspaceError.foreignSnapshot }
         try checkpoint()
         // Do not serialize/redecode or allocate WorkspaceNodes until the entire
@@ -354,20 +351,24 @@ public final class WorkspaceStore {
             for n in 1..<parts.count { tree.nodes[parts.prefix(n).joined(separator: "/")] = WorkspaceNode(data: nil) }
             tree.nodes[path] = WorkspaceNode(data: data)
         }
+        let workflow = try workspaceBinding(for: id)
         let name = "quarantine-" + UUID().uuidString
-        let quarantine = try Self.makeDirectory(root, name)
+        let quarantine = try makeEffectDirectory(root, name, workflow: workflow)
         writing.track(root, name, quarantine, directory: true)
         let validate = { try self.validateBindings(); try Self.verifyNamed(self.root, name, quarantine) }
-        try materialize(tree, into: quarantine, readOnly: true, writing: writing, transferLimits: effective, validate: validate)
+        try materialize(tree, into: quarantine, readOnly: true, writing: writing, workflow: workflow, transferLimits: effective, validate: validate)
         guard try stableScan(quarantine) == tree else { throw WorkspaceError.mutated }
         try checkpoint(); try validate()
         let path = rootPath + "/" + name
-        records[id] = WorkspaceRecord(baseline: record.baseline, source: record.source, sourcePath: record.sourcePath, work: quarantine, workPath: path)
+        beforeTransferAdoption?()
+        let adopted = WorkspaceRecord(baseline: record.baseline, source: record.source, sourcePath: record.sourcePath, work: quarantine, workPath: path)
+        try WorkspacePreparedEffect.adopt(WorkspacePreparedAdoption(store: self, snapshot: id, previous: record, next: adopted, workflow: workflow)).perform()
         writing.finish()
         return path
     }
 
     public func review(_ id: WorkspaceSnapshotID) throws -> WorkspaceReview {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard let record = records[id] else { throw WorkspaceError.foreignSnapshot }
         try validateBindings()
         let current = try stableScan(record.work)
@@ -377,6 +378,7 @@ public final class WorkspaceStore {
     }
 
     public func originalChanges(_ id: WorkspaceSnapshotID) throws -> [WorkspaceChange] {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard let record = records[id] else { throw WorkspaceError.foreignSnapshot }
         try Self.verifyPath(record.sourcePath, record.source)
         let current = try stableScan(record.source)
@@ -390,10 +392,11 @@ public final class WorkspaceStore {
     }
     private func exportReviewed(_ review: WorkspaceReview, toNewDirectory destination: String,
                                 action: WorkspaceExportCancellation?) throws {
+        effectLock.lock(); defer { effectLock.unlock() }
         guard review.owner == owner, let record = records[review.snapshot] else { throw WorkspaceError.foreignSnapshot }
         guard review.task === transferQuotas[review.snapshot]?.task else { throw WorkspaceError.staleReview }
         try checkpoint(action)
-        let workflow = try (action ?? cancellation).binding()
+        let workflow = try action.map { try $0.binding() } ?? workspaceBinding(for: review.snapshot)
         if action == nil { try review.task?.workflow.validate() }
         _ = try Self.pathParts(destination)
         for record in records.values {
@@ -419,7 +422,7 @@ public final class WorkspaceStore {
         let quota = transferQuotas[review.snapshot]
         let effective = quota?.limits(store: limits) ?? limits
         let writing = try WorkspaceDiskWrite(budget: transferDiskBudget, bytes: materializationBytes(review.tree, transferLimits: effective), quota: quota)
-        let stage = try Self.makeDirectory(parent, stageName)
+        let stage = try makeEffectDirectory(parent, stageName, workflow: workflow)
         writing.track(parent, stageName, stage, directory: true)
         // Rollback touches only retained, exclusively created node identities.
         let validate = {
@@ -428,7 +431,7 @@ public final class WorkspaceStore {
             try self.permittedDestination(parent)
             try Self.verifyNamed(parent, stageName, stage)
         }
-        try materialize(review.tree, into: stage, readOnly: false, writing: writing, action: action, transferLimits: effective, validate: validate)
+        try materialize(review.tree, into: stage, readOnly: false, writing: writing, action: action, workflow: workflow, transferLimits: effective, validate: validate)
         let stagedTree = try stableScan(stage, action: action)
         let latestWork = try stableScan(record.work, action: action)
         guard latestWork.exclusions.isEmpty else { throw WorkspaceError.rejected("excluded working entries require selection") }
@@ -443,8 +446,7 @@ public final class WorkspaceStore {
         try checkpoint(action)
         // Immutable review digest + retained parent/new basename + captured owner
         // generation meet at the concrete commit. No callback inside this fence.
-        try (action ?? cancellation).rename(parent: parent.value, stage: stageName, name: name,
-                                           binding: workflow, reviewedDigest: review.sha256, stagedDigest: stagedTree.digest)
+        try WorkspacePreparedEffect.publish(self, workflow, parent, stageName, name, review.sha256, stagedTree.digest).perform()
         writing.finish() // Never roll back after publication, including sync failure.
         exportBoundary?(.afterRename)
         do {
@@ -458,8 +460,46 @@ public final class WorkspaceStore {
     /// The caller must obtain NEW host approval and a NEW action cancellation.
     public func exportReviewedAfterStop(_ review: WorkspaceReview, toNewDirectory destination: String,
                                        actionCancellation: WorkspaceExportCancellation) throws {
+        effectLock.lock(); defer { effectLock.unlock() }
+        if let quota = transferQuotas[review.snapshot], quota.handle.lifecycle.currentStatus != .active { cancellation.cancel() }
         guard cancellation.isCancelled, actionCancellation !== cancellation else { throw WorkspaceError.cancelled }
         try exportReviewed(review, toNewDirectory: destination, action: actionCancellation)
+    }
+
+    func acquireEffect() { effectLock.lock() }
+    func releaseEffect() { effectLock.unlock() }
+    func validateEffectLocked(_ workflow: WorkspaceWorkflowBinding) throws {
+        guard let run = workflow.run else { return }
+        guard run.storeOwner == owner, records[run.snapshot] != nil,
+              transferBindings[run.snapshot] === run,
+              run.snapshot.grantSnapshotID == transferQuotas[run.snapshot]?.snapshotID else { throw WorkspaceError.foreignSnapshot }
+    }
+    private func workspaceBinding(for id: WorkspaceSnapshotID) throws -> WorkspaceWorkflowBinding {
+        let binding = try cancellation.binding()
+        guard transferQuotas[id] != nil else { return binding }
+        guard let run = transferBindings[id] else { throw WorkspaceError.foreignSnapshot }
+        return try binding.bound(to: run)
+    }
+    private func makeEffectDirectory(_ parent: WorkspaceFD, _ name: String, workflow: WorkspaceWorkflowBinding) throws -> WorkspaceFD {
+        try Self.trustedAncestors(parent)
+        let result = try WorkspacePreparedEffect.create(self, workflow, parent, name, directory: true).perform()
+        guard case .syscall(let raw, let failure) = result else { throw WorkspaceTransferError.rejected }
+        guard raw == 0 else { throw WorkspaceError.io("exclusive mkdir", failure) }
+        let fd = try Self.child(parent, name, directory: true)
+        try Self.sanitize(fd, mode: 0o700)
+        return fd
+    }
+    fileprivate func prepareAdoption(_ adoption: WorkspacePreparedAdoption) throws {
+        guard let current = records[adoption.snapshot], current.work === adoption.previous.work else { throw WorkspaceError.staleReview }
+        var nextRecords = records
+        nextRecords[adoption.snapshot] = adoption.next
+        adoption.previousRecords = records
+        adoption.nextRecords = nextRecords
+    }
+    fileprivate func commitAdoption(_ adoption: WorkspacePreparedAdoption) throws {
+        guard let current = records[adoption.snapshot], current.work === adoption.previous.work,
+              let nextRecords = adoption.nextRecords else { throw WorkspaceError.staleReview }
+        records = nextRecords
     }
 
     private func validateBindings() throws {
@@ -732,11 +772,12 @@ public final class WorkspaceStore {
     }
     private func materialize(_ tree: WorkspaceTree, into root: WorkspaceFD, readOnly: Bool,
                              writing: WorkspaceDiskWrite? = nil, action: WorkspaceExportCancellation? = nil,
+                             workflow requestedWorkflow: WorkspaceWorkflowBinding? = nil,
                              transferLimits: WorkspaceLimits? = nil,
                              validate: () throws -> Void) throws {
         let limits = transferLimits ?? self.limits
         _ = try materializationBytes(tree, transferLimits: limits)
-        let workflow = try (action ?? cancellation).binding()
+        let workflow = try requestedWorkflow ?? (action ?? cancellation).binding()
         var written = 0
         var directories: [String: WorkspaceFD] = ["": root]
         for path in tree.nodes.keys.sorted() {
@@ -747,7 +788,12 @@ public final class WorkspaceStore {
             guard let parent = directories[parentPath], let name = parts.last else { throw WorkspaceError.rejected("internal tree") }
             try Self.trustedAncestors(parent)
             if let data = tree.nodes[path]!.data {
-                let fd = try WorkspaceFD(openat(parent.value, name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0o600))
+                let created = try WorkspacePreparedEffect.create(self, workflow, parent, name, directory: false).perform()
+                guard case .syscall(let raw, _) = created, raw >= 0 else {
+                    if case .syscall(_, let failure) = created { throw WorkspaceError.io("open", failure) }
+                    throw WorkspaceTransferError.rejected
+                }
+                let fd = try WorkspaceFD(Int32(raw))
                 let index = writing?.track(parent, name, fd, directory: false)
                 let s = try Self.status(fd)
                 guard s.st_mode & S_IFMT == S_IFREG, s.st_nlink == 1 else { throw WorkspaceError.rejected("created file type") }
@@ -760,7 +806,8 @@ public final class WorkspaceStore {
                         let amount = min(4096, raw.count - offset)
                         guard amount <= limits.fileBytes - offset, amount <= limits.totalBytes - written else { throw WorkspaceError.rejected("byte limit") }
                         if writing != nil { beforeTransferWrite?() }
-                        let (n, failure) = try workflow.write(fd: fd.value, bytes: raw.baseAddress!.advanced(by: offset), count: amount)
+                        let writtenResult = try WorkspacePreparedEffect.write(self, workflow, fd, raw.baseAddress!.advanced(by: offset), amount).perform()
+                        guard case .syscall(let n, let failure) = writtenResult else { throw WorkspaceTransferError.rejected }
                         if n < 0 && failure == EINTR { continue }
                         guard n > 0 else { throw WorkspaceError.io("write", failure) }
                         offset += n; written += n
@@ -771,7 +818,7 @@ public final class WorkspaceStore {
                 guard fchmod(fd.value, readOnly ? 0o400 : 0o600) == 0, fsync(fd.value) == 0 else { throw WorkspaceError.io("file sync", errno) }
                 try Self.verifyNamed(parent, name, fd)
             } else {
-                let directory = try Self.makeDirectory(parent, name)
+                let directory = try makeEffectDirectory(parent, name, workflow: workflow)
                 writing?.track(parent, name, directory, directory: true)
                 directories[path] = directory
             }
@@ -797,4 +844,25 @@ public final class WorkspaceStore {
                                    before: preview(a), after: preview(b))
         }
     }
+}
+
+/// Keeps both dictionary generations and descriptor owners alive until after
+/// the lifecycle and workflow fences have been released.
+final class WorkspacePreparedAdoption {
+    let workflow: WorkspaceWorkflowBinding
+    private let store: WorkspaceStore
+    fileprivate let snapshot: WorkspaceSnapshotID
+    fileprivate let previous: WorkspaceRecord
+    fileprivate let next: WorkspaceRecord
+    fileprivate var previousRecords: [WorkspaceSnapshotID: WorkspaceRecord]?
+    fileprivate var nextRecords: [WorkspaceSnapshotID: WorkspaceRecord]?
+    fileprivate init(store: WorkspaceStore, snapshot: WorkspaceSnapshotID, previous: WorkspaceRecord,
+                     next: WorkspaceRecord, workflow: WorkspaceWorkflowBinding) {
+        self.store = store; self.snapshot = snapshot; self.previous = previous; self.next = next; self.workflow = workflow
+    }
+    func acquire() { store.acquireEffect() }
+    func prepare() throws { try store.prepareAdoption(self) }
+    func validateOwner() throws { try store.validateEffectLocked(workflow) }
+    func commitLocked() throws { try store.commitAdoption(self) }
+    func release() { store.releaseEffect() }
 }

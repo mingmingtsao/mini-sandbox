@@ -119,3 +119,45 @@ unknown outcome; they do not claim a physical disk-failure test. Ordinary typed
 payloads and exact raw fragments/order, early text before EOF, cancellation,
 truncation and pending-prefix audit gating remain covered. These local checks do
 not replace the independent human follow-up or authorize component activation.
+
+
+## Real loopback and final native consumer
+
+The additional `Tests/ModelReflectionTests/loopback.py` driver launches an owned
+`127.0.0.1` HTTP service and runs `ExecutionBoundaryChecks
+--model-reflection-loopback`. A **test-only** URLProtocol forwards the fixed
+production request to that service; production endpoint selection is unchanged.
+The service consumes the single random canary injected by the real transport and
+returns success/error JSON, escaped strings, adjacent text blocks, tool input,
+and delayed SSE fragments. No credential is printed, persisted or passed through
+argv. This is actual loopback transport plus the final native socket consumer; it
+is not an external provider, vendor CLI, VM, UI or diagnostic-App acceptance claim.
+
+The host pumps `ControlledRunOutput.acceptNext()` while the upstream is producing,
+and independently reads and reconstructs the actual peer HTTP/SSE payload. Merely
+clearing an unconsumed queue after detecting a leak cannot pass this test. Thirteen
+cases independently observed thirteen upstream HTTP arrivals and thirteen single
+credential reads/resumes. Five reflecting nonstream cases and the error-body case
+committed zero peer bytes. Three reflecting SSE cases allowed only safe prefix
+metadata/text, no complete canary or escaped argument, and no terminal success.
+Four positive controls preserved ordinary text, tool input and a harmless trailing
+credential prefix through successful completion. Started rejection outcomes were
+audited as `unknown`. Actual byte counts are printed per case.
+
+Reproduce without any live flag or Keychain access:
+
+```sh
+swift build --product StructuredModelChecks
+swift run --skip-build StructuredModelChecks
+swift build --product ExecutionBoundaryChecks
+python3 Tests/ModelReflectionTests/loopback.py
+swift run --skip-build ExecutionBoundaryChecks --native-response
+swift run --skip-build ExecutionBoundaryChecks --native-repairs
+swift run --skip-build ExecutionBoundaryChecks --final-effect-clock
+```
+
+The migrated reflection regression set was run before the production change on
+the current main baseline: 52 groups passed and 11 failed. With the repair, all 63
+groups passed. These are scoped local results, not independent human approval.
+The exact production diff and these reproduction commands form the review unit;
+real-credential activation remains dependent on the required human review.

@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -18,18 +19,33 @@ from business_fixture import wire_event
 
 
 def main():
-    if len(sys.argv) != 6 or sys.argv[5] not in ('mcp-read', 'mcp-write', 'mcp-denied-resource', 'mcp-denied-write'):
-        raise SystemExit('usage: business_mcp_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE MODE')
-    host, image, vendor = map(lambda value: str(Path(value).absolute()), sys.argv[1:4])
-    root = Path(sys.argv[4]).absolute(); mode = sys.argv[5]
+    serve_only = len(sys.argv) == 4 and sys.argv[1] == '--serve'
+    modes = ('mcp-read', 'mcp-write', 'mcp-denied-resource', 'mcp-denied-write')
+    if (not serve_only and len(sys.argv) != 6) or sys.argv[-1] not in modes:
+        raise SystemExit('usage: business_mcp_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE MODE | --serve NEW_EVIDENCE MODE')
+    if not serve_only:
+        host, image, vendor = map(lambda value: str(Path(value).absolute()), sys.argv[1:4])
+    root = Path(sys.argv[2] if serve_only else sys.argv[4]).absolute(); mode = sys.argv[-1]
     os.umask(0o077); root.mkdir(mode=0o700)
     session = root / 'session'; session.mkdir(mode=0o700)
     source = Path(__file__).resolve().parents[2] / 'Tests/MCPGatewayChecks/claude_loopback.py'
     spec = importlib.util.spec_from_file_location('local_mcp_fixture', source)
     mcp = importlib.util.module_from_spec(spec); spec.loader.exec_module(mcp)
-    state = dict(lock=threading.Lock(), token='mcp-canary-' + secrets.token_hex(24), hits=0, writes=0,
+    # Matches the public SANDBOX_TEST_FIXTURES-only App configuration. It is
+    # deliberately not a personal credential; normal probes remain randomized.
+    token = 'mini-sandbox-local-mcp-fixture-canary-39f2e5b7' if serve_only else 'mcp-canary-' + secrets.token_hex(24)
+    state = dict(lock=threading.Lock(), token=token, hits=0, writes=0,
                  repos={'A': 'repo-A-initial', 'B': 'repo-B-initial'}, mode='normal', calls=[])
+    completed = threading.Event()
+    interrupted = threading.Event()
+    if serve_only:
+        def stop_services(_signum, _frame):
+            interrupted.set(); completed.set()
+        signal.signal(signal.SIGINT, stop_services)
+        signal.signal(signal.SIGTERM, stop_services)
     class RepositoryHandler(mcp.Handler):
+        def setup(self):
+            super().setup(); self.connection.settimeout(5)
         def do_POST(self):
             count = int(self.headers.get('Content-Length', '0'))
             if not 0 < count <= 65536:
@@ -51,12 +67,14 @@ def main():
     denied = mode in ('mcp-denied-resource', 'mcp-denied-write')
     class ModelHandler(http.server.BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
+        def setup(self):
+            super().setup(); self.connection.settimeout(5)
         def log_message(self, *_): pass
         def do_POST(self):
             try:
                 step = model_state['requests']
                 count = int(self.headers.get('Content-Length', '0'))
-                if step >= 2 or self.path != '/anthropic/v1/messages?beta=true' or not 0 < count <= 65536:
+                if step >= 2 or self.path != '/anthropic/v1/messages?beta=true' or not 0 < count <= 65536 or self.headers.get('Transfer-Encoding'):
                     raise ValueError('model route/count')
                 raw = self.rfile.read(count)
                 if state['token'].encode() in raw: raise ValueError('MCP credential reached model')
@@ -89,10 +107,27 @@ def main():
                 self.wfile.write(body); self.wfile.flush()
             except Exception as error:
                 model_state['errors'].append(type(error).__name__ + ': ' + str(error)); self.send_error(400, 'fixture validation failed')
-            finally: self.close_connection = True
+            finally:
+                self.close_connection = True
+                if model_state['requests'] == 2 or model_state['errors']: completed.set()
     model = http.server.HTTPServer(('127.0.0.1', 0), ModelHandler)
     model_thread = threading.Thread(target=model.serve_forever, daemon=True); model_thread.start()
     try:
+        if serve_only:
+            ready = {'modelPort': model.server_port, 'mcpPort': repository.server_port, 'mode': mode,
+                     'maximumSeconds': 1800, 'scope': 'owned loopback fixtures only; App grants and approvals remain manual'}
+            (root / 'ready.json').write_text(json.dumps(ready, indent=2) + '\n')
+            print(json.dumps(ready, sort_keys=True), flush=True)
+            finished_before_deadline = completed.wait(1800)
+            with state['lock']:
+                calls = list(state['calls']); writes = state['writes']; repos = dict(state['repos']); hits = state['hits']
+            observations = {'scope': 'service observations only; inspect App evidence separately', 'mode': mode,
+                            'finished_before_deadline': finished_before_deadline, 'interrupted': interrupted.is_set(),
+                            'upstream_hits': hits, 'upstream_calls': calls, 'upstream_writes': writes,
+                            'resource_B_unchanged': repos['B'] == 'repo-B-initial', 'model': model_state}
+            (root / 'fixture.json').write_text(json.dumps(observations, indent=2) + '\n')
+            print(json.dumps(observations, sort_keys=True), flush=True)
+            return 0 if not model_state['errors'] else 1
         config = json.dumps({'port': repository.server_port, 'token': state['token']}) + '\n'
         with (root / 'host.log').open('w') as out:
             run = subprocess.run([host, image, vendor, str(session), str(model.server_port), mode], input=config,

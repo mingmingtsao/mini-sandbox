@@ -62,3 +62,21 @@ PYTHONDONTWRITEBYTECODE=1 python3 Tools/AgentRuntime/business_mcp_fixture.py "$H
 Other fixed modes are mcp-write, mcp-denied-write and mcp-denied-resource. No
 arbitrary upstream URL, credential, tool name or command is accepted by this
 driver. Guest/exported code is never run on the host.
+# App-driven local services
+
+`python3 -B Tools/AgentRuntime/business_mcp_fixture.py --serve NEW_EVIDENCE MODE`
+starts only the two owned `127.0.0.1` services. `MODE` is `mcp-read`,
+`mcp-write`, `mcp-denied-write`, or `mcp-denied-resource`. The private new
+directory receives `ready.json` with `modelPort` and `mcpPort`, plus request
+captures and final `fixture.json` observations. No App, VM, grant, or approval
+is created by this mode. Services stop after the second model response, a
+fixture error, SIGINT/SIGTERM, or the 1,800-second deadline.
+
+The service-only MCP bearer is the public fake constant shared with the
+`SANDBOX_TEST_FIXTURES` App configuration. The normal standalone probe still
+uses a fresh random fake bearer delivered only through stdin. The service
+observations do not themselves assert App success: inspect App approval,
+actual VM stopping, and workspace evidence separately. A local smoke verified
+both listeners, the fixed fake bearer, discovery, and signal-triggered shutdown
+without starting an App or VM.
+

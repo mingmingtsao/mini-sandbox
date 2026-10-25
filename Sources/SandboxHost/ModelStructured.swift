@@ -94,13 +94,22 @@ package struct ModelStreamChunk: Equatable, Sendable {
     package let isFinal: Bool
     package let event: ModelStreamEvent?
     package let completion: ModelCompletion?
+    private var completionAuditRequired = false
     /// All message_delta metadata is terminal, not only an explicit stop_reason.
     package var isTerminal: Bool {
-        if isFinal { return true }
+        if isFinal || completionAuditRequired { return true }
         if case .messageDelta = event { return true }
         return false
     }
     package init(text: String, isFinal: Bool) { self.text = text; self.isFinal = isFinal; event = nil; completion = nil }
+    init(finalCompletion: ModelCompletion) {
+        text = ""; isFinal = true; event = nil; completion = finalCompletion
+    }
+    /// Preserve event identity/order while routing delayed prefix output through
+    /// the existing gateway completion barrier, rather than a new callback path.
+    func gatedByCompletionAudit() -> Self {
+        var copy = self; copy.completionAuditRequired = true; return copy
+    }
     package init(text: String = "", event: ModelStreamEvent, completion: ModelCompletion? = nil) {
         self.text = text; self.event = event; self.completion = completion
         if case .messageStop = event { isFinal = true } else { isFinal = false }

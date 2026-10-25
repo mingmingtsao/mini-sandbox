@@ -101,6 +101,9 @@ private final class FixtureURLProtocol: URLProtocol {
     }
 }
 
+// Runtime-only realistic credential avoids incidental one-letter prefix overlap
+// with the early-chunk fixture. The production guard has no short-key exception.
+private let fixtureCredential = "sk-offline-" + UUID().uuidString
 private func makeTransport(_ response: @escaping (URLRequest) -> FixtureResponse?) -> ModelTransport {
     FixtureURLProtocol.install(response)
     let configuration = URLSessionConfiguration.ephemeral
@@ -108,7 +111,7 @@ private func makeTransport(_ response: @escaping (URLRequest) -> FixtureResponse
     configuration.httpCookieStorage = nil
     configuration.urlCache = nil
     return ModelTransport(
-        credentialProvider: InMemoryCredentialProvider("test-secret-that-must-never-appear"),
+        credentialProvider: InMemoryCredentialProvider(fixtureCredential),
         configuration: configuration)
 }
 
@@ -196,12 +199,12 @@ private func testOpenAIRequestPathModelAndBody() async throws {
     try check(body["model"] as? String == "deepseek-flash", "allowlisted model encoded")
     try check(body["stream"] as? Bool == false, "completion must be nonstreaming")
     try check((body["thinking"] as? [String: String])?["type"] == "disabled", "text-only transport explicitly disables thinking")
-    try check(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-secret-that-must-never-appear", "host auth")
+    try check(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + fixtureCredential, "host auth")
     try check(request.value(forHTTPHeaderField: "X-Caller-Auth") == nil, "no caller auth")
 }
 
 private func testProviderFailure(_ reason: String, streaming: Bool) async throws {
-    let secret = "provider-private-body-test-secret-that-must-never-appear"
+    let secret = "provider-private-body-" + fixtureCredential
     let completion = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": secret], "finish_reason": reason]]])
     let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n" +
         "data: {\"choices\":[{\"delta\":{\"content\":\"\(secret)\"},\"finish_reason\":\"\(reason)\"}]}\n\n" +
@@ -233,7 +236,7 @@ private func testAnthropicTrustedPath() async throws {
     try check(sent.url?.absoluteString == "https://api.deepseek.com/anthropic/v1/messages", "Anthropic fixed URL")
     try check(body["model"] as? String == "deepseek-flash", "Anthropic model")
     try check(body["system"] as? String == "Keep instructions", "system instructions must not disappear")
-    try check(sent.value(forHTTPHeaderField: "x-api-key") == "test-secret-that-must-never-appear", "Anthropic credential header")
+    try check(sent.value(forHTTPHeaderField: "x-api-key") == fixtureCredential, "Anthropic credential header")
     try check(sent.value(forHTTPHeaderField: "Host") == nil, "no Host override")
 }
 
@@ -269,7 +272,7 @@ private func testAnthropicUnsupportedThinkingRejected() async throws {
 
 private func testDecodingErrorsAreInvalidResponse() async throws {
     for kind in [FixedProtocol.openAI, .anthropic] {
-        for payload in ["not JSON test-secret-that-must-never-appear", "{}"] {
+        for payload in ["not JSON " + fixtureCredential, "{}"] {
             let transport = makeTransport { _ in FixtureResponse(bodyChunks: [Data(payload.utf8)]) }
             try await expectTransportError({ _ = try await transport.complete(baseRequest(protocol: kind)) },
                 { $0 == .invalidResponse && String(describing: $0) == "invalid upstream response" }, "decode failure is not network failure")
@@ -299,7 +302,7 @@ private func testStatusErrorIsSanitized() async throws {
     try await expectTransportError({ _ = try await transport.complete(try baseRequest()) }, { error in
         guard case .httpStatus(401) = error else { return false }
         let rendered = String(describing: error)
-        return !rendered.contains(secret) && !rendered.contains("test-secret")
+        return !rendered.contains(secret) && !rendered.contains(fixtureCredential)
     }, "status error must not expose response body or key")
 }
 

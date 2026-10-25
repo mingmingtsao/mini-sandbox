@@ -47,6 +47,15 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     private let credentialProvider: any ModelCredentialProvider
     private let configuration: URLSessionConfiguration
     private let limiter: RequestLimiter
+#if SANDBOX_TEST_FIXTURES
+    private let fixtureLoopbackPort: UInt16?
+#endif
+    package var claudeRouteEnabled: Bool {
+#if SANDBOX_TEST_FIXTURES
+        if fixtureLoopbackPort != nil { return true }
+#endif
+        return BusinessModelActivation.credentialEgressEnabled
+    }
 
     package init(credentialProvider: any ModelCredentialProvider, configuration: URLSessionConfiguration? = nil) {
         self.credentialProvider = credentialProvider
@@ -59,8 +68,30 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         configuration.timeoutIntervalForResource = Self.resourceTimeout
         self.configuration = configuration.copy() as! URLSessionConfiguration
         self.limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
+#if SANDBOX_TEST_FIXTURES
+        fixtureLoopbackPort = nil
+#endif
         super.init()
     }
+
+#if SANDBOX_TEST_FIXTURES
+    /// Test binary only. Neither a caller key, endpoint host, configuration nor
+    /// credential provider is accepted. Redirects remain unconditionally denied.
+    package init(localClaudeFixturePort port: UInt16) throws {
+        guard port > 0 else { throw ModelTransportError.invalidRequest("fixture port") }
+        credentialProvider = LocalClaudeFixtureCredential()
+        let configuration = Self.defaultConfiguration()
+        configuration.httpCookieStorage = nil; configuration.urlCache = nil
+        configuration.httpShouldSetCookies = false; configuration.httpCookieAcceptPolicy = .never
+        configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForRequest = Self.requestTimeout
+        configuration.timeoutIntervalForResource = Self.resourceTimeout
+        self.configuration = configuration
+        limiter = RequestLimiter(limit: Self.maxConcurrentRequests)
+        fixtureLoopbackPort = port
+        super.init()
+    }
+#endif
 
     private static func defaultConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -120,10 +151,28 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
     }
 
     package func prepareNative(_ request: AnthropicNativeRequest) throws -> ModelPreparedOperation {
-        try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
+        guard request.dialect == .native else { throw HostModelGatewayError.businessRouteDisabled }
+        return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
     }
 
-    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool) throws -> ModelPreparedOperation {
+    package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors,
+                               connection: BusinessVMConnection? = nil) throws -> ModelPreparedOperation {
+        // Immutable production gate, before credential preparation or URLSession.
+        guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        guard let connection, connection.service == .model, !connection.isRetired else { throw HostModelGatewayError.invalidHandle }
+        guard request.dialect == .claude else { throw ModelTransportError.invalidRequest("claude dialect") }
+        try selectors.validate()
+        let operation = try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
+                                           streaming: request.streaming, claudeSelectors: selectors)
+        try operation.bindVMConnection(connection)
+        return operation
+    }
+
+    private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
+                                claudeSelectors: ClaudeRequestSelectors? = nil) throws -> ModelPreparedOperation {
+        if claudeSelectors != nil {
+            guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        }
         try limiter.acquire()
         do {
             guard body.count <= Self.maxRequestBodyBytes else { throw ModelTransportError.requestTooLarge }
@@ -136,7 +185,15 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
                 throw ModelTransportError.credential(.invalid)
             }
 
-            let endpoint = endpoint(for: kind)
+            if let claudeSelectors { try claudeSelectors.validate(); guard kind == .anthropic else { throw ModelTransportError.invalidRequest("claude protocol") } }
+            // The closed host route is unreachable while activation is disabled.
+            var endpoint = claudeSelectors == nil ? endpoint(for: kind) : URL(string: "https://api.deepseek.com/anthropic/v1/messages?beta=true")!
+#if SANDBOX_TEST_FIXTURES
+            if let port = fixtureLoopbackPort {
+                guard claudeSelectors != nil, kind == .anthropic else { throw ModelTransportError.invalidRequest("fixture dialect") }
+                endpoint = URL(string: "http://127.0.0.1:\(port)/anthropic/v1/messages?beta=true")!
+            }
+#endif
             var urlRequest = URLRequest(url: endpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.timeoutInterval = Self.requestTimeout
@@ -146,6 +203,10 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             case .anthropic:
                 urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
                 urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                if let claudeSelectors {
+                    urlRequest.setValue(claudeSelectors.beta, forHTTPHeaderField: "anthropic-beta")
+                    urlRequest.setValue(claudeSelectors.directBrowserAccess, forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
+                }
             }
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body
@@ -312,6 +373,9 @@ private final class RequestLimiter: @unchecked Sendable {
 /// Cancellation cannot prove an upstream side effect did not occur after start.
 package final class ModelPreparedOperation: @unchecked Sendable {
     package let chunks: AsyncThrowingStream<ModelStreamChunk, Error>
+    package let requestBodyBytes: Int
+    /// Configured fields only; URLSession's automatic wire headers are excluded.
+    package let configuredHeaderBytes: Int
     private let session: URLSession
     private let task: URLSessionDataTask
     private let delegate: ModelOperationDelegate
@@ -319,6 +383,7 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private var started = false
     private var cancelled = false
     private var resumes = 0
+    private var vmConnection: BusinessVMConnection?
     package var resumeCalls: Int { lock.withLock { resumes } }
 
     fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool, activeCredential: String,
@@ -327,20 +392,41 @@ package final class ModelPreparedOperation: @unchecked Sendable {
         release: @escaping @Sendable () -> Void) {
         let pair = AsyncThrowingStream<ModelStreamChunk, Error>.makeStream()
         chunks = pair.stream
+        requestBodyBytes = request.httpBody?.count ?? 0
+        configuredHeaderBytes = (request.allHTTPHeaderFields ?? [:]).reduce(0) { $0 + $1.key.utf8.count + 2 + $1.value.utf8.count + 2 }
         delegate = ModelOperationDelegate(continuation: pair.continuation, streaming: streaming, activeCredential: activeCredential,
             decodeText: decodeText, decodeEvent: decodeEvent, release: release)
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         task = session.dataTask(with: request)
     }
-    func acquireForStart() { lock.lock() }
-    func releaseForStart() { lock.unlock() }
+    fileprivate func bindVMConnection(_ connection: BusinessVMConnection) throws {
+        try lock.withLock {
+            guard !started, !cancelled, vmConnection == nil, connection.service == .model else { throw ModelTransportError.cancelled }
+            vmConnection = connection
+        }
+    }
+    func acquireForStart() { lock.lock(); vmConnection?.acquireNativeStart() }
+    func releaseForStart() { vmConnection?.releaseNativeEffect(); lock.unlock() }
+    func validateVMOwner(scope: RunEffectScope, lifecycle: RunLifecycle) throws {
+        if let vmConnection {
+            guard vmConnection.lifecycle === lifecycle, vmConnection.epoch == scope.generation else { throw AuthorizationError.wrongRun }
+        }
+    }
     func startLocked() throws {
         guard !started, !cancelled else { throw ModelTransportError.cancelled }
+        try vmConnection?.validateNativeEffectLocked()
         started = true
         task.resume()
         resumes += 1
     }
-    package func start() throws { try lock.withLock { try startLocked() } }
+    package func start() throws {
+        try lock.withLock {
+            // Actual VM operations may start only through RunLifecycle's
+            // owner-lock → trusted clock → concrete resume sequence.
+            guard vmConnection == nil else { throw HostModelGatewayError.invalidHandle }
+            try startLocked()
+        }
+    }
     package func cancel() {
         lock.withLock { cancelled = true }
         task.cancel()

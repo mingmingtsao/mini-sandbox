@@ -4,6 +4,7 @@ import Foundation
 /// Uses the existing typed model response, never reflection or a raw callback.
 struct NativeResponseSerializer {
     let streaming: Bool
+    let mcp: Bool
     private var ended = false
     private var started = false
     private var active: ModelBlock?
@@ -11,9 +12,24 @@ struct NativeResponseSerializer {
     private var blocks: [ModelBlock] = []
     private var metadata: ModelMetadata?
     private var deltaCount = 0
-    init(streaming: Bool) { self.streaming = streaming }
+    init(streaming: Bool, mcp: Bool = false) { self.streaming = streaming; self.mcp = mcp }
 
     mutating func encode(_ event: ControlledRunOutput.Event, maxBytes: Int = NativeResponseChannel.maxFrameBytes) throws -> NativeResponseChannel.Frame {
+        if mcp {
+            guard !ended, !streaming, case .mcpResponse(let response) = event else { throw NativeResponseError.invalidEvent }
+            let bytes: Data
+            if let payload = response.payload {
+                let body = try Self.json(payload, maxBytes: min(65_536, maxBytes))
+                let header = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                guard body.count <= maxBytes - header.count else { throw NativeResponseError.limitExceeded }
+                bytes = header + body
+            } else {
+                bytes = Data("HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                guard bytes.count <= maxBytes else { throw NativeResponseError.limitExceeded }
+            }
+            ended = true
+            return .init(bytes: bytes, final: true)
+        }
         if streaming { return try encodeStream(event, maxBytes: maxBytes) }
         guard !streaming, !ended, case .modelCompletion(let completion) = event else { throw NativeResponseError.invalidEvent }
         let root = try Self.message(completion.metadata, blocks: completion.blocks)

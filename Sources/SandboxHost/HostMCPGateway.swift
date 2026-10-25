@@ -7,12 +7,19 @@ package enum HostMCPGatewayError: Error, Equatable, Sendable {
 }
 package final class HostMCPRunHandle: Sendable { fileprivate let token = UUID(); fileprivate init() {} }
 package struct HostMCPProposal: Sendable {
+    package var pendingAction: PendingAction { pending }
     fileprivate let handle: HostMCPRunHandle
     fileprivate let pending: PendingAction
     fileprivate let generation: UInt64
     fileprivate let effectScope: RunEffectScope
 }
 package struct HostMCPApproval: Sendable { fileprivate let proposal: HostMCPProposal; fileprivate let approved: ApprovedAction }
+/// A validated JSON-RPC response from the owned MCP exchange. Only this gateway
+/// may construct it; callers cannot supply arbitrary HTTP bytes or a send closure.
+package struct MCPWireResponse: Sendable {
+    let payload: ModelJSON?
+    fileprivate init(payload: ModelJSON?) { self.payload = payload }
+}
 package struct MCPCompletion: Sendable {
     package let text: String
     package let sourceToolUseID: String?

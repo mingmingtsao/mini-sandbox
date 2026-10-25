@@ -22,11 +22,22 @@ package struct HostModelConnection: Sendable {
         self.model = model; self.protocol = kind
         transport = ModelTransport(credentialProvider: credentialProvider, configuration: configuration)
     }
+#if SANDBOX_TEST_FIXTURES
+    package static func localClaudeFixture(port: UInt16, connectionID: UUID = UUID(), accountID: UUID = UUID()) throws -> Self {
+        Self(connectionID: connectionID, accountID: accountID, fixtureTransport: try ModelTransport(localClaudeFixturePort: port))
+    }
+    private init(connectionID: UUID, accountID: UUID, fixtureTransport: ModelTransport) {
+        self.connectionID = connectionID; self.accountID = accountID
+        accountBindingVersion = 1; routeVersion = 1; model = .deepSeekFlash; self.protocol = .anthropic
+        transport = fixtureTransport
+    }
+#endif
 }
 
 package enum HostModelGatewayError: Error, Equatable, Sendable {
     case invalidHandle, revoked, denied, invalidConnection, invalidApproval, busy, messageTooLarge
     case auditFailed, notStarted, outcomeUnknown
+    case businessRouteDisabled
 }
 
 /// Not Codable, not guest-initializable; identity is checked against this gateway's private state.
@@ -36,15 +47,26 @@ package final class HostModelRunHandle: Sendable {
 }
 package struct HostModelProposal: Sendable {
     package var actionID: UUID { pending.actionID }
+    package var pendingAction: PendingAction { pending }
     fileprivate let handle: HostModelRunHandle
     fileprivate let pending: PendingAction
     fileprivate let connectionGeneration: UInt64
     fileprivate let runGeneration: UInt64
     fileprivate let effectScope: RunEffectScope
+    fileprivate let vmConnection: BusinessVMConnection?
 }
 package struct HostModelApproval: Sendable {
     fileprivate let proposal: HostModelProposal
     fileprivate let approved: ApprovedAction
+}
+
+package struct ModelRunMeasurements: Sendable {
+    package let dispatchedRequests: Int
+    package let outboundBodyBytes: Int
+    package let configuredHeaderBytes: Int
+    package let largestBodyBytes: Int
+    package let largestConfiguredHeaderBytes: Int
+    package let peakActiveRequests: Int
 }
 
 #if DEBUG
@@ -77,6 +99,8 @@ package actor HostModelGateway {
         var revoked: Bool { authorityHandle.lifecycle.currentStatus != .active }
         var reserved = 0
         var resumeCalls = 0
+        var outboundBodyBytes = 0, configuredHeaderBytes = 0
+        var largestBodyBytes = 0, largestConfiguredHeaderBytes = 0, peakActiveRequests = 0
         var operations: [UUID: (UUID, ModelPreparedOperation)] = [:]
         init(handle: HostModelRunHandle, authorityHandle: HostRunHandle, grant: RunGrant) {
             self.handle = handle; self.authorityHandle = authorityHandle; self.grant = grant
@@ -93,6 +117,9 @@ package actor HostModelGateway {
         let streaming: Bool
         let request: FixedModelRequest?
         let nativeBody: ModelJSON?
+        let claudeSelectors: ClaudeRequestSelectors?
+        let vmRuntimeID: UUID?
+        let vmChannelID: UUID?
     }
     package let authority: RunAuthorizationController
     private let owner: (any HostRunAttachmentOwner)?
@@ -161,7 +188,7 @@ package actor HostModelGateway {
             let envelope = Envelope(schemaVersion: 2, runID: run.grant.runID, epoch: run.grant.epoch,
                 connectionID: connectionID, accountID: entry.connection.accountID,
                 accountBindingVersion: entry.connection.accountBindingVersion, routeVersion: entry.connection.routeVersion,
-                streaming: streaming, request: request, nativeBody: nil)
+                streaming: streaming, request: request, nativeBody: nil, claudeSelectors: nil, vmRuntimeID: nil, vmChannelID: nil)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let canonical = try encoder.encode(envelope)
             guard canonical.count <= min(run.grant.resourceLimits.messageBytes, 65_536) else { throw HostModelGatewayError.messageTooLarge }
@@ -172,13 +199,41 @@ package actor HostModelGateway {
             let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
             let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "Model \(scope.operation): \(scope.resource)")
             try validate(run, generation: generation, connectionID: connectionID, connectionGeneration: entry.generation)
-            return HostModelProposal(handle: handle, pending: pending, connectionGeneration: entry.generation, runGeneration: generation, effectScope: effectScope)
+            return HostModelProposal(handle: handle, pending: pending, connectionGeneration: entry.generation, runGeneration: generation, effectScope: effectScope, vmConnection: nil)
         } catch { throw await handleError(error, run: run) }
     }
 
     package func proposeNative(handle: HostModelRunHandle, connectionID: UUID, body: Data,
         streaming: Bool) async throws -> HostModelProposal {
         let request = try AnthropicNativeRequest.decodeValidated(body, streaming: streaming)
+        return try await proposeValidatedNative(handle: handle, connectionID: connectionID, request: request, selectors: nil)
+    }
+
+    /// Admission is available for inspection; execution is independently disabled
+    /// before ticket consumption and again before credential access in transport.
+    package func proposeClaude(handle: HostModelRunHandle, connectionID: UUID,
+                               ingress: BusinessHTTPIngress) async throws -> HostModelProposal {
+        let selectors = try ingress.claudeSelectors
+        let request = try ingress.claudeRequest()
+        return try await proposeValidatedNative(handle: handle, connectionID: connectionID, request: request, selectors: selectors)
+    }
+
+    /// Product ingress binds the actual listener-minted owner into the approved
+    /// bytes. Pure admission proposals above can never dispatch schema 4.
+    package func proposeVMClaude(handle: HostModelRunHandle, connectionID: UUID,
+                                 ingress: BusinessHTTPIngress, connection: BusinessVMConnection) async throws -> HostModelProposal {
+        let run = try get(handle)
+        guard connection.service == .model, !connection.isRetired,
+              connection.lifecycle === run.authorityHandle.lifecycle,
+              connection.runID == run.grant.runID, connection.epoch == run.grant.epoch else { throw HostModelGatewayError.invalidHandle }
+        return try await proposeValidatedNative(handle: handle, connectionID: connectionID,
+            request: ingress.claudeRequest(), selectors: ingress.claudeSelectors, vmConnection: connection)
+    }
+
+    private func proposeValidatedNative(handle: HostModelRunHandle, connectionID: UUID,
+                                        request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors?,
+                                        vmConnection: BusinessVMConnection? = nil) async throws -> HostModelProposal {
+        let streaming = request.streaming
         let run = try get(handle)
         do {
             let entry = try live(run, connectionID: connectionID)
@@ -186,14 +241,16 @@ package actor HostModelGateway {
             let scope = try ResourceScope(service: "model", resource: request.model.rawValue, operation: streaming ? "stream" : "complete")
             let time = try validatedRunTime(run)
             guard run.grant.decision(for: scope, connectionID: connectionID, at: time) == .allowed else { throw HostModelGatewayError.denied }
-            let envelope = Envelope(schemaVersion: 3, runID: run.grant.runID, epoch: run.grant.epoch,
+            let envelope = Envelope(schemaVersion: selectors == nil ? 3 : 4, runID: run.grant.runID, epoch: run.grant.epoch,
                 connectionID: connectionID, accountID: entry.connection.accountID,
                 accountBindingVersion: entry.connection.accountBindingVersion, routeVersion: entry.connection.routeVersion,
-                streaming: streaming, request: nil, nativeBody: request.body)
+                streaming: streaming, request: nil, nativeBody: request.body, claudeSelectors: selectors,
+                vmRuntimeID: vmConnection?.runtimeID, vmChannelID: vmConnection?.id)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let canonical = try encoder.encode(envelope)
             guard canonical.count <= min(run.grant.resourceLimits.messageBytes, 65_536) else { throw HostModelGatewayError.messageTooLarge }
-            let digest = SHA256.hash(data: Data("host-model-native-envelope-v3".utf8)).map { String(format: "%02x", $0) }.joined()
+            let domain = selectors == nil ? "host-model-native-envelope-v3" : "host-model-claude-envelope-v4"
+            let digest = SHA256.hash(data: Data(domain.utf8)).map { String(format: "%02x", $0) }.joined()
             let binding = try ActionBinding(runID: run.grant.runID, epoch: run.grant.epoch,
                 grantDigest: RunAuthorizationController.grantDigest(for: run.grant), connectionID: connectionID,
                 operation: scope.operation, schemaDigest: digest, resolvedResource: scope.resource, canonicalRequest: canonical)
@@ -201,7 +258,7 @@ package actor HostModelGateway {
             let effectScope = run.authorityHandle.lifecycle.effectScope(connectionID: connectionID)
             let pending = try await authority.propose(handle: run.authorityHandle, binding: binding, display: "Model \(scope.operation): \(scope.resource)")
             try validate(run, generation: generation, connectionID: connectionID, connectionGeneration: entry.generation)
-            return HostModelProposal(handle: handle, pending: pending, connectionGeneration: entry.generation, runGeneration: generation, effectScope: effectScope)
+            return HostModelProposal(handle: handle, pending: pending, connectionGeneration: entry.generation, runGeneration: generation, effectScope: effectScope, vmConnection: vmConnection)
         } catch { throw await handleError(error, run: run) }
     }
 
@@ -235,6 +292,7 @@ package actor HostModelGateway {
     }
     package func makeOutput(handle: HostModelRunHandle, approval: HostModelApproval) throws -> ControlledRunOutput {
         let run = try get(handle); try validate(run, proposal: approval.proposal)
+        guard try JSONDecoder().decode(Envelope.self, from: approval.proposal.pending.binding.canonicalRequest).schemaVersion != 4 else { throw HostModelGatewayError.invalidApproval }
         return ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle, scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID)
     }
     /// Trusted host accepts and relinquishes one local socket; no guest route or
@@ -253,6 +311,27 @@ package actor HostModelGateway {
             scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
             takingAcceptedSocket: fd, streaming: envelope.streaming)
     }
+    /// Only a connection minted by the actual installed VM can be adopted. The
+    /// final writer owns both receiver and VM connection before the lifecycle
+    /// clock, so physical session retirement also prevents a last-hop send.
+    package func makeVMNativeOutput(handle: HostModelRunHandle, approval: HostModelApproval,
+                                    connection: BusinessVMConnection) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred { connection.retire() } }
+        let run = try get(handle); try validate(run, proposal: approval.proposal)
+        guard approval.proposal.vmConnection === connection,
+              connection.service == .model, connection.lifecycle === run.authorityHandle.lifecycle,
+              connection.runID == run.grant.runID, connection.epoch == run.grant.epoch else { throw HostModelGatewayError.invalidHandle }
+        let envelope = try JSONDecoder().decode(Envelope.self, from: approval.proposal.pending.binding.canonicalRequest)
+        guard envelope.schemaVersion == 4, let selectors = envelope.claudeSelectors,
+              envelope.nativeBody != nil, envelope.request == nil,
+              envelope.vmRuntimeID == connection.runtimeID, envelope.vmChannelID == connection.id else { throw HostModelGatewayError.invalidApproval }
+        try selectors.validate()
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle,
+            scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
+            takingVMConnection: connection, streaming: envelope.streaming)
+    }
     /// Controlled-output vertical API: caller drives acceptNext on the owned receiver. Completion
     /// means producer/audit finished, NOT that queued business output was accepted.
     package func execute(handle: HostModelRunHandle, approval: HostModelApproval, output: ControlledRunOutput) async throws {
@@ -265,6 +344,17 @@ package actor HostModelGateway {
         emit: @escaping @Sendable (ModelStreamChunk) -> Void) async throws -> ModelCompletion {
         let run = try get(handle)
         let proposal = approval.proposal
+        let activationEnvelope = try JSONDecoder().decode(Envelope.self, from: proposal.pending.binding.canonicalRequest)
+        if activationEnvelope.schemaVersion == 4 {
+            guard try live(run, connectionID: activationEnvelope.connectionID).connection.transport.claudeRouteEnabled else {
+                throw HostModelGatewayError.businessRouteDisabled
+            }
+            guard let connection = proposal.vmConnection, let output,
+                  output.matchesVMConnection(connection),
+                  activationEnvelope.vmRuntimeID == connection.runtimeID, activationEnvelope.vmChannelID == connection.id else {
+                throw HostModelGatewayError.invalidApproval
+            }
+        }
         if let output, !output.matches(run.authorityHandle.lifecycle, effectScope(proposal), actionID: proposal.pending.actionID) { throw HostModelGatewayError.invalidApproval }
         var ownerRegistration: UUID?
         do {
@@ -299,19 +389,30 @@ package actor HostModelGateway {
             }
             let native: AnthropicNativeRequest?
             if let body = envelope.nativeBody {
-                guard envelope.schemaVersion == 3, envelope.request == nil, entry.connection.protocol == .anthropic else { throw HostModelGatewayError.invalidApproval }
+                guard [3, 4].contains(envelope.schemaVersion), envelope.request == nil, entry.connection.protocol == .anthropic else { throw HostModelGatewayError.invalidApproval }
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-                native = try AnthropicNativeRequest.decodeValidated(encoder.encode(body), streaming: envelope.streaming)
+                if envelope.schemaVersion == 4 {
+                    guard let selectors = envelope.claudeSelectors else { throw HostModelGatewayError.invalidApproval }
+                    native = try AnthropicNativeRequest.decodeClaude(encoder.encode(body), streaming: envelope.streaming, selectors: selectors)
+                } else {
+                    guard envelope.claudeSelectors == nil else { throw HostModelGatewayError.invalidApproval }
+                    native = try AnthropicNativeRequest.decodeValidated(encoder.encode(body), streaming: envelope.streaming)
+                }
                 guard native?.model == entry.connection.model else { throw HostModelGatewayError.invalidApproval }
             } else {
-                guard envelope.schemaVersion == 2, let request = envelope.request,
+                guard envelope.schemaVersion == 2, envelope.claudeSelectors == nil, let request = envelope.request,
                       request.model == entry.connection.model, request.protocol == entry.connection.protocol else { throw HostModelGatewayError.invalidApproval }
                 native = nil
             }
             // No suspension from final liveness validation through credential access and resume().
             try validatedRunTime(run, startDeadline: proposal.pending.expiresAt)
             let operation: ModelPreparedOperation
-            if let native { operation = try entry.connection.transport.prepareNative(native) }
+            if let native {
+                if let selectors = envelope.claudeSelectors {
+                    operation = try entry.connection.transport.prepareClaude(native, selectors: selectors, connection: proposal.vmConnection)
+                }
+                else { operation = try entry.connection.transport.prepareNative(native) }
+            }
             else if let request = envelope.request { operation = try entry.connection.transport.prepare(request, streaming: envelope.streaming) }
             else { throw HostModelGatewayError.invalidApproval }
             run.operations[operationID] = (envelope.connectionID, operation)
@@ -323,6 +424,11 @@ package actor HostModelGateway {
                 notBefore: run.grant.createdAt, startDeadline: proposal.pending.expiresAt)
             started = true
             run.resumeCalls += operation.resumeCalls
+            run.outboundBodyBytes += operation.requestBodyBytes
+            run.configuredHeaderBytes += operation.configuredHeaderBytes
+            run.largestBodyBytes = max(run.largestBodyBytes, operation.requestBodyBytes)
+            run.largestConfiguredHeaderBytes = max(run.largestConfiguredHeaderBytes, operation.configuredHeaderBytes)
+            run.peakActiveRequests = max(run.peakActiveRequests, run.operations.values.filter { $0.1.resumeCalls > 0 }.count)
             var text = ""
             var sawFinal = false
             var completion: ModelCompletion?
@@ -393,6 +499,12 @@ package actor HostModelGateway {
     }
     package func isRevoked(handle: HostModelRunHandle) throws -> Bool { try get(handle).revoked }
     package func resumedTaskCount(handle: HostModelRunHandle) throws -> Int { try get(handle).resumeCalls }
+    package func measurements(handle: HostModelRunHandle) throws -> ModelRunMeasurements {
+        let run = try get(handle)
+        return ModelRunMeasurements(dispatchedRequests: run.resumeCalls, outboundBodyBytes: run.outboundBodyBytes,
+            configuredHeaderBytes: run.configuredHeaderBytes, largestBodyBytes: run.largestBodyBytes,
+            largestConfiguredHeaderBytes: run.largestConfiguredHeaderBytes, peakActiveRequests: run.peakActiveRequests)
+    }
     package func lifecycle(handle: HostModelRunHandle) throws -> RunLifecycle { try get(handle).authorityHandle.lifecycle }
 
     package func revokeConnection(_ connectionID: UUID) async throws {

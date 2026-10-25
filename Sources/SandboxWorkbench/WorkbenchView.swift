@@ -5,8 +5,16 @@ import SandboxHost
 @MainActor public struct WorkbenchView: View {
     @ObservedObject private var model: WorkbenchModel
     @StateObject private var approval: WorkbenchApprovalController
+    private let connectionSettings: ConnectionSettingsController?
     public init(model: WorkbenchModel) {
         self.model = model
+        connectionSettings = nil
+        _approval = StateObject(wrappedValue: WorkbenchApprovalController(model: model))
+    }
+
+    package init(model: WorkbenchModel, connectionSettings: ConnectionSettingsController?) {
+        self.model = model
+        self.connectionSettings = connectionSettings
         _approval = StateObject(wrappedValue: WorkbenchApprovalController(model: model))
     }
 
@@ -19,6 +27,7 @@ import SandboxHost
                     Label { Text(verbatim: error) } icon: { Image(systemName: "exclamationmark.triangle") }.foregroundStyle(.red)
                 }
                 if !model.authorityAvailable { Text("Authority disabled").font(.headline) }
+                if let connectionSettings { ConnectionSettingsView(controller: connectionSettings) }
                 GroupBox("Run grants") {
                     VStack(alignment: .leading, spacing: 12) {
                         if model.grants.isEmpty { Text("No trusted host grants received.") }

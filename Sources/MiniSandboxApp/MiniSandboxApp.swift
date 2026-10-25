@@ -5,13 +5,20 @@ import SandboxWorkbench
 
 @main
 struct MiniSandboxEntry {
-    @MainActor static func main() {
-        if CommandLine.arguments.contains("--diagnostics-json") {
+    @MainActor static func main() async {
+        if CommandLine.arguments.contains("--keychain-canary-selfcheck") {
+            let report = await Task.detached { KeychainCanarySelfCheck.runPackaged() }.value
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            do { print(String(decoding: try encoder.encode(report), as: UTF8.self)) }
+            catch { print("{\"verdict\":\"FAIL\"}"); exit(1) }
+            exit(report.verdict == "PASS" ? 0 : (report.verdict == "BLOCKED" ? 2 : 1))
+        } else if CommandLine.arguments.contains("--diagnostics-json") {
             do {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 encoder.dateEncodingStrategy = .iso8601
-                print(String(decoding: try encoder.encode(EnvironmentInspector.inspect()), as: UTF8.self))
+                let report = await Task.detached { EnvironmentInspector.inspect() }.value
+                print(String(decoding: try encoder.encode(report), as: UTF8.self))
             } catch {
                 FileHandle.standardError.write(Data("Diagnostics failed: \(error)\n".utf8))
                 exit(1)
@@ -27,7 +34,7 @@ struct MiniSandboxApplication: App {
     var body: some Scene {
         Window("Mini Sandbox", id: "workbench") {
             TabView {
-                WorkbenchView(model: delegate.model).tabItem { Label("Workbench", systemImage: "checkmark.shield") }
+                WorkbenchView(model: delegate.model, connectionSettings: delegate.connectionSettings).tabItem { Label("Workbench", systemImage: "checkmark.shield") }
                 EnvironmentView().tabItem { Label("Environment", systemImage: "desktopcomputer") }
             }
             .background(WindowCloseGuard())
@@ -40,9 +47,11 @@ struct MiniSandboxApplication: App {
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private let composition: RunComposition?
     let model: WorkbenchModel
+    let connectionSettings: ConnectionSettingsController?
     override init() {
         let composition = try? RunComposition.application()
         self.composition = composition
+        self.connectionSettings = composition?.connectionSettings
         self.model = composition?.workbench ?? WorkbenchModel(unavailable: "App composition unavailable; authority disabled")
         super.init()
     }
@@ -50,9 +59,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if model.isClosed { return .terminateNow }
         if !terminationPending {
+            if let composition { composition.beginClose() }
+            else { connectionSettings?.close(); model.beginClose() }
             terminationPending = true
             Task { @MainActor in
-                let revoked = await model.close()
+                let revoked: Bool
+                if let composition { revoked = await composition.close() }
+                else { revoked = await model.close() }
                 terminationPending = false
                 sender.reply(toApplicationShouldTerminate: revoked)
             }
@@ -80,8 +93,29 @@ private struct WindowCloseGuard: NSViewRepresentable {
 }
 
 struct EnvironmentView: View {
-    @State private var report = EnvironmentInspector.inspect()
+    @State private var report: EnvironmentReport?
+    @State private var isChecking = false
     var body: some View {
+        Group {
+            if let report { content(report) }
+            else {
+                VStack(spacing: 20) {
+                    Text("Environment not checked").font(.title)
+                    Text("Model settings are separate. Environment readiness is not VM / Agent readiness.")
+                    Button("Run environment check") { refresh() }.disabled(isChecking)
+                }.padding(28).frame(minWidth: 640, minHeight: 440)
+            }
+        }
+    }
+    private func refresh() {
+        guard !isChecking else { return }
+        isChecking = true
+        Task {
+            report = await Task.detached { EnvironmentInspector.inspect() }.value
+            isChecking = false
+        }
+    }
+    private func content(_ report: EnvironmentReport) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Image(systemName: "shield.lefthalf.filled").font(.largeTitle)
@@ -90,7 +124,7 @@ struct EnvironmentView: View {
                     Text("运行前环境检查").foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("重新检查") { report = EnvironmentInspector.inspect() }
+                Button("重新检查") { refresh() }.disabled(isChecking)
             }
             GroupBox("本机状态") {
                 Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 12) {
@@ -104,7 +138,7 @@ struct EnvironmentView: View {
             }
             Label(report.foundationReady ? "基础环境检查通过" : "请先处理不可用的基础环境", systemImage: report.foundationReady ? "checkmark.circle" : "exclamationmark.triangle")
                 .foregroundStyle(report.foundationReady ? .green : .orange)
-            Text("此版本提供真实环境检查。Linux 镜像、隔离运行、服务连接和项目导入尚未接入；环境可用不代表完整安全验收通过。")
+            Text("此版本提供环境检查与部分原生模型连接设置（仅主机钥匙串、固定模型和协议）。保存不是授权或连通性测试；Linux / VM / Agent 执行、项目导入与完整安全验收尚未完成。")
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Text("检查时间：\(report.checkedAt.formatted(date: .abbreviated, time: .standard))")

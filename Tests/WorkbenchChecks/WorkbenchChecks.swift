@@ -7,6 +7,26 @@ import SandboxWorkbench
 @main struct WorkbenchChecks {
     @MainActor static func main() async {
         do {
+            if CommandLine.arguments.contains("--composition-diagnostic-only") {
+                try await CompositionDiagnosticChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-mcp") {
+                try await CompositionMCPChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-bounds-only") {
+                try await CompositionBoundsChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--composition-close-only") {
+                try await CompositionCloseChecks.run()
+                return
+            }
+            if CommandLine.arguments.contains("--connection-settings-only") {
+                try await ConnectionSettingsChecks.run()
+                return
+            }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("workbench-\(UUID()).jsonl")
             defer { try? FileManager.default.removeItem(at: url) }
             let model = WorkbenchModel(newAuditFileAt: url)
@@ -125,6 +145,10 @@ import SandboxWorkbench
             }
             try require(!failing.authorityAvailable && failing.pending.isEmpty && failing.activity.isEmpty, "failed append not forwarded; run revoked")
             print("WorkbenchChecks: \(checks) assertions passed, 0 failed (no GUI interaction tested)")
+            try await ConnectionSettingsChecks.run()
+            try await CompositionCloseChecks.run()
+            try await CompositionBoundsChecks.run()
+            try await CompositionDiagnosticChecks.run()
         } catch { print("FAIL: \(error)"); exit(1) }
     }
     @MainActor static func withWritesBlocked(_ operation: @MainActor () async throws -> Void) async throws {

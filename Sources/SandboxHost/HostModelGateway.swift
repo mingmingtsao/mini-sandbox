@@ -46,6 +46,19 @@ package struct HostModelApproval: Sendable {
     fileprivate let approved: ApprovedAction
 }
 
+#if DEBUG
+package enum HostAttachmentPhase: String, CaseIterable, Sendable { case afterRegistration, beforeExposure }
+#endif
+
+/// Composition ownership for attachments and their in-flight uses. Implementations seal registration synchronously;
+/// F03 remains the sole lifecycle, clock, start and output authority.
+package protocol HostRunAttachmentOwner: Sendable {
+    func beginAttachment(grant: RunGrant, existing: HostRunHandle?) throws -> UUID
+    func registerAttachment(_ token: UUID, grant: RunGrant, handle: HostRunHandle) throws
+    func endAttachment(_ token: UUID)
+    func attachmentCleanupFailed(_ token: UUID)
+}
+
 /// A host-only integration slice, not a guest listener or an F10 approval UI.
 /// Uses the injected F03 authority; retains only gateway/transport bookkeeping.
 
@@ -80,27 +93,52 @@ package actor HostModelGateway {
         let request: FixedModelRequest
     }
     package let authority: RunAuthorizationController
+    private let owner: (any HostRunAttachmentOwner)?
+#if DEBUG
+    private var attachmentBarrier: (@Sendable (HostAttachmentPhase) async -> Void)?
+    package func setAttachmentBarrier(_ barrier: (@Sendable (HostAttachmentPhase) async -> Void)?) { attachmentBarrier = barrier }
+#endif
     private var registry: [UUID: Entry] = [:]
     private var runs: [UUID: Run] = [:]
     private static let schemaDigest = SHA256.hash(data: Data("host-model-envelope-v2".utf8)).map { String(format: "%02x", $0) }.joined()
 
     package init(connections: [HostModelConnection], auditSink: any SynchronousAuditSink,
-        now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
+        now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil,
+        owner: (any HostRunAttachmentOwner)? = nil) throws {
         guard Set(connections.map(\.connectionID)).count == connections.count,
               connections.allSatisfy({ $0.accountBindingVersion > 0 && $0.routeVersion > 0 }) else {
             throw HostModelGatewayError.invalidConnection
         }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
         self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.owner = owner
     }
 
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostModelRunHandle {
+        let registration = try owner?.beginAttachment(grant: grant, existing: existing)
+        defer { if let registration { owner?.endAttachment(registration) } }
         let authorityHandle: HostRunHandle
         if let existing { try await authority.validateAttachment(handle: existing, grant: grant); authorityHandle = existing }
         else { authorityHandle = try await authority.install(grant: grant) }
+        if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.afterRegistration) }
+#endif
+        guard authorityHandle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
+        // Reclaim only settled gateway bookkeeping, never authority replay state.
+        runs = runs.filter { !$0.value.revoked || $0.value.reserved != 0 }
+        if let existing = runs.values.first(where: { $0.authorityHandle === authorityHandle }) {
+            if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+            return existing.handle
+        }
         // Installation creates no dispatch permission; all registry/time checks repeat at use.
         let handle = HostModelRunHandle()
         runs[handle.token] = Run(handle: handle, authorityHandle: authorityHandle, grant: grant)
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.beforeExposure) }
+#endif
+        if let registration { try owner?.registerAttachment(registration, grant: grant, handle: authorityHandle) }
+        guard authorityHandle.lifecycle.currentStatus == .active else { throw AuthorizationError.runRevoked }
         return handle
     }
 
@@ -181,8 +219,15 @@ package actor HostModelGateway {
         let run = try get(handle)
         let proposal = approval.proposal
         if let output, !output.matches(run.authorityHandle.lifecycle, effectScope(proposal), actionID: proposal.pending.actionID) { throw HostModelGatewayError.invalidApproval }
-        do { try validate(run, proposal: proposal) }
+        var ownerRegistration: UUID?
+        do {
+            try validate(run, proposal: proposal)
+            ownerRegistration = try owner?.beginAttachment(grant: run.grant, existing: run.authorityHandle)
+        }
         catch { throw await handleError(error, run: run) }
+        // Keep this resource owned until the existing completion/cancellation
+        // bookkeeping below has settled; close must not acknowledge it early.
+        defer { if let ownerRegistration { owner?.endAttachment(ownerRegistration) } }
         guard run.reserved < min(run.grant.resourceLimits.concurrentRequests, ModelTransport.maxConcurrentRequests) else { throw HostModelGatewayError.busy }
         run.reserved += 1
         let operationID = UUID()
@@ -254,6 +299,9 @@ package actor HostModelGateway {
             if !envelope.streaming, let output { try output.enqueue(.modelCompletion(result)) }
             return result
         } catch {
+            if completionAttempted, error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                owner?.attachmentCleanupFailed(ownerRegistration)
+            }
             output?.cancel()
             run.operations[operationID]?.1.cancel()
             let sanitized = await handleError(error, run: run)
@@ -262,7 +310,12 @@ package actor HostModelGateway {
                 // .unknown means a started call may already have affected the upstream.
                 completionAttempted = true
                 do { try await authority.complete(handle: run.authorityHandle, ticket: ticket, outcome: started ? .unknown : .failed) }
-                catch { throw await handleError(error, run: run) }
+                catch {
+                    if error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                        owner?.attachmentCleanupFailed(ownerRegistration)
+                    }
+                    throw await handleError(error, run: run)
+                }
                 // No success or further dispatch after this suspension, including a stopped run.
             }
             if sanitized as? HostModelGatewayError == .auditFailed { throw sanitized }

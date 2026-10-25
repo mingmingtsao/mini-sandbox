@@ -69,19 +69,44 @@ package actor HostMCPGateway {
     private var registry: [UUID: Entry]
     private var runs: [UUID: Run] = [:]
     private var installing = 0
-    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil) throws {
+    private let owner: (any HostRunAttachmentOwner)?
+#if DEBUG
+    private var attachmentBarrier: (@Sendable (HostAttachmentPhase) async -> Void)?
+    package func setAttachmentBarrier(_ barrier: (@Sendable (HostAttachmentPhase) async -> Void)?) { attachmentBarrier = barrier }
+#endif
+    package init(connections: [HostMCPConnection], auditSink: any SynchronousAuditSink, now: @escaping @Sendable () -> Date = { Date() }, authority: RunAuthorizationController? = nil,
+                 owner: (any HostRunAttachmentOwner)? = nil) throws {
         guard connections.count <= 32, Set(connections.map(\.connectionID)).count == connections.count else { throw HostMCPGatewayError.invalidConnection }
         registry = Dictionary(uniqueKeysWithValues: connections.map { ($0.connectionID, Entry(connection: $0)) })
         self.authority = authority ?? RunAuthorizationController(auditSink: auditSink, now: now)
+        self.owner = owner
     }
     package func install(grant: RunGrant, authorityHandle existing: HostRunHandle? = nil) async throws -> HostMCPRunHandle {
-        guard runs.count + installing < 32 else { throw HostMCPGatewayError.busy }
+        let registration = try owner?.beginAttachment(grant: grant, existing: existing)
+        defer { if let registration { owner?.endAttachment(registration) } }
+        runs = runs.filter { !$0.value.revoked || $0.value.reserved != 0 }
+        let duplicate = existing.map { a in runs.values.contains { $0.authorityHandle === a } } ?? false
+        guard installing < 32, duplicate || runs.count + installing < 32 else { throw HostMCPGatewayError.busy }
         installing += 1; defer { installing -= 1 }
         let a: HostRunHandle
         if let existing { try await authority.validateAttachment(handle: existing, grant: grant); a = existing }
         else { a = try await authority.install(grant: grant) }
+        if let registration { try owner?.registerAttachment(registration, grant: grant, handle: a) }
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.afterRegistration) }
+#endif
+        if let existing = runs.values.first(where: { $0.authorityHandle === a }) {
+            if let registration { try owner?.registerAttachment(registration, grant: grant, handle: a) }
+            try time(existing); return existing.handle
+        }
         let h = HostMCPRunHandle(); let run = Run(h, a, grant); runs[h.token] = run
-        do { try time(run); return h } catch { throw await reconcile(error, run) }
+#if DEBUG
+        if let attachmentBarrier { await attachmentBarrier(.beforeExposure) }
+#endif
+        do {
+            if let registration { try owner?.registerAttachment(registration, grant: grant, handle: a) }
+            try time(run); return h
+        } catch { throw await reconcile(error, run) }
     }
     package func discovery(connectionID: UUID) throws -> MCPDiscoveryState {
         guard let entry = registry[connectionID], !entry.revoked else { throw HostMCPGatewayError.invalidConnection }
@@ -147,7 +172,12 @@ package actor HostMCPGateway {
     private func executeImpl(handle: HostMCPRunHandle, approval: HostMCPApproval, output: ControlledRunOutput?) async throws -> MCPCompletion {
         let run = try get(handle); let proposal = approval.proposal
         if let output, !output.matches(run.authorityHandle.lifecycle, proposal.effectScope, actionID: proposal.pending.actionID) { throw HostMCPGatewayError.invalidApproval }
-        do { try validate(run, proposal) } catch { throw await reconcile(error, run) }
+        var ownerRegistration: UUID?
+        do {
+            try validate(run, proposal)
+            ownerRegistration = try owner?.beginAttachment(grant: run.grant, existing: run.authorityHandle)
+        } catch { throw await reconcile(error, run) }
+        defer { if let ownerRegistration { owner?.endAttachment(ownerRegistration) } }
         guard run.reserved < min(run.grant.resourceLimits.concurrentRequests, 2) else { throw HostMCPGatewayError.busy }
         run.reserved += 1; let operationID = UUID()
         defer { run.reserved -= 1; run.authorityHandle.lifecycle.finishEffect(operationID); run.operations.removeValue(forKey: operationID)?.1.cancel() }
@@ -206,6 +236,9 @@ package actor HostMCPGateway {
             if let output { try output.enqueue(.mcpCompletion(completion)) }
             return completion
         } catch {
+            if completionAttempted, error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                owner?.attachmentCleanupFailed(ownerRegistration)
+            }
             output?.cancel()
             run.operations[operationID]?.1.cancel()
             // A failed refresh cannot preserve authority derived from an old catalog.
@@ -216,7 +249,12 @@ package actor HostMCPGateway {
             let sanitized = await reconcile(error, run)
             if let ticket, !completionAttempted {
                 do { try await authority.complete(handle: run.authorityHandle, ticket: ticket, outcome: started ? .unknown : .failed) }
-                catch { throw await reconcile(error, run) }
+                catch {
+                    if error as? AuthorizationError == .auditFailed, let ownerRegistration {
+                        owner?.attachmentCleanupFailed(ownerRegistration)
+                    }
+                    throw await reconcile(error, run)
+                }
             }
             if sanitized as? HostMCPGatewayError == .auditFailed { throw sanitized }
             if started { throw HostMCPGatewayError.outcomeUnknown }

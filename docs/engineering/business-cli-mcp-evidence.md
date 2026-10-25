@@ -2,9 +2,9 @@
 
 The actual pinned Claude Code 2.1.309 CLI, running in the no-NIC business VM,
 passed four bounded local MCP cases on 2026-10-26. These are actual HTTP service
-calls and real CLI tool results; the model upstream is scripted loopback. This
-does not establish real GitHub, OAuth, arbitrary MCP compatibility, App UI or
-real-provider task acceptance.
+calls and real CLI tool results; the model upstream is scripted loopback. The
+scope is the fixed local repository protocol and resource grants. GitHub,
+OAuth, other MCP protocols, App UI and real-provider tasks are outside this scope.
 
 The private artifact root is
 `/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025`.
@@ -106,6 +106,5 @@ stopping the concrete VM, isolating the VM-owner fence from run revocation.
 Each evidence directory contains `host.log`, `fixture.json`, and exact input
 captures. Both modes retain unchanged original project/test bytes and perform
 no workspace adoption after this intentional early stop. These are real VM
-and CLI boundary checks against local scripted services, not external-provider
-or App acceptance evidence.
+and CLI boundary checks against local scripted services.
 

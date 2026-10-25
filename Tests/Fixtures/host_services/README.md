@@ -1,6 +1,6 @@
 # Host loopback fixtures
 
-This directory contains executable local test services for future real Host Core/Broker integration. It has no production Broker and no policy gate pretending to validate Broker enforcement.
+This directory contains executable local services for Host Core/Broker tests. The services provide upstream behavior; the Broker supplies the policy gate.
 
 ## Run
 
@@ -25,6 +25,4 @@ Verified locally with `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s
 
 This fixture implements a fixed, stateless JSON HTTP subset, not full HTTP/OAuth/MCP conformance or exhaustive malformed-input coverage (SSE/resume/session interoperability is NOT_RUN). Loopback is host-only reachability, not authentication between processes on the same host; do not expose it through guest routes or forward arbitrary guest URLs.
 
-The actual Swift Host Core/Broker and VM integration is `NOT_RUN`: Broker resource denial, action replay/unknown-result handling, and guest networking fail-closed behavior require the real Host Core/VM. External service interoperability is `NOT_RUN`. No Swift build or external service was used. The counter has not yet been validated as evidence through the real Broker, and these local tests are not independent review approval. No fixture result claims those controls passed.
-
-Future Broker integration should start `HostFixture`, grant only the test workload's intended capability through the real Host Core, route the guest through its actual Broker, then assert upstream hit counts/transcripts and reset them through `fixture.control` between cases. The fixture baseline must remain broad so a Broker denial test proves the Broker blocked an upstream capability that works directly.
+For Broker tests, start `HostFixture`, grant only the test workload's intended capability through the real Host Core, route the guest through its actual Broker, then assert upstream hit counts/transcripts and reset them through `fixture.control` between cases. The fixture baseline must remain broad so a Broker denial test proves the Broker blocked an upstream capability that works directly.

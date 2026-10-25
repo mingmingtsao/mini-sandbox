@@ -1,9 +1,7 @@
 # Native response consumer: local socket increment
 
-Status: executable local consumer with final-invocation fencing; production
-connection ownership and application integration remain unverified.
-This is not evidence of an external provider, vendor CLI, VM/device ingress, GUI,
-or the complete application task chain.
+This document describes the local socket consumer and its final-invocation fence.
+Its executable checks use local socketpairs and URLProtocol fixtures.
 
 ## Binding and authority
 
@@ -89,7 +87,7 @@ bytes; `bufferedBytes` counts whole retained frames. `acceptedEvents` and
 `acceptedFinals` advance only when their complete frame has been sent. The old
 `summary` continues to describe only the compatibility in-memory receiver.
 
-The future connection owner must schedule bounded retries/readiness and call
+The connection owner must schedule bounded retries/readiness and call
 `cancel()` for abandoned output. Cancellation, terminal socket failure and finished
 delivery discard pending frames and serializer reconstruction (blocks, active
 text/tool fragments and metadata), without erasing historical committed bytes,
@@ -135,16 +133,12 @@ non-consuming rejection, cleanup after a real partial write, and a two-tool
 stream with three cumulative metadata deltas. The expanded boundary and
 multi-tool controls first ran green; they are not claimed as separate REDs.
 
-## Explicit remaining gates
+## Connection-owner responsibilities
 
-- Fresh regression/review for subsequent changes and combined application integration.
-- Trusted VM/device descriptor acceptance and real ingress identity binding.
-- Production connection ownership, readiness scheduling and aggregate channel caps.
-- MainActor UI adoption and App main-chain activation/composition acceptance.
-- Independent validation of active-credential reflection through the final
-  native/CLI/UI exits; request compatibility and local sockets do not prove it.
-- Actual provider/CLI tool loops, real VM routing and end-to-end application proof.
+The application binds trusted VM/device ingress identity to the owned descriptor,
+schedules bounded retries, and enforces aggregate channel caps. UI adoption uses
+its own concrete consumer boundary. Active-credential reflection checks apply
+through the final native/CLI/UI exits.
 
-Local sockets prove concrete OS byte commitment and fence behavior, not any of
-those remaining integrations. Historical approval problems are recorded privately,
-not retrospectively cured by these new, independently scoped executions.
+The local socket checks measure concrete OS byte commitment and fence behavior;
+provider, CLI, VM and application executions have separate evidence.

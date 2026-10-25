@@ -28,9 +28,9 @@ Model HTTP goes from guest loopback 4061 to the actual VM's host listener 4064.
 The relay forwards bytes unchanged and has no upstream URL, authentication
 header or host-path selector. `mini-sandbox-local-only` is a public placeholder,
 not an API credential or VM identity. When the host selects MCP, a separate
-loopback 4063/host 4066 path is configured; a listener alone does not establish
-MCP interoperability or authorization. Until that gateway is enabled and
-verified, the host must select `mcp=false`.
+loopback 4063/host 4066 path is configured. The host selects `mcp=false` when no
+MCP connection is selected; enabled connections use the gateway's protocol,
+resource-scope and action-approval checks.
 
 The CLI output is preserved as bounded stdout/stderr chunks with SHA-256, marked
 as guest diagnostics. The total cap is 131,072 bytes; a single JSON event is at
@@ -67,5 +67,6 @@ not a declaration that third-party redistribution obligations are fulfilled.
 Python regressions exercise typed task admission, normal permission round trips,
 unaltered file transfer, path/digest/replay failures, unsupported empty directory
 results and profile exclusivity. They do not execute imported project code on
-the host. Real VM/CLI/model/application results must be recorded separately on
-the final candidate; this document is not an end-to-end PASS.
+the host. The [business VM](business-vm-evidence.md),
+[CLI loopback](business-cli-loopback-evidence.md) and
+[MCP](business-cli-mcp-evidence.md) documents record concrete runtime observations.

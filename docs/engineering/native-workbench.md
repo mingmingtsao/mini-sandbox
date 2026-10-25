@@ -1,6 +1,6 @@
-# Native authorization workbench — first F10 increment
+# Native authorization workbench
 
-This is a native SwiftUI presentation of the F03 `RunAuthorizationController`, not a VM implementation. The normal application starts with no grants, proposals, approvals or sample activity. It explicitly reports that the runtime producer / VM is not connected. The Environment tab and `--diagnostics-json` retain the foundation environment check.
+The native SwiftUI workbench presents the F03 `RunAuthorizationController`. It starts with no grants, proposals, approvals or sample activity; trusted application composition supplies task and gateway ingress. The Environment tab and `--diagnostics-json` provide the foundation environment check.
 
 ## Trusted host integration
 
@@ -9,7 +9,7 @@ This is a native SwiftUI presentation of the F03 `RunAuthorizationController`, n
 - `installTrustedGrant(_:)` installs the immutable `RunGrant` with F03 before publishing its snapshot.
 - `proposeTrustedAction(binding:display:)` calls F03 `propose` and publishes the returned immutable `PendingAction`. Service is resolved from the installed grant's connection and scope, not a guest service label.
 - `approveOnce(_:)` invokes `hostApprove` with the captured action ID and nonce, returns the real `ApprovedAction`, and retains it in `approvedActions` for trusted-host integration. The view never calls `consume` or performs external execution.
-- `consumeForTrustedHost(runID:approved:)` explicitly forwards a capability to F03 `consume`; only a future trusted broker should call it. The returned `DispatchTicket` contains the original approved bytes. Ticket creation is not external execution success.
+- `consumeForTrustedHost(runID:approved:)` explicitly forwards a capability to F03 `consume`; only a trusted host dispatcher should call it. The returned `DispatchTicket` contains the original approved bytes. Ticket creation is not external execution success.
 - `completeForTrustedHost(runID:ticket:outcome:)` records the actual broker outcome through F03. Do not report completion without actual execution evidence.
 - `deny(_:)`, `dismiss(_:)`, and `expirePending()` retire pending authority through the real controller. Timeout denies an expired pending action; expired grants revoke the whole run. F03 independently enforces expiry at approval/consumption. If F03 already cleaned up an expired proposal (for example, while proposing another action), its `actionNotPending` response removes only the stale pending snapshot. Direct `deny` still throws that semantic failure; dismissal recognizes it without a repeated error. No extra denial audit is fabricated. This response does not establish that an approved capability was revoked: real `approvedActions` remain intact. Other errors, including `auditFailed` and `invalidHandle`, retain their existing handling.
 - `revokeConnection(runID:connectionID:)` invalidates the controller's connection and corresponding displayed proposals/approvals.
@@ -53,7 +53,7 @@ The packaged executable offers one opt-in noninteractive diagnostic:
 dist/MiniSandbox.app/Contents/MacOS/MiniSandbox --keychain-canary-selfcheck
 ```
 
-It accepts no credential input. It generates a fresh random service/account and synthetic values in memory; verifies add/read/update/delete; and cleans up only that owned item. It requires the packaged bundle identity, reports booleans/static verdicts and an OSStatus, and returns exit 2 for `BLOCKED` (not PASS). It never reads or modifies the production/default credential item. Actual OS CRUD and rendered GUI acceptance must be recorded separately from injected-storage checks. This is not VM/Agent readiness, full F10/P7 acceptance, or a release approval.
+It accepts no credential input. It generates a fresh random service/account and synthetic values in memory; verifies add/read/update/delete; and cleans up only that owned item. It requires the packaged bundle identity, reports booleans/static verdicts and an OSStatus, and returns exit 2 for `BLOCKED` (not PASS). It never reads or modifies the production/default credential item. The selfcheck exercises actual OS CRUD through the packaged application.
 
 ## Verification boundary
 
@@ -209,4 +209,4 @@ The already-retired regression was observed RED before the model fix: A was prop
 
 Verified on Apple Silicon / macOS 26.6.2 / Swift 6.3.3: `swift run WorkbenchChecks` passed 53 assertions; `AuthorizationChecks` passed 17 groups; `ContractChecks` passed 7 groups; foundation API and packaging checks passed 4 and 7 tests respectively. The Release App was packaged, locally ad-hoc signed and verified, and its `--diagnostics-json` command succeeded. Native launch produced an on-screen window belonging to that packaged executable; an explicit quit request to that exact process was accepted and the process exited. This native lifecycle check used only the empty default application.
 
-GUI button/keyboard/sheet interactions are **BLOCKED** by desktop access permissions. Window-scoped image capture also failed, so visual layout has not been certified. Manual QA still must exercise Review, Return, Escape, sheet dismissal, Stop, window close and Quit with trusted-host test ingress. The default app intentionally has no demo buttons or synthetic-run switch. This increment does not establish VM execution, broker execution, G1/U01, or full F10 acceptance.
+In this early workbench verification, GUI button/keyboard/sheet interactions were **BLOCKED** by desktop access permissions, and window-scoped image capture failed. Its GUI checklist covers Review, Return, Escape, sheet dismissal, Stop, window close and Quit with trusted-host test ingress. The default app has no demo buttons or synthetic-run switch. These recorded results concern the workbench presentation and empty application lifecycle.

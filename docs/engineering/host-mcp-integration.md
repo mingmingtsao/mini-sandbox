@@ -1,9 +1,10 @@
 # Bounded host-only MCP integration
 
-This is a test-only authorization slice, not a production MCP connector or a full
-V2-06 acceptance claim. It has a separate controller from the model gateway and
-makes no unified application/VM STOP claim. No Agent, VM, external model service,
-external MCP service, real account, or production credential store is exercised.
+This document records the host-only MCP authorization fixture and its historical
+verification results. The fixture uses a separate controller from the model
+gateway and exercises no Agent, VM, external model/MCP service, real account, or
+production credential store. The Claude client profile is described separately in
+[Claude MCP client integration](claude-mcp-client.md).
 
 ## Boundary
 
@@ -301,24 +302,24 @@ rollback assertions remain mandatory. No shared-authority production repair is
 included in this baseline. Passing isolated scopes do not make these suites pass.
 
 **NOT RUN / held:** remaining grant-expiry pulse positions during execute and the
-unreached `pulse-deny-3`, pending separate audit-clock classification. These passed
-bounded scopes do not establish full product acceptance or exhaustive schedules.
+unreached `pulse-deny-3`, pending separate audit-clock classification. These
+bounded scopes exercise selected schedules.
 
-## Remaining review and evidence gaps
+## Historical review and evidence scope
 
 The literal-credential reflection correction received scoped independent review.
-The shared-authority regressions remain unresolved; no full acceptance PASS is claimed.
-This bounded work addresses
+The baseline results above include shared-authority regressions; the shared
+lifecycle interfaces are documented in [Shared run authority](shared-run-authority.md).
+This bounded fixture addresses
 the credential/response boundary, resource/action authorization, one-use dispatch,
 audit ordering and uncertain-side-effect requirements in FINAL_SPEC §§4–5 and 7–8;
-it is not the complete V2-06 product milestone or E05/S01–S27 evidence matrix.
+its results are scoped to the host fixture.
 
 Binding mismatch, provider failure, disk audit ordering, response/text byte
 boundaries and the independent continuation scopes above now have executed checks.
-Remaining grant-expiry clock samples are held for classification; no broader
-concurrent-schedule or full lifecycle proof is claimed. Current tests cover
-representative barriers and ingress shapes,
-not the exhaustive broader acceptance matrix. Real external MCP/service accounts,
+In that baseline, the remaining grant-expiry clock samples were held for
+classification. Its tests cover representative barriers and ingress shapes.
+Real external MCP/service accounts,
 Agent/VM integration, GUI approval and lifecycle, full Streamable HTTP/SSE/session
 support, generalized secret detection, and physical storage-failure testing remain
 outside these local results. Evidence additions that only exercised already-existing

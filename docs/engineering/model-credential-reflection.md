@@ -81,7 +81,6 @@ Run `StructuredModelChecks` without live flags for these offline checks. The
 `ModelTransportChecks` default includes Keychain CRUD: when Keychain is excluded,
 select the 32 exact offline names, exclude `isolated Keychain CRUD`, and compare
 the deduplicated result-name set because selectors use substring matching.
-No live-provider, Keychain, VM, GUI, Agent or release acceptance is implied.
 
 ## Primitive and raw-fragment boundary
 
@@ -130,8 +129,7 @@ production request to that service; production endpoint selection is unchanged.
 The service consumes the single random canary injected by the real transport and
 returns success/error JSON, escaped strings, adjacent text blocks, tool input,
 and delayed SSE fragments. No credential is printed, persisted or passed through
-argv. This is actual loopback transport plus the final native socket consumer; it
-is not an external provider, vendor CLI, VM, UI or diagnostic-App acceptance claim.
+argv. This exercises loopback transport and the final native socket consumer.
 
 The host pumps `ControlledRunOutput.acceptNext()` while the upstream is producing,
 and independently reads and reconstructs the actual peer HTTP/SSE payload. Merely

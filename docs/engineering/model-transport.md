@@ -2,7 +2,7 @@
 
 ## Scope
 
-This increment implements a host-only DeepSeek transport in `SandboxHost`, with a bounded structured Anthropic data candidate described in `structured-model-tools.md`. Its v2 stricter-contract reconciliation passes all 29 retained non-Keychain model groups plus 3 additive rejection groups; this is not an all-integration PASS. It is package-visible, has no guest listener, and does **not** grant permission to call a service. The future Broker must connect an authenticated run, a live authorization decision, and its dispatch boundary before using it.
+`SandboxHost` provides a host-only DeepSeek transport, with bounded structured Anthropic data described in `structured-model-tools.md`. Its v2 stricter-contract reconciliation passes all 29 retained non-Keychain model groups plus 3 additive rejection groups. It is package-visible, has no guest listener, and does **not** grant permission to call a service. The host gateway binds an authenticated run, a live authorization decision, and its dispatch boundary before using it.
 
 The allowlisted model is `deepseek-flash`. Requests select only the fixed OpenAI-compatible text route or Anthropic-compatible structured route; there are no caller-supplied URLs or HTTP headers. The two routes are fixed to `https://api.deepseek.com/chat/completions` and `https://api.deepseek.com/anthropic/v1/messages`. Host credentials are added in the corresponding authentication header. Anthropic system instructions are carried in the `system` field, not discarded. Thinking remains explicitly disabled. The structured candidate transports text/tool-use/tool-result data, but never executes tools; image inputs, Agent adapters and MCP execution remain unsupported.
 
@@ -37,7 +37,7 @@ Every Anthropic `type: text` completion block requires string `text` (including 
 
 `KeychainModelCredentialProvider` uses generic-password items scoped by service/account (default `dev.mini-sandbox.model` / `deepseek`), with update and delete operations. It requests noninteractive access and does not fall back to disk or guest environment variables. Storage errors preserve only a numeric OSStatus. Test accounts use random names and disposable values and attempt cleanup. The isolated test checks create/read, a second `setCredential` and update readback, then delete/missing; authorization failure still marks the entire check BLOCKED, not PASS.
 
-**Real Keychain CRUD is currently BLOCKED in the tested CLI context:** `SecItemAdd` returned `-60008` (authorization unavailable). A separate disposable-item probe reproduced that result. Read-only Keychain reachability from the foundation is not evidence that credential storage works. A signed native probe was also built, but LaunchServices could not launch it from the private test location (permission denied), so no application-context CRUD result was obtained. Native application-context validation remains BLOCKED; do not treat the provider implementation as a passed storage integration.
+**The recorded CLI-context Keychain CRUD check was BLOCKED:** `SecItemAdd` returned `-60008` (authorization unavailable). A separate disposable-item probe reproduced that result. Read-only Keychain reachability from the foundation is not evidence that credential storage works. A signed native probe was also built, but LaunchServices could not launch it from the private test location (permission denied), so that run obtained no application-context CRUD result. Its native application-context result is recorded as BLOCKED.
 
 ## Reproduction and evidence
 
@@ -126,9 +126,9 @@ swift run ModelTransportChecks --live
 
 It requires `TEST_DEEPSEEK_KEY`; it never reads `.env` automatically. It prints only result labels, not the key or model response. Historical PR #7 fixed-endpoint transport-only smoke on 2026-10-23 passed **4/4**. The current centralized-time gateway result is from `HostIntegrationChecks --live` (**4/4**), not a rerun of the transport-only command above. Both smoke paths use a test-only in-memory provider, **not Keychain**, and are not production storage fallbacks. No GUI, VM or Agent verification is implied.
 
-## Dependencies and outstanding acceptance
+## Transport verification scope
 
-Stacked on foundation PR #4 and dependent on candidate design #3; keep Draft pending design approval. This is only the transport increment, not completion of the model/Agent feature.
+The transport was introduced on foundation PR #4 with design #3. The following results record that transport increment's verification scope.
 
 - S07/S25 transport-level route, redirect and sanitized-error subchecks: covered by fixture tests; current centralized-time gateway/prepared-transport real host calls **4/4 PASS**, separately from those security checks.
 - Keychain CRUD in the product's native context: **BLOCKED** as above.

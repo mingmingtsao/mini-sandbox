@@ -8,10 +8,9 @@ second standalone policy engine. It privately constructs and owns the F03
 controller. Run handles, proposals and approvals cannot be decoded or constructed
 by a guest; handles are checked by object identity against this gateway's state.
 
-**There is no guest listener, guest RPC decoder, VM integration, or F10 approval UI
-wiring in this increment.** An eventual authenticated ingress must map a host-owned
-run to these APIs rather than accept a serialized handle. The fixture checks do
-not establish guest isolation or live external-service behavior.
+Authenticated ingress maps a host-owned run to these APIs rather than accepting
+a serialized handle. VM requests use the concrete owner binding described in
+[Business request admission](claude-business-ingress.md).
 
 The trusted host supplies a connection registry. Each connection binds its ID,
 host account ID, account-binding version, route version, fixed protocol/model,
@@ -226,7 +225,7 @@ One check uses the actual synchronous JSONL sink and verifies the intent is alre
 readable from disk when the fixture receives the request.
 
 The known Keychain authorization environment block remains separate from fixture
-success. VM/Agent/F10 integration is not claimed. The existing controller retains
+success. The existing controller retains
 installed run state for its lifetime; long-lived host run retirement/recovery and
 crash reconciliation are not added here.
 

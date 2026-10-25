@@ -1,7 +1,6 @@
 # Final-effect clock and lock order
 
-This document specifies the scoped final-invocation boundary. It does not establish
-application integration, production activation or release acceptance.
+This document specifies the final-invocation boundary and its lock ordering.
 
 ## Before
 

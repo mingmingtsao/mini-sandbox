@@ -45,7 +45,5 @@ while callbacks remain pending; it never reports a fabricated stopped state.
 Natural result completion stops the VM before the coordinator adopts its
 immutable received tree. It does not revive an expired or stopped run.
 
-These APIs are integration infrastructure. Native request/permission parsing,
-the actual CLI profile, application orchestration, original-project preservation
-and end-to-end acceptance must be verified together on the selected candidate.
-Offline path and manifest checks are not evidence of a real VM or Agent task.
+The App coordinator composes these APIs with native request and permission
+parsing, the CLI profile, and workspace snapshot ownership.

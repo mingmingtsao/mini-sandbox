@@ -66,9 +66,8 @@ They preserve all former 45 check names, including the original 37. These are ex
 synthetic offline fixtures, not captured CLI/provider interoperability evidence.
 Nonstream and fragmented structured SSE use the existing response decoders.
 
-Real CLI, provider, guest transport, GUI and business consumer integration remain
-unverified. The controlled receiver is private consumer-owned state, not an Agent
-handoff or migrated legacy output API. No host tool execution is authorized here.
+The controlled receiver is private consumer-owned state. It does not execute
+host tools or expose the legacy output API.
 
 Primary compatibility references (retrieved October 24, 2026):
 - https://api-docs.deepseek.com/guides/anthropic_api/

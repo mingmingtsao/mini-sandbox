@@ -1,6 +1,6 @@
 # Pinned CLI local capture v1
 
-Experimental headless protocol measurement only. No App authority, provider, model-success, MCP, GUI, workspace bridge or export claim. Existing runtime and diagnostic profiles remain unchanged.
+This profile measures the pinned CLI protocol in a headless diagnostic VM. Existing runtime and diagnostic profiles remain unchanged.
 
 ## Explicit profile bounds
 
@@ -35,7 +35,7 @@ A next guest command checks both original groups absent, then tests a synthetic 
 
 ## Evidence discipline
 
-The plan file's `NOT_RUN` is a declaration, not a runtime-result store. Store actual version-match/flags/exits, bounded capture metadata, memory observations, image/source/host digests and settled normal/cancel evidence in a new private evidence directory. Static 503 or timeout may establish measured request protocol, never a successful model turn or Agent task.
+The plan file describes the launch contract; runtime results belong in a new private evidence directory. Store actual version-match/flags/exits, bounded capture metadata, memory observations, image/source/host digests and settled normal/cancel evidence there. Static 503 or timeout may establish measured request protocol, never a successful model turn or Agent task.
 
 The initial unpadded vendor attachment was actually rejected by VZ: the ELF length is not sector aligned. The fixed representation is exactly 285,493,248 bytes: 285,493,120 ELF bytes plus 128 zero bytes. Its SHA256 is `c4e512ea944c420c80285b4c4bd817098d9845ac6aa6e423bbbb58b8d3a9bf43`. Both host and guest enforce the exact ELF digest and zero tail; no filesystem headers or arbitrary paths are accepted. The original vendor bytes have SHA256 `028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332`.
 

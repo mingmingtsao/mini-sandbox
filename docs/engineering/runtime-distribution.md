@@ -52,9 +52,9 @@ identifies GPL version 2 and directs users of distribution kernels to the
 distribution for their exact source. Before distributing a generated image,
 collect its applicable license texts/notices and exact corresponding source,
 patches and build materials where required, and match them to the generated
-`runtime.json` inventory. That redistribution package has not been prepared by
-the current local builder. An APK hash or source-recipe link alone does not
-establish that this work is complete.
+`runtime.json` inventory. The local builder emits runtime images and manifests;
+redistribution notices and corresponding-source materials are separate outputs.
+An APK hash or source-recipe link alone is not a corresponding-source package.
 
 The [Claude Code license notice](https://github.com/anthropics/claude-code/blob/main/LICENSE.md)
 reserves rights and refers use to Anthropic's Commercial Terms. The project has
@@ -65,8 +65,9 @@ license does not confer an Agent subscription or provider entitlement.
 
 ## Evidence limits
 
-Hash verification is implemented. Independent publisher-signature verification
-for these APKs and the vendor executable is **NOT_RUN**. The source inventory is
-available, while a complete third-party binary redistribution package remains
-**NOT_RUN**. Local image construction, successful VM execution, Developer ID
-signing, notarization and another Mac's installation are separate checks.
+The builders verify the pinned SHA-256 values. Publisher-signature verification
+is outside this hash-verification workflow. The source inventory records package
+origins; binary redistribution also requires the applicable notices and
+corresponding-source materials. Local image construction, VM execution,
+Developer ID signing, notarization and another Mac's installation use separate
+procedures and evidence records.

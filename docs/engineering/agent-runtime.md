@@ -2,7 +2,7 @@
 
 ## Proven scope
 
-This is a standalone VZ acceptance harness, not an Agent, App, model gateway, or completed file bridge. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. The workspace quota increment adds only its concrete native-check target to Package.swift and links the real Host/Contracts sources for standalone builds; it does not modify diagnostic sessions, App, workbench, or shared authority sources.
+This document describes the standalone VZ command harness. It reuses the verified diagnostic kernel and builder validation helpers, adds a **separate** runtime initramfs, and attaches one exclusively created 64 MiB session disk. Original diagnostic image limits and ports 4050/4051 are unchanged. The workspace quota increment adds only its concrete native-check target to Package.swift and links the real Host/Contracts sources for standalone builds; it does not modify diagnostic sessions, App, workbench, or shared authority sources.
 
 The real Linux VM runs Node, Python and Git, reads a synthetic project, observes its Python test fail, changes subtraction to addition, reruns the actual Python test successfully, and reads the changed bytes again in the same VM. The host checks the expected before/after SHA256, exit statuses, stdout/stderr chunk hashes, cancellation, and original fixture hashes. A second session starts on a distinct fresh disk. A startup cancellation check requires settled framework callbacks and actual stopped state before serial handles are released.
 
@@ -69,4 +69,4 @@ Guest starts with `hello` (ID 0); its kernel/interfaces/workdir/fresh fields are
 * No production shared-lifecycle authority injection; this fixed synthetic acceptance harness must not be used as an App grant bypass.
 * The default runtime profile has no file bridge; stdout digests are not file snapshots. A separate [workspace transfer fixture](workspace-transfer.md) now exercises bounded transport, frozen result review and new-directory export using only a synthetic source. It is not arbitrary project selection or App authorization.
 * No reconnect/resume, persistent disk reuse, interactive input, PTY, generic model proxy or route chosen by the guest.
-* The self-review/unit/VM evidence is not an independent security approval. Full application suites (including previously known failures) and release/distribution acceptance are separate.
+* The self-review/unit/VM evidence is not an independent security approval.

@@ -1,9 +1,8 @@
 # Pinned Claude business request admission
 
 This increment parses the HTTP exchange emitted by the fixed Claude Code 2.1.309
-business profile and binds the complete request to a host action. It does not
-establish an external provider or a complete Agent task. Business credential
-egress is disabled by the immutable `BusinessModelActivation` constant. There is
+business profile and binds the complete request to a host action. Business
+credential egress is disabled by the immutable `BusinessModelActivation` constant. There is
 no preference, environment variable, guest field or saved-account override.
 
 The gateway refuses business execution before consuming an approval. Transport
@@ -64,8 +63,7 @@ current provider's documented [mid-conversation system messages](https://api-doc
 The [Claude gateway guide](https://code.claude.com/docs/en/llm-gateway-protocol)
 documents the query and preserving version/beta selectors. DeepSeek documents
 the [Messages beta/version behavior](https://api-docs.deepseek.com/guides/anthropic_api/).
-These references support the selected dialect, not a claim of executed provider
-interoperability. The policy remains thinking disabled before approval; no
+The selected dialect disables thinking before approval; no
 thinking blocks, server tools, images or arbitrary semantic fields are admitted.
 
 ## Budgets and evidence
@@ -90,7 +88,6 @@ aggregate limits remain in force.
 selector rejection, body preservation, one complete approval binding, grant
 bounds, Stop and the immutable activation gate. It asserts zero credential reads
 and zero network starts. `StructuredModelChecks` retains the prior native tests.
-Real VM, external provider and GUI task evidence must be recorded separately.
 
 ## Actual SDK header and concrete guest response owner
 
@@ -115,8 +112,7 @@ tools are recognized. Read/write paths must stay in the imported VM project;
 commands execute only in the VM after an explicit host approval. The permission
 reply is a concrete bounded VM writer with connection-scoped final checks. The
 gateway never runs tools or constructs tool results. Native response, repair and
-final-clock regression groups passed; actual VZ model-delivery evidence remains
-a separate acceptance step.
+final-clock regression groups passed.
 
 ## Compile-time local provider fixture
 
@@ -130,8 +126,7 @@ output gates remain shared. Ordinary connections remain blocked before consume
 and credential reads even in a fixture build. The fixture constructor, provider
 and alternate endpoint do not exist in normal Debug or Release builds.
 
-Evidence from this test is real VM/CLI execution with a local scripted provider;
-it is not evidence of external provider compatibility or Release readiness.
+This fixture runs the actual VM/CLI against a local scripted provider.
 
 Product schema-4 proposals use `proposeVMClaude` and bind the actual runtime and
 channel IDs into the complete approved bytes. `makeVMNativeOutput` additionally

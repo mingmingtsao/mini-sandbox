@@ -70,5 +70,4 @@ one approved write with replay refusal, exact/split credential reflection with
 zero output, wrong request ID with zero output, a legal JSON-RPC error, and Stop
 before final output. It requires the final marker and exactly one upstream write;
 early process exit is failure. The test-only local-consumer factory is absent
-from a normal Release build. Actual VM/CLI/App MCP use and a real GitHub service
-remain separate acceptance scopes.
+from a normal Release build.

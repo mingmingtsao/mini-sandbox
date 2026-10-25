@@ -44,14 +44,17 @@ def response(step):
 
 
 def main():
-    if len(sys.argv) != 5:
-        raise SystemExit('usage: business_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE_DIRECTORY')
-    host, image, vendor = map(lambda v: str(Path(v).absolute()), sys.argv[1:4])
-    root = Path(sys.argv[4]).absolute()
+    serve_only = len(sys.argv) == 3 and sys.argv[1] == '--serve'
+    if not serve_only and len(sys.argv) != 5:
+        raise SystemExit('usage: business_fixture.py SIGNED_HOST BUSINESS_IMAGE VENDOR_DISK NEW_EVIDENCE_DIRECTORY | --serve NEW_EVIDENCE_DIRECTORY')
+    if not serve_only:
+        host, image, vendor = map(lambda v: str(Path(v).absolute()), sys.argv[1:4])
+    root = Path(sys.argv[-1]).absolute()
     os.umask(0o077)
     root.mkdir(mode=0o700)
     session = root / 'session'; session.mkdir(mode=0o700)
     state = {'requests': 0, 'tool_results': [], 'errors': []}
+    completed = threading.Event()
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
         def log_message(self, *_):
@@ -98,18 +101,26 @@ def main():
                 self.send_error(400, 'fixture validation failed')
             finally:
                 self.close_connection = True
+                if state['requests'] == 5 or state['errors']:
+                    completed.set()
     server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
     try:
-        with (root / 'host.log').open('w') as output:
-            run = subprocess.run([host, image, vendor, str(session), str(server.server_port)],
-                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=180)
-        state['host_exit'] = run.returncode
+        if serve_only:
+            ready = {'port': server.server_port, 'scope': 'local scripted provider only; App approvals remain manual'}
+            (root / 'ready.json').write_text(json.dumps(ready) + '\n')
+            print(json.dumps(ready), flush=True)
+            state['completed_within_deadline'] = completed.wait(1800)
+        else:
+            with (root / 'host.log').open('w') as output:
+                run = subprocess.run([host, image, vendor, str(session), str(server.server_port)],
+                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=180)
+            state['host_exit'] = run.returncode
     finally:
         server.shutdown(); server.server_close(); worker.join(timeout=5)
         (root / 'fixture.json').write_text(json.dumps(state, indent=2) + '\n')
     print(json.dumps(state, sort_keys=True))
-    if run.returncode or state['requests'] != 5 or len(state['tool_results']) != 4 or state['errors']:
+    if state.get('host_exit', 0) or state['requests'] != 5 or len(state['tool_results']) != 4 or state['errors']:
         raise SystemExit(1)
 
 

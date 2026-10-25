@@ -14,6 +14,7 @@ by a successful local build.
 | Alpine base | [3.24.3 aarch64 minirootfs](https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.3-aarch64.tar.gz) | SHA-256 `4d3f80afaebd447c5591a63a73bde380a149fe8b2d85488cafabb2ff97551f50` |
 | Alpine kernel and modules | [3.24.3 aarch64 netboot](https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-netboot-3.24.3-aarch64.tar.gz), Linux `6.18.58-0-virt` | Archive SHA-256 `0ac085f19648562d33deb8bfdc339d747e40f456a49a43385d468ea46a888147`; decoded kernel `256d5fff4bb892edcb9218c1e6353e388bc3646e65f76c2bc9d958b635d1b00e` |
 | Runtime packages | 44 aarch64 APKs in [dependencies.lock.json](../../Tools/AgentRuntime/dependencies.lock.json) | Each entry fixes version, URL, bytes, SHA-256, license expression and Alpine build-recipe commit |
+| Business shell | Bash `5.3.9-r1`, one additional APK in [business-dependencies.lock.json](../../Tools/AgentRuntime/business-dependencies.lock.json) | SHA-256 `95f4f976bdf2f4ca18ff41c32916eb6d7b12a0dae12504d55d04427460d6542f`; 542,084 bytes; `GPL-3.0-or-later`; pinned Alpine recipe and package data digest recorded |
 | Host image reader | [PySquashfsImage 0.9.0](https://pypi.org/project/PySquashfsImage/0.9.0/), build-time wheel only | SHA-256 `a8ea154bf946f985c65fab7d8c08dc73da7ad47a0aebf0d13ae50ae56e369f90`; checked before import |
 | Claude Code | [2.1.309 linux-arm64-musl](https://downloads.claude.ai/claude-code-releases/2.1.309/linux-arm64-musl/claude) | 285,493,120 bytes; SHA-256 `028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332` |
 
@@ -42,6 +43,9 @@ labels are the recorded package declarations, not a complete file-level license
 audit. Other locked packages include GPL, LGPL, MPL and other licenses. Each
 `source` link is a pinned Alpine build recipe with upstream source URLs and
 patches; it is not itself a complete corresponding-source archive.
+The business image has 45 packages and uses Bash for the CLI's normal command
+tool. The diagnostic profile retains its original 44-package lock. Bash's
+corresponding-source obligations remain part of any future binary distribution.
 
 The [Linux project's license FAQ](https://www.kernel.org/category/faq.html)
 identifies GPL version 2 and directs users of distribution kernels to the

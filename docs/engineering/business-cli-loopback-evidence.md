@@ -65,3 +65,11 @@ The fixture entry and loopback provider factory require SANDBOX_TEST_FIXTURES
 and are absent from the normal App. The normal real-provider activation remains
 disabled. The 150-second host watchdog and 180-second outer process bound are
 independent of guest-reported success; failed logs are retained.
+
+For manual packaged-App GUI testing, `business_fixture.py --serve NEW_EVIDENCE`
+starts only the same owned HTTP fixture, prints its loopback port and saves
+`ready.json`. It waits at most 30 minutes for the five validated exchanges and
+does not launch an App, select a project or approve any action. Use a separate
+fixture-only App build and native controls. Its provider transcript verifies
+real CLI tool results, but does not establish GUI, cleanup or export success;
+those observations must be recorded separately.

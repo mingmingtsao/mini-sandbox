@@ -6,9 +6,10 @@ import SandboxHost
 @MainActor package struct BusinessTaskView: View {
     @ObservedObject private var controller: BusinessTaskController
     @ObservedObject private var connections: ConnectionSettingsController
+    @ObservedObject private var mcpConnections: MCPConnectionSettingsController
     @State private var closeReview = false
-    package init(controller: BusinessTaskController, connections: ConnectionSettingsController) {
-        self.controller = controller; self.connections = connections
+    package init(controller: BusinessTaskController, connections: ConnectionSettingsController, mcpConnections: MCPConnectionSettingsController) {
+        self.controller = controller; self.connections = connections; self.mcpConnections = mcpConnections
     }
     package var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -93,8 +94,16 @@ import SandboxHost
                 TextEditor(text: $controller.task).font(.body).frame(minHeight: 95, maxHeight: 180)
                     .border(.quaternary).disabled(controller.isBusy)
                 Text("\(controller.task.utf8.count) / 8192 UTF-8 bytes").font(.caption).foregroundStyle(.secondary)
-                Text("The VM receives a project copy and has no network device. Claude may request file reads, edits and commands in that copy. You approve each model request and tool permission. Limits: 2 CPUs, 1 GiB memory, 15 minutes. MCP is unavailable in this build.")
+                Text("The VM receives a project copy and has no network device. Claude may request file reads, edits and commands in that copy. You approve each model request and tool permission. Limits: 2 CPUs, 1 GiB memory, 15 minutes; 16 MiB project import; 16 MiB combined result/export task disk budget.")
                     .font(.callout)
+                Toggle("Use the configured local repository MCP · resource A read", isOn: $controller.useMCP)
+                    .disabled(controller.isBusy || mcpConnections.configuration == nil)
+                    .onChange(of: controller.useMCP) { _, _ in controller.permissionsConfirmed = false }
+                if controller.useMCP {
+                    Toggle("Also allow requesting resource A writes (each write still needs approval)", isOn: $controller.allowMCPWrite)
+                        .disabled(controller.isBusy).onChange(of: controller.allowMCPWrite) { _, _ in controller.permissionsConfirmed = false }
+                    Text("Resource B is outside this task's grant. Only the fixed local repository profile is supported.").font(.caption)
+                }
                 Toggle("I authorize this task in the isolated project copy and will review each requested action.", isOn: $controller.permissionsConfirmed)
                     .disabled(controller.isBusy)
                 HStack {
@@ -103,6 +112,7 @@ import SandboxHost
                     if controller.review != nil { Text("Export or close the current review before starting another task.").font(.caption) }
                 }
                 DisclosureGroup("Model connection") { ConnectionSettingsView(controller: connections) }
+                DisclosureGroup("MCP connection") { MCPConnectionSettingsView(controller: mcpConnections) }
             }.padding(8)
         }
     }

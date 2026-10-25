@@ -280,6 +280,12 @@ public final class WorkbenchAuditSink: SynchronousAuditSink, @unchecked Sendable
             clearRun(grant.runID, status: "Stopped — model configuration changed; new grant required")
         }
     }
+    package func retireMCPConnections(_ connectionIDs: Set<UUID>) {
+        for grant in grants where grant.connections.contains(where: { connectionIDs.contains($0.connectionID) }) {
+            handles[grant.runID]?.lifecycle.terminate(.stopped)
+            clearRun(grant.runID, status: "Stopped — MCP configuration changed; new grant required")
+        }
+    }
 
     /// Stop is an interrupt, not ordinary approval work: busy must not hide it.
     /// Terminal/closing runs need no further UI intent; cleanup remains idempotent.

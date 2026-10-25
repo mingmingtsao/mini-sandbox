@@ -101,6 +101,8 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     @Published package var agent: Agent = .claude
     @Published package var task = ""
     @Published package var permissionsConfirmed = false
+    @Published package var useMCP = false
+    @Published package var allowMCPWrite = false
     @Published package private(set) var project: URL?
     @Published package private(set) var runtimeDirectory: URL?
     @Published package private(set) var vendorDisk: URL?
@@ -132,12 +134,14 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     private var finishedDigest: String?
     private var transferredDigest: String?
     private var selectedConnectionID: UUID?
+    private var selectedMCPConnectionID: UUID?
 
     package init(composition: RunComposition) { self.composition = composition }
     package var canStart: Bool {
         !isBusy && review == nil && !isClosing && !composition.isClosing && agent == .claude && project != nil &&
         runtimeDirectory != nil && vendorDisk != nil && !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         task.utf8.count <= 8192 && permissionsConfirmed && composition.connectionSettings.configuration != nil &&
+        !composition.mcpSettings.isBusy && (!useMCP || composition.mcpSettings.configuration != nil) &&
         composition.businessRouteAvailable
     }
     package var activationAvailable: Bool { composition.businessRouteAvailable }
@@ -152,11 +156,14 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         isBusy = true; error = nil; stdout = ""; stderr = ""; measurements = []; stopSummary = nil; importExclusions = []
         run = nil; vm = nil; workspace = nil; display = nil
         selectedConnectionID = configuration.connectionID
+        let mcpConfiguration = useMCP ? composition.mcpSettings.configuration : nil
+        selectedMCPConnectionID = mcpConfiguration?.connectionID
         guestFinished = false; transferFinished = false; guestSucceeded = false; resultStopRequested = false
         finishedDigest = nil; transferredDigest = nil
         generation = UUID(); let token = generation, task = task
         runTask = Task { [self] in
-            do { try await execute(project: project, runtime: runtimeDirectory, vendor: vendorDisk, task: task, configuration: configuration, token: token) }
+            do { try await execute(project: project, runtime: runtimeDirectory, vendor: vendorDisk, task: task,
+                configuration: configuration, mcpConfiguration: mcpConfiguration, token: token) }
             catch {
                 if !(error is CancellationError), !(error is BusinessTaskFailure && generation != token) {
                     self.error = "Task stopped: \(String(describing: error))"
@@ -172,7 +179,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         if let run { guard run.authorityHandle.lifecycle.observeAndReduce(reason: "business-task-checkpoint").status == .active else { throw BusinessTaskFailure.cancelled } }
     }
     private func execute(project: URL, runtime: URL, vendor: URL, task: String,
-                         configuration: FixedModelConnectionConfiguration, token: UUID) async throws {
+                         configuration: FixedModelConnectionConfiguration, mcpConfiguration: LocalMCPConfiguration?, token: UUID) async throws {
         status = "Verifying runtime and copying the selected project…"
         let bundle = try await Task.detached { try BusinessRuntimeBundle(directory: runtime, vendorDisk: vendor) }.value
         try check(token)
@@ -188,12 +195,20 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         let modelScopes = try Set(["stream", "complete"].map { try ResourceScope(service: "model", resource: "deepseek-flash", operation: $0) })
         let workspaceScopes = try Set(["read", "write", "execute"].map { try ResourceScope(service: "workspace", resource: resource, operation: $0) })
         let now = Date()
+        var connections = try [ConnectionGrant(connectionID: configuration.connectionID, accountBindingVersion: configuration.accountBindingVersion,
+                routeVersion: configuration.routeVersion, scopes: modelScopes),
+                ConnectionGrant(connectionID: workspaceConnectionID, accountBindingVersion: 1, routeVersion: 1, scopes: workspaceScopes)]
+        if let mcpConfiguration {
+            var scopes = try Set(["server/discover", "tools/list"].map { try ResourceScope(service: "mcp", resource: "control", operation: $0) })
+            scopes.insert(try ResourceScope(service: "mcp", resource: "A", operation: "read"))
+            if allowMCPWrite { scopes.insert(try ResourceScope(service: "mcp", resource: "A", operation: "write")) }
+            connections.append(try ConnectionGrant(connectionID: mcpConfiguration.connectionID, accountBindingVersion: mcpConfiguration.version,
+                routeVersion: mcpConfiguration.version, scopes: scopes))
+        }
         let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: now, expiresAt: now.addingTimeInterval(900),
             workloadImageDigest: bundle.imageSHA256, agentAdapterVersion: BusinessRuntimeBundle.profile,
             workspaceSnapshotID: summary.id, policyDigest: bundle.profileSHA256, approvalSnapshotID: UUID(),
-            connections: [ConnectionGrant(connectionID: configuration.connectionID, accountBindingVersion: configuration.accountBindingVersion,
-                routeVersion: configuration.routeVersion, scopes: modelScopes),
-                ConnectionGrant(connectionID: workspaceConnectionID, accountBindingVersion: 1, routeVersion: 1, scopes: workspaceScopes)],
+            connections: connections,
             explicitDenies: [], resourceLimits: ResourceLimits(cpuCount: 2, memoryBytes: 1_073_741_824,
                 diskBytes: 536_870_912, messageBytes: 65_536, concurrentRequests: 2))
         let installed = try await composition.install(grant); run = installed
@@ -222,7 +237,7 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
                 scope: try installed.authorityHandle.lifecycle.runScope(for: installed.authorityHandle, epoch: grant.epoch), runtimeID: vm.id)
             self.display = display
             let permissionGateway = try HostCLIPermissionGateway(authority: composition.authority, handle: installed.authorityHandle,
-                grant: grant, connectionID: workspaceConnectionID)
+                grant: grant, connectionID: workspaceConnectionID, mcpConnectionID: mcpConfiguration?.connectionID)
             status = "Starting Linux VM · \(summary.files) project files, \(summary.bytes) bytes"
             try await vm.start(); try check(token)
             status = "VM running · waiting for the Agent"
@@ -232,11 +247,13 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
                     group.addTask { [self] in
                         do {
                             switch connection.service {
-                            case .control: try await control(connection, vm: vm, task: task, token: token)
+                            case .control: try await control(connection, vm: vm, task: task, mcp: mcpConfiguration != nil, token: token)
                             case .workspace: try await transfer(connection, vm: vm, workspace: workspace, token: token)
                             case .model: try await modelRequest(connection, run: installed, connectionID: configuration.connectionID, token: token)
                             case .permission: try await permission(connection, gateway: permissionGateway, token: token)
-                            case .mcp: throw BusinessTaskFailure.unavailable
+                            case .mcp:
+                                guard let mcpConfiguration else { throw BusinessTaskFailure.unavailable }
+                                try await mcpRequest(connection, run: installed, configuration: mcpConfiguration, token: token)
                             }
                         } catch { connection.retire(); vm.cancel(); throw error }
                     }
@@ -267,14 +284,14 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         }
     }
 
-    private func control(_ connection: BusinessVMConnection, vm: BusinessVMSession, task: String, token: UUID) async throws {
+    private func control(_ connection: BusinessVMConnection, vm: BusinessVMSession, task: String, mcp: Bool, token: UUID) async throws {
         defer { connection.retire() }
         let reader = BusinessFrameReader(connection)
         guard let first = try await reader.next(), let ready = try ModelJSON.parse(first).object,
               Set(ready.keys) == ["v", "type", "profile"], ready["v"] == .integer(1), ready["type"]?.string == "ready",
               ready["profile"]?.string == BusinessRuntimeBundle.profile else { throw BusinessTaskFailure.invalidFrame }
         try check(token)
-        let start = ModelJSON.object(["v": .integer(1), "type": .string("start"), "task": .string(task), "mcp": .bool(false)])
+        let start = ModelJSON.object(["v": .integer(1), "type": .string("start"), "task": .string(task), "mcp": .bool(mcp)])
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         try await sendFrame(vm, connection, body: encoder.encode(start))
         while let bytes = try await reader.next() {
@@ -392,6 +409,46 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
         if allowed { try await gateway.approveAndSend(proposal) }
         else { try await gateway.deny(proposal) }
     }
+    private func mcpRequest(_ connection: BusinessVMConnection, run: RunComposition.InstalledRun,
+                            configuration: LocalMCPConfiguration, token: UUID) async throws {
+        defer { connection.retire() }
+        var bytes = Data(), ingress: ClaudeMCPIngress?
+        while ingress == nil {
+            let next = try await connection.receive(maxBytes: 4096)
+            guard !next.isEmpty, next.count <= 81_920 - bytes.count else { throw BusinessTaskFailure.invalidFrame }
+            bytes.append(next); ingress = try ClaudeMCPIngress.parse(bytes)
+        }
+        try check(token)
+        let value = ingress!
+        let proposal = try await run.mcpGateway.proposeVMClient(handle: run.mcpHandle, connectionID: configuration.connectionID,
+            ingress: value, connection: connection)
+        guard measurements.count < 256 else { throw BusinessTaskFailure.invalidFrame }
+        measurements.append("MCP \(value.selectors.method) · HTTP \(bytes.count) · body \(value.body.count) · approval \(proposal.pendingAction.binding.canonicalRequest.count) bytes")
+        let allowed = await ask(proposal.pendingAction, title: "MCP · \(value.selectors.method) · \(proposal.pendingAction.binding.resolvedResource)",
+            details: String(decoding: proposal.pendingAction.binding.canonicalRequest, as: UTF8.self))
+        try check(token)
+        guard allowed else { try await run.mcpGateway.hostDeny(handle: run.mcpHandle, proposal: proposal); return }
+        let approval = try await run.mcpGateway.hostApprove(handle: run.mcpHandle, proposal: proposal)
+        let output = try await run.mcpGateway.makeVMNativeOutput(handle: run.mcpHandle, approval: approval, connection: connection)
+        defer { output.cancel() }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await run.mcpGateway.execute(handle: run.mcpHandle, approval: approval, output: output) }
+            group.addTask {
+                while output.nativeProgress?.closed == false {
+                    try Task.checkCancellation()
+                    if try !output.acceptNext() { try await Task.sleep(for: .milliseconds(5)) }
+                }
+                guard output.nativeProgress?.acceptedFinals == 1 else { throw BusinessTaskFailure.incompleteResult }
+            }
+            do { try await group.waitForAll() }
+            catch { group.cancelAll(); output.cancel(); throw error }
+        }
+        try check(token)
+        if let progress = output.nativeProgress {
+            guard measurements.count < 256 else { throw BusinessTaskFailure.invalidFrame }
+            measurements.append("MCP actual response \(progress.committedBytes) bytes · frame max \(progress.largestFrameBytes) · queue peak \(progress.peakBufferedBytes) bytes")
+        }
+    }
     private func ask(_ pending: PendingAction, title: String, details: String) async -> Bool {
         guard decisions.count < 4, !isClosing, !Task.isCancelled else { return false }
         let waiter = BusinessDecisionWaiter(); decisions[pending.actionID] = waiter
@@ -425,6 +482,10 @@ private final class BusinessDecisionWaiter: @unchecked Sendable {
     }
     package func retireModelConnections(_ ids: Set<UUID>) {
         guard runTask != nil, let selectedConnectionID, ids.contains(selectedConnectionID) else { return }
+        cancel()
+    }
+    package func retireMCPConnections(_ ids: Set<UUID>) {
+        guard runTask != nil, let selectedMCPConnectionID, ids.contains(selectedMCPConnectionID) else { return }
         cancel()
     }
     package func beginClose() { isClosing = true; cancel() }

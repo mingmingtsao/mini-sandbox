@@ -35,8 +35,8 @@ struct MiniSandboxApplication: App {
     var body: some Scene {
         Window("Mini Sandbox", id: "workbench") {
             TabView(selection: $selectedTab) {
-                if let taskController = delegate.taskController, let connections = delegate.connectionSettings {
-                    BusinessTaskView(controller: taskController, connections: connections)
+                if let taskController = delegate.taskController, let connections = delegate.connectionSettings, let mcpConnections = delegate.mcpSettings {
+                    BusinessTaskView(controller: taskController, connections: connections, mcpConnections: mcpConnections)
                         .tabItem { Label("Tasks", systemImage: "folder") }.tag("tasks")
                 }
                 WorkbenchView(model: delegate.model, connectionSettings: delegate.connectionSettings).tabItem { Label("Workbench", systemImage: "checkmark.shield") }.tag("workbench")
@@ -54,33 +54,47 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     let model: WorkbenchModel
     let connectionSettings: ConnectionSettingsController?
     let taskController: BusinessTaskController?
+    let mcpSettings: MCPConnectionSettingsController?
     override init() {
         let composition = try? Self.makeComposition()
         self.composition = composition
         self.connectionSettings = composition?.connectionSettings
         self.taskController = composition?.business
+        self.mcpSettings = composition?.mcpSettings
         self.model = composition?.workbench ?? WorkbenchModel(unavailable: "App composition unavailable; authority disabled")
         super.init()
     }
     private static func makeComposition() throws -> RunComposition {
 #if SANDBOX_TEST_FIXTURES
         let args = CommandLine.arguments
-        if args.contains("--local-business-fixture-port") || args.contains("--local-business-fixture-root") {
+        if args.contains("--local-business-fixture-port") || args.contains("--local-business-fixture-root") || args.contains("--local-mcp-fixture-port") {
             guard let portIndex = args.firstIndex(of: "--local-business-fixture-port"), portIndex + 1 < args.count,
                   let port = UInt16(args[portIndex + 1]), port > 0,
                   let rootIndex = args.firstIndex(of: "--local-business-fixture-root"), rootIndex + 1 < args.count,
                   args[rootIndex + 1].hasPrefix("/") else { throw BusinessTaskFailure.unavailable }
+            var mcpPort: UInt16?
+            if let index = args.firstIndex(of: "--local-mcp-fixture-port") {
+                guard index + 1 < args.count, let value = UInt16(args[index + 1]), value > 0 else { throw BusinessTaskFailure.unavailable }
+                mcpPort = value
+            }
             return try RunComposition.localBusinessFixture(port: port,
-                newRoot: URL(fileURLWithPath: args[rootIndex + 1], isDirectory: true))
+                newRoot: URL(fileURLWithPath: args[rootIndex + 1], isDirectory: true), mcpPort: mcpPort)
         }
         if let url = Bundle.main.url(forResource: "local-business-fixture", withExtension: "json") {
-            let bytes = try Data(contentsOf: url)
+            let file = try FileHandle(forReadingFrom: url)
+            defer { try? file.close() }
+            guard let bytes = try file.read(upToCount: 4097), bytes.count <= 4096 else { throw BusinessTaskFailure.unavailable }
             let value = try ModelJSON.parse(bytes, maxBytes: 4096)
-            guard let fields = value.object, Set(fields.keys) == ["port", "root"],
+            guard let fields = value.object, Set(fields.keys).isSubset(of: ["port", "root", "mcpPort"]),
                   let port = value["port"]?.integer, (1...65535).contains(port),
                   let root = value["root"]?.string, root.hasPrefix("/"), !root.isEmpty else { throw BusinessTaskFailure.unavailable }
+            let mcpPort: UInt16?
+            if let raw = value["mcpPort"] {
+                guard let port = raw.integer, (1...65535).contains(port) else { throw BusinessTaskFailure.unavailable }
+                mcpPort = UInt16(port)
+            } else { mcpPort = nil }
             return try RunComposition.localBusinessFixture(port: UInt16(port),
-                newRoot: URL(fileURLWithPath: root, isDirectory: true))
+                newRoot: URL(fileURLWithPath: root, isDirectory: true), mcpPort: mcpPort)
         }
 #endif
         return try RunComposition.application()

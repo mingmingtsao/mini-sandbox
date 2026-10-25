@@ -2,8 +2,8 @@
 
 The Tasks tab uses the app-owned RunComposition and its single F03 authority.
 The user chooses a project directory, verified business image and pinned CLI
-disk, enters a task and selects the supported Claude profile. Codex/DSH and MCP
-are displayed as unavailable. The model connection remains host-only. The
+disk, enters a task and selects the supported Claude profile. Codex/DSH are
+displayed as unavailable. The model connection remains host-only. The
 immutable product egress gate is still false, so this build cannot start a
 credential-bearing task or claim external provider success.
 
@@ -51,3 +51,28 @@ Normal builds do not contain this constructor or argument handling. The
 production activation gate remains false in both builds. A successful fixture
 run is evidence of real UI/VM/CLI execution with a local scripted provider only;
 it cannot satisfy external-provider or release acceptance.
+
+## Bounded local MCP task selection
+
+The native MCP settings accept only a literal 127.0.0.1 port and a temporary
+host-memory bearer for the fixed modern local repository profile. They neither
+launch a command nor select a remote endpoint. Replacing/disconnecting the
+connection synchronously retires its bound runs and retains their original
+gateway through cleanup; a fresh route/account version applies to future runs.
+The task can select MCP resource A read and separately allow requesting A writes.
+Control discovery/list scopes are explicit. Resource B has no grant.
+
+Actual service-4066 HTTP enters the pinned parser, binds the exact VZ owner into
+the complete proposal, presents one native approval and drains the controlled
+MCP response consumer. Normal CLI MCP tool permissions use the separate MCP
+connection and resource scopes. Server annotations or permission suggestions
+cannot grant writes. The GUI states the limited profile and does not claim
+general MCP, GitHub, Codex or DSH compatibility.
+
+The test-only App composition can additionally select `--local-mcp-fixture-port`
+or bundle `mcpPort`; the bearer is the public test literal defined in
+`MCPConnectionSettingsController.publicFixtureBearer`, never a key argument or
+Keychain lookup. The same native task selection/approval path still applies.
+Effective workspace limits are displayed: 16 MiB import and a shared 16 MiB task
+disk ledger for result adoption and export. Larger results can exhaust export
+capacity; the existing ledger is not widened to hide that limitation.

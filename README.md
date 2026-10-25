@@ -89,7 +89,7 @@ swift run --skip-build WorkspaceChecks
 
 | 项 | 状态 |
 |---|---|
-| 真实模型出口 | 正式构建中**默认关闭**（`BusinessModelActivation.credentialEgressEnabled = false`），需独立人工复核后启用；Tasks 页 Start 按钮因此不可用 |
+| 真实模型出口 | 自 2026-10-26 起正式构建**已启用**固定 DeepSeek 业务路由（[启用记录](docs/engineering/business-egress-review.md#启用记录)）；每个请求仍需逐次审批，凭据只在宿主读取 |
 | Agent | Claude Code 2.1.309；Codex、DSH 尚未实现 |
 | 模型 | DeepSeek `deepseek-flash`（Anthropic 兼容协议） |
 | MCP | 本机 `127.0.0.1` 固定仓库 profile；远端 HTTP、OAuth、stdio 连接器尚未实现 |
@@ -109,6 +109,7 @@ swift run --skip-build WorkspaceChecks
 | `Tools/` | guest 镜像构建、guest 驱动、协议探针、工作区传输与诊断 VM 工具 |
 | `Tests/` | Swift 可执行检查、Python/Go 测试与回环驱动、fixtures |
 | `scripts/` | App 与 VM 探针的构建签名脚本、覆盖率脚本、权利文件 |
+| `VERSION` | 应用版本号（`build-app.py` 读取，发版时只改这一处） |
 | `docs/` | [架构设计](docs/architecture.md)、[运行指南](docs/getting-started.md)、[工程文档](docs/README.md)、[产品规格](docs/prd/README.md) |
 
 ## 文档

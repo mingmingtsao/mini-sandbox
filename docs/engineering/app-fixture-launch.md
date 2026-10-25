@@ -14,3 +14,10 @@ It permits a normal native App launch while keeping project selection and all
 approvals in the UI. The resource belongs only to the separate test artifact;
 normal Release packaging must not include it. The normal Release binary does
 not compile this resource lookup or the fixture constructor.
+
+Package the test artifact with
+`python3 scripts/build-app.py --configuration debug --test-fixtures`. It builds
+into `.build/fixtures` and writes `dist/MiniSandboxFixture.app` with bundle id
+`dev.mini-sandbox.app.local-fixture`, so it never replaces
+`dist/MiniSandbox.app`. The script does not add the JSON resource; place it in
+`Contents/Resources/` yourself (then re-sign) or pass the launch arguments.

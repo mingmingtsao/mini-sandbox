@@ -45,10 +45,12 @@ import SandboxHost
         try expectPresentation(!controller.permissionsConfirmed, "MCP write selection retained stale consent")
         try expectPresentation(try surface.contains("fixture-project") && surface.contains("fixture-runtime") && surface.contains("fixture-vendor.raw"), "selected immutable paths missing from pixels")
         controller.permissionsConfirmed = true
-        try expectPresentation(!controller.activationAvailable && !controller.canStart, "production business egress gate unexpectedly opened")
+        try expectPresentation(controller.activationAvailable && controller.canStart, "complete selection not admitted with the production route enabled")
+        let storageOperations = store.count
         controller.start()
-        try await PresentationChecks.settle()
-        try expectPresentation(!controller.isBusy && composition.workbench.grants.isEmpty, "disabled business route started work")
+        for _ in 0..<40 where controller.isBusy { try await PresentationChecks.settle() }
+        try expectPresentation(!controller.isBusy && controller.error != nil && composition.workbench.grants.isEmpty && store.count == storageOperations,
+            "unverifiable runtime installed a grant or touched the credential store")
         let mcp = Surface(MCPConnectionSettingsView(controller: composition.mcpSettings), width: 1100, height: 500)
         defer { mcp.dispose() }
         try await PresentationChecks.settle()
@@ -62,6 +64,6 @@ import SandboxHost
         try expectPresentation(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("unapproved-export").path), "missing review exported")
         let closed = await composition.close()
         try expectPresentation(closed && controller.isClosing && !controller.canStart, "close did not retire task admission")
-        print("PASS business task selection consent agent gates and MCP metadata projection; production route stays disabled")
+        print("PASS business task selection consent agent gates and MCP metadata projection; unverifiable runtime fails closed before grant")
     }
 }

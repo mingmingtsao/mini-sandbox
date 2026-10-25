@@ -11,8 +11,8 @@ import SandboxWorkbench
         let settings = composition.connectionSettings
         let configuration = settings.configuration
         try CompositionDiagnosticChecks.require(composition.isLocalFixture && composition.businessRouteAvailable &&
-            settings.isLocalFixture && configuration != nil && !BusinessModelActivation.credentialEgressEnabled,
-            "local fixture must not enable production gate")
+            settings.isLocalFixture && configuration != nil,
+            "local fixture route available with its fixed connection")
         await settings.save("unused-user-input")
         await settings.checkStoredCredential()
         await settings.deleteStoredCredential()
@@ -32,7 +32,7 @@ import SandboxWorkbench
         } catch BusinessTaskFailure.unavailable {}
         let closed = await composition.close()
         try CompositionDiagnosticChecks.require(closed && composition.business.isClosing, "fixture native cleanup close")
-        print("PASS App local fixture is isolated, cannot use Keychain settings, keeps production disabled and still requires task consent; VM/provider NOT_RUN")
+        print("PASS App local fixture is isolated, cannot use Keychain settings and still requires task consent; VM/provider NOT_RUN")
     }
 }
 #endif

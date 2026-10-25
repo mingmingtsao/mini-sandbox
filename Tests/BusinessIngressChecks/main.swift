@@ -112,14 +112,14 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             let approval = try await gateway.hostApprove(handle: modelHandle, proposal: proposal)
             do { _ = try await gateway.makeOutput(handle: modelHandle, approval: approval); throw CheckFailure.failed("schema4 memory output") }
             catch HostModelGatewayError.invalidApproval {}
-            do { _ = try await gateway.execute(handle: modelHandle, approval: approval); throw CheckFailure.failed("activation bypass") }
-            catch HostModelGatewayError.businessRouteDisabled {}
+            do { _ = try await gateway.execute(handle: modelHandle, approval: approval); throw CheckFailure.failed("schema4 dispatch without VM owner") }
+            catch HostModelGatewayError.invalidApproval {}
             let gatedMeasurements = try await gateway.measurements(handle: modelHandle)
-            try check(gatedMeasurements.dispatchedRequests == 0 && gatedMeasurements.outboundBodyBytes == 0 && gatedMeasurements.configuredHeaderBytes == 0, "disabled route has no outbound measurements")
+            try check(gatedMeasurements.dispatchedRequests == 0 && gatedMeasurements.outboundBodyBytes == 0 && gatedMeasurements.configuredHeaderBytes == 0, "ownerless schema4 approval has no outbound measurements")
             let transport = ModelTransport(credentialProvider: credential)
 #if SANDBOX_TEST_FIXTURES
             let local = try ModelTransport(localClaudeFixturePort: 49152)
-            try check(local.claudeRouteEnabled && !transport.claudeRouteEnabled, "only dedicated fixed-loopback fixture route is enabled")
+            try check(local.claudeRouteEnabled && transport.claudeRouteEnabled, "product and fixed-loopback fixture routes are enabled")
             try rejected("local fixture transport requires actual VM owner") { _ = try local.prepareClaude(request, selectors: .pinned) }
             try rejected("fixture zero port") { _ = try ModelTransport(localClaudeFixturePort: 0) }
             let fixture = try HostModelConnection.localClaudeFixture(port: 49152, connectionID: connection.connectionID, accountID: connection.accountID)
@@ -133,9 +133,9 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             let fixtureResumes = try await fixtureGateway.resumedTaskCount(handle: fixtureHandle)
             try check(fixtureResumes == 0, "pure schema4 cannot start local fixture transport")
 #endif
-            try rejected("direct transport gate") { _ = try transport.prepareClaude(request, selectors: .pinned) }
+            try rejected("direct transport requires actual VM owner") { _ = try transport.prepareClaude(request, selectors: .pinned) }
             try rejected("native fallback gate") { _ = try transport.prepareNative(request) }
-            try check(!BusinessModelActivation.credentialEgressEnabled, "immutable product gate")
+            try check(BusinessModelActivation.credentialEgressEnabled && transport.claudeRouteEnabled, "compile-time product gate enabled")
             let runtimeID = UUID()
             let display = BusinessDisplayOutput(lifecycle: handle.lifecycle,
                 scope: try handle.lifecycle.runScope(for: handle, epoch: 1), runtimeID: runtimeID)

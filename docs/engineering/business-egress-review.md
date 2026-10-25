@@ -1,5 +1,19 @@
 # S02 业务出口集成人工复核包
 
+## 启用记录
+
+| 项 | 内容 |
+| --- | --- |
+| 日期 | 2026-10-26 |
+| 决定人 | 仓库维护者 [@mingmingtsao](https://github.com/mingmingtsao) |
+| 改动 | `Sources/SandboxHost/BusinessModelActivation.swift`：`credentialEgressEnabled` 由 `false` 改为 `true` |
+| 范围 | 正式构建的固定 `deepseek-flash` Anthropic 业务路由（`https://api.deepseek.com/anthropic/v1/messages?beta=true`）；固定 Claude Code 2.1.309 CLI 与业务镜像；单个任务、2 CPU / 1 GiB、无 NIC / 宿主共享目录 |
+| 不变的约束 | 每个模型请求与 CLI 工具权限仍需逐次原生审批；必须绑定实际 VM owner；凭据只在宿主网关通过最终生命周期门禁后读取；Stop / 过期 / 连接撤销后不再发出新请求 |
+| 不包含 | 远端或真实 MCP 出口、自定义路由、其他模型或 Agent |
+| 复核依据 | 下文复核包（候选 `3e44ab0`）及其列出的假 canary 与实际 VM 证据；本记录是维护者的启用决定，**不等同于**下文所要求的独立真人复核结论。若后续补充独立复核，请在此表追加审阅者、精确 head 与结论 |
+
+以下为启用前的复核包原文，其中“仍为 `false`”等表述描述的是当时的候选状态。
+
 本包供独立真人审阅后决定是否允许一次有限的真实模型 C08 验收。它本身不是批准，也不启用真实凭据出口。核对时的源码候选是 `3e44ab0223408f5c8f2873ffb24caeec918de10d`；下列行号均属于该提交。后续候选必须列明与此提交的相关差分，不能把本文或旧结论自动套到新 head。
 
 ## 已有批准及审阅范围
@@ -47,7 +61,8 @@ swift run --skip-build ExecutionBoundaryChecks --final-effect-clock
 
 ```sh
 set -eu
-TASK_EGRESS_ARTIFACTS='/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025'
+# 维护者私有证据目录 mini-sandbox-artifacts-20261025（未纳入仓库）；复现时换成你自己的私有目录
+TASK_EGRESS_ARTIFACTS="$EVIDENCE_ROOT"
 TASK_EGRESS_IMAGE="$TASK_EGRESS_ARTIFACTS/business-image-v5"
 TASK_EGRESS_VENDOR="$TASK_EGRESS_ARTIFACTS/vendor/claude.raw"
 TASK_EGRESS_OUT="$TASK_EGRESS_ARTIFACTS/s02-review-$(uuidgen)"
@@ -63,8 +78,8 @@ python3 Tools/AgentRuntime/business_fixture.py "$TASK_EGRESS_OUT/build/host" "$T
 
 | 层次 | 实际结果 | 证据与限制 |
 | --- | --- | --- |
-| 传输/结构矩阵 | 63 组通过；修复前同源回归 52 通过、11 失败 | 本机 `/private/tmp/mini-sandbox-safety-reflection-{red,green}.log`。含解码 primitives、metadata、工具参数、跨片、audit-held 正反例。 |
-| 实际 HTTP → AF_UNIX peer | 13 cases / 13 HTTP arrivals；每例 credential read/resume 各 1；所有重建输出无完整 canary | `/private/tmp/mini-sandbox-native-reflection-loopback.log`。五个反射非流式及 error-body 例为 0 peer bytes；三个 SSE 反射例允许安全前缀/metadata，但无完整秘密和成功终结；四个正例保持真实有效内容。 |
+| 传输/结构矩阵 | 63 组通过；修复前同源回归 52 通过、11 失败 | 维护者本机临时日志 `mini-sandbox-safety-reflection-{red,green}.log`（未纳入仓库）。含解码 primitives、metadata、工具参数、跨片、audit-held 正反例。 |
+| 实际 HTTP → AF_UNIX peer | 13 cases / 13 HTTP arrivals；每例 credential read/resume 各 1；所有重建输出无完整 canary | 维护者本机临时日志 `mini-sandbox-native-reflection-loopback.log`（未纳入仓库）。五个反射非流式及 error-body 例为 0 peer bytes；三个 SSE 反射例允许安全前缀/metadata，但无完整秘密和成功终结；四个正例保持真实有效内容。 |
 | 实际 VZ → CLI | 1 次上游请求；`nativeWriteCalls=0`、`nativeBytes=0`、`acceptedFinals=0`；已接受 stdout/stderr canary occurrences=0；实际停止且 callbacks settled | `cli-reflection-fixture-v1/host.log` 与 `fixture.json`，fixture `host_exit=0`、`errors=[]`。对应测试在读取报告后还断言 private disk 已删除。该例覆盖 SSE message metadata 含活动假凭据的形态。 |
 
 实际 VM 证据位于上述 `TASK_EGRESS_ARTIFACTS` 下，构建为 `business-fixture-host-v11`。独立核对了原始日志，并比较其 `build.json` 中以下 8 个源文件哈希，全部与固定候选一致：`ModelCredentialReflection.swift`、`ModelTransport.swift`、`HostModelGateway.swift`、`NativeResponseChannel.swift`、`RunLifecycle.swift`、`BusinessVMConnection.swift`、`ControlledRunOutput.swift`、`Tools/AgentRuntime/BusinessFixtureProbe.swift`。其他文件以完整 inventory 为准，不能把部分匹配外推为整个 App 二进制一致。

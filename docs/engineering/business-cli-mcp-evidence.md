@@ -6,8 +6,9 @@ calls and real CLI tool results; the model upstream is scripted loopback. The
 scope is the fixed local repository protocol and resource grants. GitHub,
 OAuth, other MCP protocols, App UI and real-provider tasks are outside this scope.
 
-The private artifact root is
-`/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025`.
+The private artifact root (`$EVIDENCE_ROOT` below) is the maintainer's
+directory `mini-sandbox-artifacts-20261025`; it is kept outside Git and is not
+published.
 All four final cases use `business-fixture-host-v15` with its stable source and
 contract-object hashes in `build.json`, and `business-image-v5`:
 `76124ff1500810098e24a467d28e4e06da207ff7556b607e8e5738e3d75f2acb`.

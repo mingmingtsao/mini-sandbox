@@ -86,11 +86,14 @@ swift run --skip-build ContractChecks             # 契约检查，应显示 7/7
 | 全部 target（Debug） | `swift build` | `.build/debug/` |
 | 仅 App 可执行文件（Release） | `swift build -c release --product MiniSandbox` | `.build/release/MiniSandbox` |
 | 打包签名的 `.app` | `python3 scripts/build-app.py --configuration release --sign-identity -` | `dist/MiniSandbox.app` |
+| 本地 fixture 版 `.app`（开发者） | `python3 scripts/build-app.py --configuration debug --test-fixtures` | `dist/MiniSandboxFixture.app` |
 | 诊断 VM 程序 | `python3 scripts/build-vm-probe.py --configuration debug` | `dist/VMProbe/VMProbe` |
 
 `build-app.py` 的行为：
 
-- 编译 Release 产品，生成 `Info.plist`（bundle id `dev.mini-sandbox.app`），用 `scripts/app.entitlements`（仅含 `com.apple.security.virtualization`）签名并严格校验；
+- 编译 App 产品，生成 `Info.plist`（bundle id `dev.mini-sandbox.app`），用 `scripts/app.entitlements`（仅含 `com.apple.security.virtualization`）签名并严格校验；
+- 版本号 `CFBundleShortVersionString` 读取仓库根目录的 [`VERSION`](../VERSION) 文件（`MAJOR.MINOR.PATCH`），发版时只改这一处；`--build-number N` 设置 `CFBundleVersion`（默认 1）；
+- `--test-fixtures` 以 `-DSANDBOX_TEST_FIXTURES` 编译到独立的 `.build/fixtures` 目录，输出独立的 `dist/MiniSandboxFixture.app`（bundle id `dev.mini-sandbox.app.local-fixture`），不会覆盖正式 App，见 [§8](#8-本地-fixture-模式开发者)；
 - `--sign-identity -` 为本地 ad-hoc 签名；也可传入已安装的签名身份名称；
 - **从不递归删除**：已存在的 `dist/MiniSandbox.app` 会被移到 `dist/.MiniSandbox-backup-*/`；不是本脚本生成的同名目录会被拒绝覆盖；
 - 输出 JSON，包含可执行文件 SHA-256、签名方式和 `"notarized": false`。
@@ -164,7 +167,7 @@ MCP 设置只接受 `127.0.0.1` 上的端口号和一个仅保存在内存中的
 
 Workbench 页提供同一授权账本的视图：点击 **Review** 打开原生审批面板（**Approve once** / **Deny** / **Cancel / deny**，回车默认为拒绝，Esc 为取消并拒绝），以及 **Stop and revoke**。
 
-> **当前构建的出口状态**：正式构建中 `BusinessModelActivation.credentialEgressEnabled` 固定为 `false`，Tasks 页会显示 “Business model egress is disabled in this build”，**Start task 按钮不可用**。这是有意的安全门禁：真实凭据出口需要独立人工复核后才能启用（见 [business-egress-review.md](engineering/business-egress-review.md)）。要体验完整流程，请使用 [§8 本地 fixture 模式](#8-本地-fixture-模式开发者)。
+> **出口状态**：自 2026-10-26 起，正式构建已启用固定的 DeepSeek `deepseek-flash` 业务路由（编译期常量 `BusinessModelActivation.credentialEgressEnabled = true`，启用记录见 [business-egress-review.md](engineering/business-egress-review.md#启用记录)）。配置模型连接并完成上述选择后即可 Start task。每一次模型请求都会使用你保存在 Keychain 中的 API key 访问 `api.deepseek.com` 并**消耗该账户额度**；不想使用真实凭据时，请使用 [§8 本地 fixture 模式](#8-本地-fixture-模式开发者)。
 
 ### 5.6 审阅与导出
 
@@ -295,21 +298,20 @@ python3 Tools/AgentRuntime/vendor_data.py "$ART/vendor-src/claude" "$ART/vendor/
 前提：已完成 [§7](#7-准备-vm-运行时进阶) 的运行时镜像与 CLI 磁盘。
 
 ```sh
-# 1. 构建 fixture 版本（独立构建目录，不影响正常构建）
-swift build --build-path .build/fixtures -Xswiftc -DSANDBOX_TEST_FIXTURES --product MiniSandbox
-mkdir -m 700 "$ART/fixture-app"
-cp .build/fixtures/debug/MiniSandbox "$ART/fixture-app/MiniSandbox"
-codesign --force --sign - --entitlements scripts/app.entitlements "$ART/fixture-app/MiniSandbox"
+# 1. 打包 fixture 版 App（独立构建目录与输出，不影响正式 App）
+python3 scripts/build-app.py --configuration debug --test-fixtures
 
 # 2. 在另一个终端启动脚本化模型 provider，记下输出中的 port
 python3 Tools/AgentRuntime/business_fixture.py --serve "$ART/fixture-model-1"
 #   {"port": 5xxxx, "scope": "local scripted provider only; App approvals remain manual"}
 
 # 3. 启动 App（root 必须是尚不存在的新目录）
-"$ART/fixture-app/MiniSandbox" \
+open -n dist/MiniSandboxFixture.app --args \
   --local-business-fixture-port <上一步的 port> \
   --local-business-fixture-root "$ART/fixture-run-1"
 ```
+
+也可以直接运行 `dist/MiniSandboxFixture.app/Contents/MacOS/MiniSandbox` 并传入同样的参数，便于在终端查看日志。
 
 界面会显示醒目的 `LOCAL FIXTURE` 标记。脚本化 provider 按固定脚本驱动 CLI：读取 `logic.py` → 运行 `python3 -B test_logic.py` 观察失败 → 把 `return a - b` 改为 `return a + b` → 重新运行测试。因此请准备一个只含这两个文件的示例项目，并在 Tasks 中选择它：
 
@@ -367,13 +369,13 @@ python3 scripts/swift-coverage.py
 | 契约 | `swift run --skip-build ContractChecks` |
 | 授权与生命周期 | `swift run --skip-build AuthorizationChecks`；`swift run --skip-build SharedAuthorityChecks` |
 | 模型网关 | `swift run --skip-build ModelTransportChecks --offline`；`HostIntegrationChecks`；`StructuredModelChecks`；`BusinessIngressChecks` |
-| MCP 网关 | `python3 Tests/MCPIntegrationTests/test_loopback.py --binary .build/debug/MCPGatewayChecks --scope default` |
+| MCP 网关 | `swift run --skip-build MCPGatewayChecks`（另有 `--independent`、`--claude-native`、`--transport-unit`） |
 | 执行边界 | `swift run --skip-build ExecutionBoundaryChecks`（另有 `--final-effect-clock`、`--native-response`、`--native-repairs` 选择器）；回环：`python3 Tests/ExecutionBoundaryChecks/loopback.py --binary .build/debug/ExecutionBoundaryChecks` |
 | VM 协议 | `swift run --skip-build VMChecks`；`swift run --skip-build RuntimeReceiveChecks` |
 | 工作区 | `swift run --skip-build WorkspaceChecks`；`swift run --skip-build WorkspaceTransferChecks` |
 | 工作台 | `swift run --skip-build WorkbenchChecks`（可用 `--composition-close-only` 等选择器）；`python3 Tests/MCPIntegrationTests/composition_close.py --binary .build/debug/WorkbenchChecks` |
 
-注意：`MCPGatewayChecks` 需要回环 fixture，请通过上表中的 Python 驱动运行；直接运行完整套件会因缺少 fixture 而失败。`ModelTransportChecks` 不带 `--offline` 时会包含隔离 Keychain 增删改用例。
+注意：`MCPGatewayChecks` 需要回环 fixture。直接运行时若标准输入没有驱动数据，它会自动用自身路径调用对应的 Python 驱动（默认与 `--independent` 用 `Tests/MCPIntegrationTests/test_loopback.py`，`--claude-native` 用 `Tests/MCPGatewayChecks/claude_loopback.py`），结果与手动运行驱动一致；`--transport-unit` 不需要 fixture。`ModelTransportChecks` 不带 `--offline` 时会包含隔离 Keychain 增删改用例。
 
 ### 9.3 覆盖率
 
@@ -409,7 +411,7 @@ CI 不启动 VM。需要真机证据时，参考：
 | `build-app.py` 报 `Unmarked output preserved; move it aside` | `dist/MiniSandbox.app` 不是本脚本生成的。手动移走该目录后重试（脚本从不删除未知目录） |
 | `build-app.py` 报 `Unsafe output directory` | 仓库目录或 `dist/` 可被组/其他用户写入，或属于其他用户。修正权限（如 `chmod go-w dist`） |
 | Environment 页显示虚拟化不可用 / VMProbe 退出码 2 | 不是 Apple Silicon、在不支持嵌套虚拟化的 VM 中运行，或可执行文件缺少 `com.apple.security.virtualization` 权利。请使用 `build-app.py` / `build-vm-probe.py` 构建的产物 |
-| Tasks 页 Start 按钮灰色 | 正式构建出口门禁关闭（见 §5.5）；或尚未选择项目/运行时/CLI 磁盘、未勾选确认、未配置模型连接 |
+| Tasks 页 Start task 按钮灰色 | Agent 未选 Claude Code；尚未选择项目/运行时/CLI 磁盘；任务为空或超过 8,192 字节；未勾选授权确认；未配置模型连接（每次启动后需重新 Check 或 Save）；勾选了 MCP 但未配置；或当前还有未导出/未关闭的审阅结果 |
 | 窗口显示 “App composition unavailable; authority disabled” | 无法创建审计目录或文件。检查 `~/Library/Application Support/MiniSandbox/Audit` 是否可写、磁盘是否已满 |
 | `fetch.py` 报 `private download directory required` | 下载目录必须属于当前用户且不可被组/其他用户写入：`chmod 700 "$ART/downloads"` |
 | `vendor_data.py` 报 `immutable exact regular input` | 输入必须属于当前用户、只读（`chmod 0400`）、单链接、大小精确；输出父目录必须为 `0700` |

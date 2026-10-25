@@ -5,8 +5,8 @@ actual Apple Virtualization VM. This document records the standalone VM and
 connection-boundary cases. No provider or Keychain is used.
 The guest has zero general network devices and zero host directory shares.
 
-The 2026-10-26 local evidence root is
-`/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025`.
+The 2026-10-26 evidence root (`$EVIDENCE_ROOT`) is the maintainer's private
+artifact directory `mini-sandbox-artifacts-20261025`; it is not published.
 Private logs and raw requests remain outside Git. `business-host-v5/build.json`
 records every source hash and compile command. Its sequential matrix is
 `vm-matrix-v5.json`; each case has its own exclusive `vm-<case>-v5/host.log`.

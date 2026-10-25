@@ -36,6 +36,7 @@ class CoverageTests(unittest.TestCase):
                 obj = binary_dir / "Module.build/Unit.swift.o"
                 obj.parent.mkdir(parents=True)
                 obj.touch()
+                (binary_dir / "description.json").write_text('{"swiftCommands":{"host":{"moduleName":"SandboxHost","otherArguments":["-package-name","fixture"]}}}')
                 output = root / "report"
                 output.mkdir()
                 marker = output / "coverage.json"

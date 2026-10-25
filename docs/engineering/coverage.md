@@ -7,12 +7,16 @@ README 的覆盖率徽章显示最近一次成功主线 CI 的 **Swift 源码行
 - 分母包含 `Sources/` 下全部 Swift 文件，包括未被检查触达的文件。当前覆盖 `SandboxContracts`、`SandboxHost`、`SandboxWorkbench` 和 `MiniSandboxApp`。
 - 实际执行集合包含全部离线 Swift 检查入口、额外的执行边界 selector、两组 MCP 网关回环检查、两组执行边界 MCP 回环检查、工作台 MCP 关闭回环检查，以及经过 JSON 断言的 App 环境诊断。完整集合以 `scripts/swift-coverage.py` 的 `CHECKS` 为准。
 - `RuntimeReceiveChecks` 将现有 guest 接收检查接入 SwiftPM；`VMChecks` 运行协议和状态检查，不创建 VM。`ModelTransportChecks --offline` 执行 32 组检查，明确排除默认套件中的隔离 Keychain CRUD 用例，原用例仍保留。工作台检查使用假凭据；环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目。
+- 运行时检查覆盖原始 JSON 文法、Unicode、数值边界、编解码、取消消息只发送一次、队列上限和终态；镜像清单检查覆盖真实 SHA-256 及规范摘要和路径/文件类型拒绝。
+- `PresentationChecks` 链接本次插桩构建中未改写的产品对象，在自身进程的屏幕外 AppKit 窗口中渲染真实 SwiftUI 视图。系统 Vision OCR 核对动态字段，原生控件事件验证 Review/Deny/Approve/Cancel、Save/Check、Stop 和只读环境刷新；同步核对实际授权、零自动派发和合成存储状态。删除只验证真实控制器操作后的渲染投影，不声称覆盖 destructive 按钮的外部点击验收。
 - 不包含 `Tests/`、`Tools/`、自动生成代码、Python 和 Go。公开 API 编译检查、Release 打包及签名验证也不产生这个指标的运行计数。
 - 不设置最低百分比门槛；统计失败、缺失源码映射或缺少原始计数会使覆盖率 job 失败，不会用虚构数值代替。
 
 ## 生成与查看
 
 `scripts/swift-coverage.py` 使用独立的 `.build/coverage` 插桩构建，逐一执行检查，以全新的临时目录接收 `LLVM_PROFILE_FILE` 原始计数，再用 `llvm-profdata merge` 和 [`llvm-cov export`](https://llvm.org/docs/CommandGuide/llvm-cov.html#export-command) 汇总。回环 driver 显式接收该构建的 `--binary`，避免误运行普通 Debug 二进制。导出加载全部产品源码对象；任何检查失败或缺少计数均不能生成新的成功报告。
+
+SwiftPM 不会把可执行目标的对象自动链接到另一个可执行目标，因此视图 harness 使用 `swiftc` 链接同一构建的 App、Workbench、Host 和 Contracts 对象；package identity 来自该构建的 `description.json`。产品源码不复制、不重写。原生事件循环结束不能单凭退出码算作通过：driver 必须收到全部语义检查结果和最终完成标记；失败、缺失或 BLOCKED 均失败。
 
 每次运行生成：
 
@@ -37,6 +41,6 @@ python3 scripts/swift-coverage.py
 
 ## 当前覆盖边界
 
-本次在相同产品源码上测得：单独 `ContractChecks` 为 101 / 7,104 行（1.4%）；接入现有离线检查、guest 接收和只读诊断后为 5,847 / 7,104 行（82.3%）。这只是本次本地测量；主线徽章以成功 Actions 产物为准。
+在相同产品源码上：单独 `ContractChecks` 为 101 / 7,104 行（1.4%）；接入既有离线检查后约 82%；新增运行时、镜像和真实视图检查后，本地测得 6,483 / 7,104 行（91.3%）。主线徽章以成功 Actions 产物为准，系统行为和竞态分支可能带来小幅差异。
 
-现有可离线运行的入口已全部接入。余量主要位于 SwiftUI 交互、真实 VM 启停/套接字回调、真实 Keychain 行为和系统错误分支。继续提高这些部分需要对应功能测试和实机验收，不应缩小分母或用编译结果替代执行证据。
+余量主要位于真实 VM 启停/套接字回调、App 生命周期、真实 Keychain 行为和系统错误分支。进程内视图与合成事件检查不替代完整 App/VM/Agent 流程和外部真机 GUI 验收；继续提高这些部分需要对应功能测试和实机证据，不应缩小分母或用编译结果替代执行。

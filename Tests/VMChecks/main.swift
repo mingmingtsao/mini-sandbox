@@ -86,4 +86,5 @@ check("probe run admission is one-shot") {
     let probe = HeadlessVMProbe()
     return probe.claimRun() && !probe.claimRun()
 }
+verifiedBundleChecks()
 print("VMChecks: \(passed) passed")

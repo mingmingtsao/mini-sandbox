@@ -15,6 +15,7 @@ CHECKS = (
     "ContractChecks", "AuthorizationChecks", "ModelTransportChecks --offline",
     "HostIntegrationChecks", "StructuredModelChecks", "WorkbenchChecks",
     "SharedAuthorityChecks", "WorkspaceChecks", "WorkspaceTransferChecks", "VMChecks", "RuntimeReceiveChecks",
+    "PresentationChecks (validated)",
     "ExecutionBoundaryChecks", "ExecutionBoundaryChecks --final-effect-clock",
     "ExecutionBoundaryChecks --native-repairs", "ExecutionBoundaryChecks --native-response",
     "MCPGatewayChecks --transport-unit",
@@ -28,7 +29,10 @@ CHECKS = (
 
 def check_commands(binary_dir):
     for name in CHECKS:
-        if name.endswith("(validated)"):
+        if name == "PresentationChecks (validated)":
+            yield [sys.executable, str(ROOT / "Tests/PresentationTests/run.py"),
+                   "--binary", str(binary_dir / "PresentationChecks")]
+        elif name.endswith("(validated)"):
             yield [sys.executable, str(ROOT / "Tests/DiagnosticsTests/check_diagnostics.py"),
                    "--binary", str(binary_dir / "MiniSandbox")]
         elif "loopback)" not in name:
@@ -124,6 +128,20 @@ def run(args):
     for obj in objects:
         if not obj.is_file():
             raise ValueError(f"missing instrumented source object: {obj}")
+    # SwiftPM does not link executable dependencies into another executable.
+    # Link the actual instrumented App object (its entry point is renamed by
+    # SwiftPM), together with the other unchanged product objects, into a
+    # separate presentation harness. No copied or rewritten product sources.
+    description = json.loads((binary_dir / "description.json").read_text())
+    host_arguments = next(command["otherArguments"] for command in description["swiftCommands"].values()
+                          if command["moduleName"] == "SandboxHost")
+    package_name = host_arguments[host_arguments.index("-package-name") + 1]
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
+                    "-package-name", package_name, "-profile-generate", "-profile-coverage-mapping",
+                    "-I", str(binary_dir / "Modules"),
+                    *map(str, sorted((ROOT / "Tests/PresentationTests").glob("*.swift"))),
+                    *map(str, objects), "-o", str(binary_dir / "PresentationChecks")],
+                   cwd=ROOT, check=True)
     output.mkdir(parents=True, exist_ok=True)
     # A fresh profile directory prevents old test executions from inflating coverage.
     with tempfile.TemporaryDirectory(prefix="swift-coverage-") as temp:

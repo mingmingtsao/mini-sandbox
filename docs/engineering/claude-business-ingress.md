@@ -2,8 +2,12 @@
 
 This increment parses the HTTP exchange emitted by the fixed Claude Code 2.1.309
 business profile and binds the complete request to a host action. Business
-credential egress is disabled by the immutable `BusinessModelActivation` constant. There is
-no preference, environment variable, guest field or saved-account override.
+credential egress is controlled by the compile-time `BusinessModelActivation`
+constant, enabled on 2026-10-26 by maintainer decision (see
+[business-egress-review.md](business-egress-review.md#启用记录)). There is no
+preference, environment variable, guest field or saved-account override. The
+history below describes the disabled-gate period in which this increment was
+reviewed.
 
 The gateway refuses business execution before consuming an approval. Transport
 refuses again before reading a credential or constructing an operation. A Claude
@@ -86,8 +90,9 @@ aggregate limits remain in force.
 
 `swift run BusinessIngressChecks` checks fragmented HTTP, framing/smuggling and
 selector rejection, body preservation, one complete approval binding, grant
-bounds, Stop and the immutable activation gate. It asserts zero credential reads
-and zero network starts. `StructuredModelChecks` retains the prior native tests.
+bounds, Stop and the compile-time activation gate (now asserted enabled; an
+approval without the actual VM owner is still rejected). It asserts zero
+credential reads and zero network starts. `StructuredModelChecks` retains the prior native tests.
 
 ## Actual SDK header and concrete guest response owner
 

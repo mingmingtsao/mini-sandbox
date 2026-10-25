@@ -222,7 +222,7 @@ MiniSandboxApp (可执行, SwiftUI 入口)
 | 关键源码 | `HostModelGateway.swift`、`ModelTransport.swift`、`ModelCredentials.swift`、`ModelCredentialReflection.swift`、`BusinessHTTPIngress.swift`、`AnthropicNativeRequest.swift`、`AnthropicStreamDecoder.swift`、`ClaudeModelAdmission.swift`、`ClaudeRequestSelectors.swift`、`ModelJSON.swift`、`ModelStructured.swift`、`ModelTools.swift`、`BusinessModelActivation.swift` |
 | 对外接口 | `HostModelGateway.install`、`proposeVMClaude`、`hostApprove`/`hostDeny`、`makeVMNativeOutput`、`execute`、`revokeConnection` |
 | 依赖 | M1、M2、M6 |
-| 关键约束 | 上游固定为 `api.deepseek.com`（Anthropic / OpenAI 兼容端点），模型固定 `deepseek-flash`；请求不能指定 URL、认证头、协议或模型；拒绝重定向；单运行并发 ≤ min(grant, 4)；同一次凭据读取同时用于 `x-api-key` 与该请求私有的反射 guard；**`BusinessModelActivation.credentialEgressEnabled = false`**，正式构建不发出带真实凭据的业务请求 |
+| 关键约束 | 上游固定为 `api.deepseek.com`（Anthropic / OpenAI 兼容端点），模型固定 `deepseek-flash`；请求不能指定 URL、认证头、协议或模型；拒绝重定向；单运行并发 ≤ min(grant, 4)；同一次凭据读取同时用于 `x-api-key` 与该请求私有的反射 guard；业务出口由编译期常量 `BusinessModelActivation.credentialEgressEnabled` 控制，自 2026-10-26 起为 `true`，运行时任何设置都不能改变 |
 | 不负责 | 通用 DLP；任意模型/供应商；凭据录入 UI（M9） |
 | 验证 | `ModelTransportChecks --offline`、`HostIntegrationChecks`、`StructuredModelChecks`、`BusinessIngressChecks`、`ExecutionBoundaryChecks --native-response` |
 | 详细文档 | [model-transport.md](engineering/model-transport.md) · [host-model-integration.md](engineering/host-model-integration.md) · [claude-business-ingress.md](engineering/claude-business-ingress.md) · [anthropic-native-requests.md](engineering/anthropic-native-requests.md) · [structured-model-tools.md](engineering/structured-model-tools.md) · [model-credential-reflection.md](engineering/model-credential-reflection.md) |
@@ -237,7 +237,7 @@ MiniSandboxApp (可执行, SwiftUI 入口)
 | 依赖 | M1、M2、M6 |
 | 关键约束 | 端点仅限字面量 `127.0.0.1` + 宿主选择的端口 + `POST /mcp`；工具目录区分 `unknown / knownEmpty / knownReady`；`readOnlyHint` 等服务端注解**不能**授予写权限；写操作需要单独授予并逐次审批；单运行并发 ≤ 2；无重定向、Cookie、代理、重试 |
 | 不负责 | 远端 MCP、OAuth 登录、stdio 连接器（规格目标，尚未实现） |
-| 验证 | `MCPGatewayChecks`（经 `Tests/MCPIntegrationTests/test_loopback.py` 驱动）、`ExecutionBoundaryChecks --mcp*` |
+| 验证 | `MCPGatewayChecks`（无驱动输入时自动调用 `Tests/MCPIntegrationTests/test_loopback.py`）、`ExecutionBoundaryChecks --mcp*` |
 | 详细文档 | [host-mcp-integration.md](engineering/host-mcp-integration.md) · [claude-mcp-client.md](engineering/claude-mcp-client.md) · [business-cli-mcp-evidence.md](engineering/business-cli-mcp-evidence.md) |
 
 ### M5 CLI 工具权限网关
@@ -557,7 +557,8 @@ guest 只能通过 vsock 连接宿主（CID 2）。每个端口的监听器绑�
 
 | 产物 | 构建方式 | 来源与校验 |
 |---|---|---|
-| `MiniSandbox.app` | `scripts/build-app.py` | 本仓库源码；签名带 `com.apple.security.virtualization` 权利；默认 ad-hoc 签名 |
+| `MiniSandbox.app` | `scripts/build-app.py` | 本仓库源码；版本号来自根目录 `VERSION`；签名带 `com.apple.security.virtualization` 权利；默认 ad-hoc 签名 |
+| `MiniSandboxFixture.app` | `scripts/build-app.py --test-fixtures` | 同一源码以 `SANDBOX_TEST_FIXTURES` 编译到 `.build/fixtures`；只连接本机脚本化 provider，不读 Keychain；仅供开发验证 |
 | `VMProbe` | `scripts/build-vm-probe.py` | 本仓库源码；独立签名 |
 | 诊断 guest bundle | `Tools/GuestFixture/build.py` | Alpine 3.24.3 minirootfs/netboot（SHA-256 固定）、PySquashfsImage 0.9.0 wheel、Go 1.26.5 |
 | 业务运行时镜像 | `Tools/AgentRuntime/build.py ... --claude-business-runtime-v1` | 45 个锁定的 Alpine APK（Node 24、Python 3.14、Git 2.54、Bash 5.3 等），内核 Linux 6.18.58-0-virt |
@@ -611,7 +612,7 @@ guest 只能通过 vsock 连接宿主（CID 2）。每个端口的监听器绑�
 
 | 项 | 状态 |
 |---|---|
-| 真实模型出口 | **正式构建关闭**（`credentialEgressEnabled = false`），需独立人工复核后才能启用；Tasks 页会显示锁定提示。参见 [business-egress-review.md](engineering/business-egress-review.md) |
+| 真实模型出口 | 自 2026-10-26 起正式构建**已启用**（维护者决定，见[启用记录](engineering/business-egress-review.md#启用记录)）；尚无覆盖当前 head 的独立真人复核结论，该记录中列出了待补充项 |
 | Agent | 仅 Claude Code 2.1.309；Codex、DSH 在 UI 中显示为未实现 |
 | 模型 | 仅 DeepSeek `deepseek-flash`（Anthropic 兼容协议） |
 | MCP | 仅本机 `127.0.0.1` 固定仓库 profile；远端 HTTP、OAuth、stdio 连接器尚未实现 |
@@ -619,19 +620,26 @@ guest 只能通过 vsock 连接宿主（CID 2）。每个端口的监听器绑�
 | 生命周期 | 无重连/恢复、无持久 VM、无预热池；一次只运行一个任务 |
 | 审计 | JSONL 无轮转与总大小上限；不抵抗同 UID 篡改 |
 | 分发 | 仅本地 ad-hoc 签名；未做 Developer ID 签名与公证；第三方镜像与 CLI 不随仓库分发 |
-| 测试 | CI 不启动 VM、不连接真实模型或外部 MCP；真实 VM 证据记录在各工程文档中，部分证据路径位于维护者本机 |
+| 测试 | CI 不启动 VM、不连接真实模型或外部 MCP；真实 VM 证据记录在各工程文档中，原始证据保存在维护者的私有证据目录（文档中记为 `$EVIDENCE_ROOT`），未纳入仓库 |
 
 ---
 
 ## 13. 与规格的差异
 
+下表是规格目标中**尚未实现**的部分；实现与规格相矛盾之处已通过规格修订消除。
+
 | 规格（FINAL_SPEC） | 当前实现 | 说明 |
 |---|---|---|
-| Go guest bridge | 业务 guest 驱动为 Python（`business_cli.py`、`guest.py`），运行于镜像内的 Python 3.14；Go 仅用于诊断探针 | 宿主侧协议解析仍由 Swift 严格实现，guest 驱动不被信任 |
 | Claude Code、Codex、DSH 三个 Agent | 仅 Claude Code | 规格允许按顺序实现 |
 | GitHub 类服务、OAuth 远端、stdio 连接器 | 仅本机 MCP fixture | 对应 ROADMAP V2-06/V2-07 后续工作 |
 | 可选独立连接器 VM | 未实现 | — |
 | 三类导航：工作台、服务连接、活动与结果 | Tasks / Workbench / Environment 三个标签页 | 连接设置内嵌于 Tasks 与 Workbench |
+
+已消除的差异：
+
+| 原规格 | 处理 |
+|---|---|
+| Go guest bridge | FINAL_SPEC [修订 R1](prd/desktop-sandbox/implementation-v2/FINAL_SPEC.md#修订记录)（2026-10-26）：业务运行时 bridge 为镜像内 Python（`business_cli.py`、`guest.py`），诊断探针保留 Go |
 
 ---
 

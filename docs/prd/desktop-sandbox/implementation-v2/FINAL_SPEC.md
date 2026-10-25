@@ -1,6 +1,6 @@
 # mini-sandbox 最终实施方案 v2
 
-规格日期：2026-10-23。本文定义产品实施基线；与历史设计冲突时，以本规格为准。
+规格日期：2026-10-23（修订见文末[修订记录](#修订记录)）。本文定义产品实施基线；与历史设计冲突时，以本规格为准。
 
 输入：赛题原文、比赛规则、已合并 PR #1 的产品设计与早期设计快照 `54c0e6f3d9541b47f9ee1fd3b363ef63b813fd28`、前期技术方案。
 
@@ -81,7 +81,7 @@ macOS 原生应用（可信域）
 
 采用 Apple Virtualization.framework 与 Virtio socket。[W1] 首版不做通用 TLS MITM、任意 HTTP CONNECT、任意宿主 URL 转发或 guest shell→host shell 桥接。没有 NIC 是减少出口，不是完整安全证明；vsock解析器、终端渲染、文件接收和宿主适配器仍是攻击面。
 
-技术栈确定为 Swift/SwiftUI 宿主，Go guest bridge，固定 Linux arm64 镜像。核心逻辑可脱离 GUI 测试；终端组件固定上游版本，不另写完整终端模拟器。首版 Host Core 可在同一应用进程内模块化，不为了画边界拆多个守护进程；同进程时不能宣称 UI 与 Keychain 在 OS 权限上隔离。未来拆进程需另验 IPC 对端身份和权限。
+技术栈确定为 Swift/SwiftUI 宿主，guest bridge 使用固定镜像内的运行时实现（业务运行时为 Python，诊断探针为 Go；见修订 R1），固定 Linux arm64 镜像。核心逻辑可脱离 GUI 测试；终端组件固定上游版本，不另写完整终端模拟器。首版 Host Core 可在同一应用进程内模块化，不为了画边界拆多个守护进程；同进程时不能宣称 UI 与 Keychain 在 OS 权限上隔离。未来拆进程需另验 IPC 对端身份和权限。
 
 ### 3.2 身份不能由消息自报
 
@@ -285,3 +285,9 @@ ACCEPTANCE.md 定义 37 项产品功能、安全与发布验收用例及通过�
 **完成标准：产品闭环有真实执行证据，安全承诺与边界一致，支持范围可以逐项验证。不是文档、类、页面或提交次数足够多。**
 
 官方技术依据见SOURCES.md，设计问题与两版比较见PR1_REVIEW.md。
+
+## 修订记录
+
+| 编号 | 日期 | 位置 | 修订内容 | 理由 |
+|---|---|---|---|---|
+| R1 | 2026-10-26 | §3.1 技术栈 | 原文“Go guest bridge”改为：业务运行时的 guest bridge 使用镜像内固定版本的 Python（`Tools/AgentRuntime/business_cli.py`、`guest.py`），离线诊断探针保留 Go（`Tools/GuestFixture`） | 与已实现并经真实 VM 验证的运行时一致。按 §3.2，guest bridge 属于不可信域，安全边界由宿主侧严格解析、实际 VZ 连接所有权与授权账本保证，与 bridge 的实现语言无关；业务镜像已固定 Python 3.14，不再额外引入 Go 运行时 |

@@ -5,8 +5,9 @@ the real pinned Claude Code 2.1.309 Linux CLI inside a no-NIC VZ VM. The model
 was an intentionally scripted HTTP fixture on host loopback. The scope is the
 standalone two-file CLI tool loop; provider, App UI, C08 and MCP records are separate.
 
-The evidence root is
-`/Users/caomingming/Documents/ChatGPT/mini-sandbox-artifacts-20261025`.
+The evidence root (`$EVIDENCE_ROOT` below) is the maintainer's private artifact
+directory `mini-sandbox-artifacts-20261025`; it is kept outside Git and is not
+published.
 `business-fixture-host-v8/build.json` records the full source/compile inventory;
 `cli-loop-fixture-v6/host.log`, `fixture.json`, captured request bodies and
 `session/cli.stdout` retain the actual observations. The guest image is

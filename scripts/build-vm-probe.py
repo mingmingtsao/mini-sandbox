@@ -63,7 +63,7 @@ def main():
     (staging / MARKER).write_text(json.dumps(ownership(output), sort_keys=True))
     subprocess.run(['codesign', '--force', '--sign', '-', '--entitlements', str(ROOT / 'scripts/vm-probe.entitlements'), str(executable)], check=True)
     subprocess.run(['codesign', '--verify', '--strict', '--verbose=2', str(executable)], check=True)
-    subprocess.run(['codesign', '--display', '--entitlements', ':-', str(executable)], check=True)
+    subprocess.run(['codesign', '--display', '--entitlements', '-', '--xml', str(executable)], check=True)
     if safe_directory(ROOT) != root_id or safe_directory(dist) != dist_id or safe_directory(staging) != stage_id or check_existing(output) != old_id:
         raise RuntimeError('Output changed; staging preserved')
     backup = None

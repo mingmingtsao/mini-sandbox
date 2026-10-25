@@ -4,8 +4,10 @@ The Tasks tab uses the app-owned RunComposition and its single F03 authority.
 The user chooses a project directory, verified business image and pinned CLI
 disk, enters a task and selects the supported Claude profile. Codex/DSH are
 displayed as unavailable. The model connection remains host-only. The
-immutable product egress gate is false, so this build cannot start a
-credential-bearing task.
+compile-time product egress gate (`BusinessModelActivation.credentialEgressEnabled`)
+is enabled since 2026-10-26, so a normal build can start a credential-bearing
+task once a model connection is configured; every model request and tool
+permission still needs its own native approval.
 
 The coordinator imports the selected tree on a dedicated actor and transfers
 exclusive store ownership into WorkspaceRunSession. One immutable grant binds
@@ -47,8 +49,12 @@ and tool approval, actual VM cleanup, result review and export remain the same
 MainActor/product path. There is no automatic task start or tool approval.
 
 Normal builds do not contain this constructor or argument handling. The
-production activation gate is false in both builds. The fixture uses a local
-scripted provider for UI/VM/CLI execution.
+fixture composition never uses the production DeepSeek route or Keychain,
+regardless of the production gate. The fixture uses a local scripted provider
+for UI/VM/CLI execution. Package it with
+`python3 scripts/build-app.py --configuration debug --test-fixtures`
+(output `dist/MiniSandboxFixture.app`, separate build directory
+`.build/fixtures`); see the [run guide](../getting-started.md#8-本地-fixture-模式开发者).
 
 ## Bounded local MCP task selection
 

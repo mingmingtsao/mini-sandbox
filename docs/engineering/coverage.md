@@ -9,7 +9,7 @@ README 的覆盖率徽章显示最近一次成功主线 CI 的 **Swift 源码行
 - `RuntimeReceiveChecks` 将现有 guest 接收检查接入 SwiftPM；`VMChecks` 运行协议、状态和资源文件读取/摘要检查，不创建 VM。`ModelTransportChecks --offline` 明确排除默认套件中的隔离 Keychain CRUD 用例，原用例仍保留；非法凭据输入检查在调用 OS 存储之前返回。工作台检查使用假凭据，覆盖合成 canary 的既有条目、读回不符及清理失败；环境诊断只查询自己的 Keychain namespace 是否可达，不读取凭据值、不写入条目。
 - 运行时检查覆盖原始 JSON 文法、Unicode、数值边界、编解码、取消消息只发送一次、队列上限和终态；镜像清单检查覆盖真实 SHA-256 及规范摘要和路径/文件类型拒绝。
 - `PresentationChecks` 链接本次插桩构建中未改写的产品对象，在自身进程的屏幕外 AppKit 窗口中渲染真实 SwiftUI 视图。系统 Vision OCR 核对动态字段，原生控件事件验证 Review/Deny/Approve/Cancel、Save/Check、Stop 和只读环境刷新；同步核对实际授权、零自动派发和合成存储状态。删除只验证真实控制器操作后的渲染投影，不声称覆盖 destructive 按钮的外部点击验收。
-- BusinessTaskView 检查选择项目/运行时/vendor 后同意失效、MCP 开关撤销同意、未实现 Agent、连接元数据投影与生产路由保持禁用。`BusinessIngressChecks` 还执行工作区会话的真实导入和双向帧握手、取消/丢弃、未取得实际 VM 停止证明时禁止审阅导出，以及输出队列/累计字节额度、取消和分片 UTF-8 检查。这些检查不伪造 VM 所有者或停止证明。
+- BusinessTaskView 检查选择项目/运行时/vendor 后同意失效、MCP 开关撤销同意、未实现 Agent、连接元数据投影，以及生产路由启用后完整选择可以提交、但无法校验的运行时会在安装授权和读取凭据前失败。`BusinessIngressChecks` 还执行工作区会话的真实导入和双向帧握手、取消/丢弃、未取得实际 VM 停止证明时禁止审阅导出，以及输出队列/累计字节额度、取消和分片 UTF-8 检查。这些检查不伪造 VM 所有者或停止证明。
 - 不包含 `Tests/`、`Tools/`、自动生成代码、Python 和 Go。公开 API 编译检查、Release 打包及签名验证也不产生这个指标的运行计数。
 - 不设置最低百分比门槛。导出同时读取相同完整对象列表的 LLVM 空计数基线：仅含常量或被编译条件排除、没有可执行行映射的文件保留为 `0/0`，表格显示 `n/a`；有可执行映射但未命中的行仍计入分母。实际报告遗漏基线中的可执行源码、映射行数不一致或缺少原始计数都会使 job 失败。
 

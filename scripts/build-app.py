@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -14,6 +15,13 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = ".mini-sandbox-owner"
 ENTITLEMENTS = Path(__file__).with_name("app.entitlements")
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+VARIANTS = {
+    "release": {"app": "MiniSandbox.app", "bundle_id": "dev.mini-sandbox.app", "name": "Mini Sandbox"},
+    # Test-only composition: fixed 127.0.0.1 scripted provider, never Keychain.
+    "local-fixture": {"app": "MiniSandboxFixture.app", "bundle_id": "dev.mini-sandbox.app.local-fixture",
+                      "name": "Mini Sandbox Local Fixture"},
+}
 
 
 def run(*args: str) -> None:
@@ -50,21 +58,52 @@ def check_existing(app: Path):
     return identity
 
 
+def read_version() -> str:
+    """Single source of truth for CFBundleShortVersionString: the VERSION file."""
+    path = ROOT / "VERSION"
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 64:
+            raise RuntimeError("Unsafe VERSION file: " + str(path))
+        version = path.read_text().strip()
+    except OSError as error:
+        raise RuntimeError("Missing VERSION file: " + str(path)) from error
+    if not VERSION_PATTERN.fullmatch(version):
+        raise RuntimeError("VERSION must be MAJOR.MINOR.PATCH: " + repr(version))
+    return version
+
+
+def build_number(value: str) -> int:
+    if not (value.isascii() and value.isdigit()) or int(value) < 1:
+        raise argparse.ArgumentTypeError("build number must be a positive integer")
+    return int(value)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--sign-identity", default="-", help="codesign identity; default is local ad-hoc signing")
+    parser.add_argument("--build-number", type=build_number, default=1, help="CFBundleVersion; default 1")
+    parser.add_argument("--test-fixtures", action="store_true",
+                        help="build the SANDBOX_TEST_FIXTURES local-fixture app into dist/MiniSandboxFixture.app")
     args = parser.parse_args()
+    variant_name = "local-fixture" if args.test_fixtures else "release"
+    variant = VARIANTS[variant_name]
+    version = read_version()
+    # The fixture define changes compiled code, so it must never share build products.
+    build_args = ["--build-path", str(ROOT / ".build/fixtures")] if args.test_fixtures else []
+    define_args = ["-Xswiftc", "-DSANDBOX_TEST_FIXTURES"] if args.test_fixtures else []
     root_identity = safe_directory(ROOT)
     dist = ROOT / "dist"
     if not os.path.lexists(dist):
         dist.mkdir(mode=0o755)
     dist_identity = safe_directory(dist)
-    app = dist / "MiniSandbox.app"
+    app = dist / variant["app"]
     previous_identity = check_existing(app)
 
-    run("swift", "build", "-c", args.configuration, "--product", "MiniSandbox")
-    bin_path = Path(subprocess.check_output(["swift", "build", "-c", args.configuration, "--show-bin-path"], cwd=ROOT, text=True).strip())
+    run("swift", "build", "-c", args.configuration, *build_args, *define_args, "--product", "MiniSandbox")
+    bin_path = Path(subprocess.check_output(["swift", "build", "-c", args.configuration, *build_args, "--show-bin-path"],
+                                            cwd=ROOT, text=True).strip())
     binary = bin_path / "MiniSandbox"
     if not binary.is_file() or binary.is_symlink():
         raise RuntimeError("Missing or symlinked build executable")
@@ -78,9 +117,9 @@ def main() -> None:
     shutil.copy2(binary, staging / "Contents/MacOS/MiniSandbox")
     os.chmod(staging / "Contents/MacOS/MiniSandbox", 0o755)
     info = {
-        "CFBundleExecutable": "MiniSandbox", "CFBundleIdentifier": "dev.mini-sandbox.app",
-        "CFBundleName": "Mini Sandbox", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1",
+        "CFBundleExecutable": "MiniSandbox", "CFBundleIdentifier": variant["bundle_id"],
+        "CFBundleName": variant["name"], "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": version, "CFBundleVersion": str(args.build_number),
         "LSMinimumSystemVersion": "14.0", "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication"
     }
@@ -113,7 +152,9 @@ def main() -> None:
             backup.rename(app)
         raise
     digest = hashlib.sha256((app / "Contents/MacOS/MiniSandbox").read_bytes()).hexdigest()
-    print(json.dumps({"app": str(app), "executable_sha256": digest,
+    print(json.dumps({"app": str(app), "executable_sha256": digest, "variant": variant_name,
+                      "bundle_identifier": variant["bundle_id"], "version": version,
+                      "build_number": args.build_number,
                       "previous_bundle": str(backup) if backup else None,
                       "signing": "ad-hoc-local-only" if args.sign_identity == "-" else "specified-identity",
                       "notarized": False}, indent=2))

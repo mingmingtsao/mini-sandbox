@@ -30,9 +30,9 @@
     "WorkbenchChecks --composition-mcp (loopback)",
     "MiniSandbox --diagnostics-json (validated)"
   ],
-  "commit": "c003b42927fffcb6d3745782ca1a29fd1ac92429",
+  "commit": "de1d46f6c55e8d7ed1cb625e792530df606ec5d6",
   "repository": "mingmingtsao/mini-sandbox",
-  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40243986880",
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40244267704",
   "lines": 11068,
   "covered": 8714,
   "percent": 78.73,

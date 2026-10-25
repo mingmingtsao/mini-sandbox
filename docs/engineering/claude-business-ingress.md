@@ -166,3 +166,11 @@ fields are retained in the full approved request. `permission_suggestions`
 the sole allow response is `{behavior:allow,updatedInput:<exact approved input>}`.
 No session mode, persistent rule or `updatedPermissions` is installed. Unknown
 request keys and wrong metadata types still reject.
+
+The concrete model prepared operation also retains the same VM owner. Final
+network start takes operation then owner locks before the lifecycle's trusted
+clock, validates the claimed owner and only then calls URLSessionTask.resume.
+Physical VM retirement therefore prevents a new request even when result-stop
+intentionally preserves the run long enough to adopt files. Direct start() is
+unavailable for a VM-bound operation; fixture/native diagnostics without a VM
+retain their separate existing behavior.

@@ -118,6 +118,7 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
 #if SANDBOX_TEST_FIXTURES
             let local = try ModelTransport(localClaudeFixturePort: 49152)
             try check(local.claudeRouteEnabled && !transport.claudeRouteEnabled, "only dedicated fixed-loopback fixture route is enabled")
+            try rejected("local fixture transport requires actual VM owner") { _ = try local.prepareClaude(request, selectors: .pinned) }
             try rejected("fixture zero port") { _ = try ModelTransport(localClaudeFixturePort: 0) }
             let fixture = try HostModelConnection.localClaudeFixture(port: 49152, connectionID: connection.connectionID, accountID: connection.accountID)
             try check(fixture.model == .deepSeekFlash && fixture.protocol == .anthropic, "fixture fixed model dialect")

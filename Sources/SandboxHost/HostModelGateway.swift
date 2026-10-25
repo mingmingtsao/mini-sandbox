@@ -408,7 +408,9 @@ package actor HostModelGateway {
             try validatedRunTime(run, startDeadline: proposal.pending.expiresAt)
             let operation: ModelPreparedOperation
             if let native {
-                if let selectors = envelope.claudeSelectors { operation = try entry.connection.transport.prepareClaude(native, selectors: selectors) }
+                if let selectors = envelope.claudeSelectors {
+                    operation = try entry.connection.transport.prepareClaude(native, selectors: selectors, connection: proposal.vmConnection)
+                }
                 else { operation = try entry.connection.transport.prepareNative(native) }
             }
             else if let request = envelope.request { operation = try entry.connection.transport.prepare(request, streaming: envelope.streaming) }

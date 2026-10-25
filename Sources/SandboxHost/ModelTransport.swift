@@ -155,13 +155,17 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
         return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic, streaming: request.streaming)
     }
 
-    package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors) throws -> ModelPreparedOperation {
+    package func prepareClaude(_ request: AnthropicNativeRequest, selectors: ClaudeRequestSelectors,
+                               connection: BusinessVMConnection? = nil) throws -> ModelPreparedOperation {
         // Immutable production gate, before credential preparation or URLSession.
         guard claudeRouteEnabled else { throw HostModelGatewayError.businessRouteDisabled }
+        guard let connection, connection.service == .model, !connection.isRetired else { throw HostModelGatewayError.invalidHandle }
         guard request.dialect == .claude else { throw ModelTransportError.invalidRequest("claude dialect") }
         try selectors.validate()
-        return try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
-                                  streaming: request.streaming, claudeSelectors: selectors)
+        let operation = try prepareEncoded(request.canonicalBody, model: request.model, protocol: .anthropic,
+                                           streaming: request.streaming, claudeSelectors: selectors)
+        try operation.bindVMConnection(connection)
+        return operation
     }
 
     private func prepareEncoded(_ body: Data, model: FixedModel, protocol kind: FixedProtocol, streaming: Bool,
@@ -379,6 +383,7 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private var started = false
     private var cancelled = false
     private var resumes = 0
+    private var vmConnection: BusinessVMConnection?
     package var resumeCalls: Int { lock.withLock { resumes } }
 
     fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool, activeCredential: String,
@@ -394,15 +399,34 @@ package final class ModelPreparedOperation: @unchecked Sendable {
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         task = session.dataTask(with: request)
     }
-    func acquireForStart() { lock.lock() }
-    func releaseForStart() { lock.unlock() }
+    fileprivate func bindVMConnection(_ connection: BusinessVMConnection) throws {
+        try lock.withLock {
+            guard !started, !cancelled, vmConnection == nil, connection.service == .model else { throw ModelTransportError.cancelled }
+            vmConnection = connection
+        }
+    }
+    func acquireForStart() { lock.lock(); vmConnection?.acquireNativeStart() }
+    func releaseForStart() { vmConnection?.releaseNativeEffect(); lock.unlock() }
+    func validateVMOwner(scope: RunEffectScope, lifecycle: RunLifecycle) throws {
+        if let vmConnection {
+            guard vmConnection.lifecycle === lifecycle, vmConnection.epoch == scope.generation else { throw AuthorizationError.wrongRun }
+        }
+    }
     func startLocked() throws {
         guard !started, !cancelled else { throw ModelTransportError.cancelled }
+        try vmConnection?.validateNativeEffectLocked()
         started = true
         task.resume()
         resumes += 1
     }
-    package func start() throws { try lock.withLock { try startLocked() } }
+    package func start() throws {
+        try lock.withLock {
+            // Actual VM operations may start only through RunLifecycle's
+            // owner-lock → trusted clock → concrete resume sequence.
+            guard vmConnection == nil else { throw HostModelGatewayError.invalidHandle }
+            try startLocked()
+        }
+    }
     package func cancel() {
         lock.withLock { cancelled = true }
         task.cancel()

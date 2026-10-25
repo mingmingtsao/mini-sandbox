@@ -137,6 +137,6 @@ swift run --skip-build WorkspaceChecks
 
 ## 使用演示
 
-[▶ 观看完整使用视频（8 分 13 秒）](http://tnhkeg6ps.hd-bkt.clouddn.com/MiniSandbox-Full-Walkthrough.mp4)
+[▶ 观看完整使用视频（8 分 13 秒）](https://github.com/mingmingtsao/mini-sandbox/releases/download/demo-2026-10-26/MiniSandbox-Full-Walkthrough.mp4)
 
 展示项目配置、逐次审批、测试失败后的修复、结果审阅与导出，以及 Stop 操作。

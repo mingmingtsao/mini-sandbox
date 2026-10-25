@@ -1,6 +1,7 @@
 # mini-sandbox
 
 [![CI](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml?query=branch%3Amain)
+[![Swift line coverage](https://raw.githubusercontent.com/mingmingtsao/mini-sandbox/ci-coverage/coverage.svg)](https://github.com/mingmingtsao/mini-sandbox/tree/ci-coverage)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 面向 Apple Silicon Mac 的 Agent 安全工作台。通过宿主侧授权、逐次审批、审计和隔离运行时，控制模型请求、工具调用及工作区数据的流转。
@@ -55,7 +56,9 @@ python3 -m unittest discover -s Tests/PackagingTests -v
 
 [GitHub Actions](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml) 在 PR、`main` push 和手动触发时运行。当前包含 Python 安全回归、回环 OAuth/MCP fixtures、全部 Debug 目标编译、公共契约/API 检查及 Release App 打包和严格签名验证；汇总检查名为 `CI`。
 
-徽章显示 `main` 的 CI 状态，不表示所有组件检查或真实 VM、GUI、Keychain、Agent 主链均已验收。精确覆盖范围及复现命令见 [持续集成说明](docs/engineering/ci.md)；其他检查入口见相应工程文档。
+CI 徽章显示 `main` 的构建状态；覆盖率徽章显示最近成功的主线 CI 中，现有 `ContractChecks` 对 `Sources/**/*.swift` 的实际行覆盖率，未执行的源码也计入分母。点击覆盖率徽章可查看每个文件的明细及对应提交。该数值不包含 Python、Go 或 VM/GUI 验收；完整口径见 [覆盖率说明](docs/engineering/coverage.md)。
+
+精确 CI 范围及复现命令见 [持续集成说明](docs/engineering/ci.md)；其他组件检查入口见相应工程文档。
 
 ## 仓库结构
 

@@ -311,6 +311,8 @@ package final class ModelPreparedOperation: @unchecked Sendable {
     private let lock = NSLock()
     private var started = false
     private var cancelled = false
+    private var resumes = 0
+    package var resumeCalls: Int { lock.withLock { resumes } }
 
     fileprivate init(request: URLRequest, configuration: URLSessionConfiguration, streaming: Bool,
         decodeText: @escaping @Sendable (Data) throws -> ModelCompletion,
@@ -328,10 +330,12 @@ package final class ModelPreparedOperation: @unchecked Sendable {
             guard !started, !cancelled else { throw ModelTransportError.cancelled }
             started = true
             task.resume()
+            resumes += 1
         }
     }
     package func cancel() {
-        lock.withLock { cancelled = true; task.cancel() }
+        lock.withLock { cancelled = true }
+        task.cancel()
         delegate.finish(ModelTransportError.cancelled)
         session.invalidateAndCancel()
     }

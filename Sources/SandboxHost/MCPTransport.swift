@@ -12,6 +12,8 @@ final class MCPPreparedOperation: NSObject, URLSessionDataDelegate, @unchecked S
     // decoded, assembled outbound text is checked. Never re-read the provider.
     private var activeCredential: String?
     private var started = false
+    private var resumes = 0
+    var resumeCalls: Int { lock.withLock { resumes } }
     private var finished = false
     private let notification: Bool
     private let limit: Int
@@ -47,7 +49,7 @@ final class MCPPreparedOperation: NSObject, URLSessionDataDelegate, @unchecked S
     func start() throws {
         try lock.withLock {
             guard !started, !finished, let task else { throw HostMCPGatewayError.notStarted }
-            started = true; task.resume()
+            started = true; task.resume(); resumes += 1
         }
     }
     func validateOutboundText(_ text: String) throws {

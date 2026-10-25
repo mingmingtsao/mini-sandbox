@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -139,6 +140,21 @@ class PackagingTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.build_app.main()
         self.assertEqual((output / "Contents/MacOS/MiniSandbox").read_bytes(), b"test executable")
+
+    def test_app_signing_grants_virtualization_to_actual_bundle(self):
+        with self.build_app.ENTITLEMENTS.open("rb") as stream:
+            self.assertEqual(plistlib.load(stream), {"com.apple.security.virtualization": True})
+        commands = []
+        with mock.patch.object(self.build_app, "run", side_effect=lambda *args: commands.append(args)), \
+                mock.patch.object(self.build_app.subprocess, "check_output", return_value=str(self.bin_dir)), \
+                mock.patch.object(sys, "argv", [str(SCRIPT)]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.build_app.main()
+        signing = [args for args in commands if args[:2] == ("codesign", "--force")]
+        self.assertEqual(len(signing), 1)
+        self.assertEqual(signing[0][4:6], ("--entitlements", str(self.build_app.ENTITLEMENTS)))
+        self.assertIn(".MiniSandbox-build-", signing[0][-1])
+        self.assertIn(("codesign", "--verify", "--strict", "--verbose=2", signing[0][-1]), commands)
 
 
 if __name__ == "__main__":

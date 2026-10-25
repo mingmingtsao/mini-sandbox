@@ -27,6 +27,16 @@ targets, unknown paths/query, `Transfer-Encoding`, `Content-Encoding`, `Expect`,
 are rejected. An incomplete valid prefix remains incomplete; it is not EOF or a
 successful request. The connection owner supplies the bounded receive deadline.
 
+The exact optional transport/diagnostic allowlist is `accept`, `accept-encoding`,
+`connection`, `user-agent`, `x-app`, the SDK's `x-stainless-lang`,
+`x-stainless-package-version`, `x-stainless-os`, `x-stainless-arch`,
+`x-stainless-runtime`, `x-stainless-runtime-version`, `x-stainless-retry-count`,
+`x-stainless-timeout`, `x-stainless-helper-method`, and Claude session/agent/parent
+agent ID headers. These are consumed locally without forwarding or logging and
+cannot choose an identity or route. Other headers, including other `anthropic-*`
+semantics, are rejected. This is a fixed-version subset rather than the general
+gateway guide's recommendation to forward future fields automatically.
+
 The business dialect accepts exactly this captured tuple:
 
 | Selector | Accepted value |

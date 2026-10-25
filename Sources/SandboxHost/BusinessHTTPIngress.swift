@@ -11,6 +11,13 @@ package struct BusinessHTTPIngress: Sendable {
     package static let maxBodyBytes = 65_536
     package static let maxWireBytes = maxHeaderBytes + maxBodyBytes
     package static let localPlaceholder = "mini-sandbox-local-only"
+    private static let consumedHeaders: Set<String> = [
+        "host", "authorization", "content-type", "content-length", "connection", "accept", "accept-encoding",
+        "user-agent", "anthropic-version", "anthropic-beta", "x-app", "x-stainless-lang",
+        "x-stainless-package-version", "x-stainless-os", "x-stainless-arch", "x-stainless-runtime",
+        "x-stainless-runtime-version", "x-stainless-retry-count", "x-stainless-timeout", "x-stainless-helper-method",
+        "x-claude-code-session-id", "x-claude-code-agent-id", "x-claude-code-parent-agent-id"
+    ]
 
     package let body: Data
     package let target: String
@@ -40,6 +47,7 @@ package struct BusinessHTTPIngress: Sendable {
             let keyBytes = line[..<colon].utf8
             guard !keyBytes.isEmpty, keyBytes.allSatisfy(headerToken) else { throw Failure.invalidHTTP }
             let key = String(line[..<colon]).lowercased()
+            guard consumedHeaders.contains(key) else { throw Failure.unsupportedProtocol }
             let raw = line[line.index(after: colon)...]
             guard headers[key] == nil, raw.utf8.allSatisfy({ $0 == 9 || (32...126).contains($0) }) else { throw Failure.invalidHTTP }
             headers[key] = raw.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
@@ -48,6 +56,7 @@ package struct BusinessHTTPIngress: Sendable {
               headers["host"] == "127.0.0.1:4061",
               headers["authorization"] == "Bearer " + localPlaceholder,
               ["application/json", "application/json; charset=utf-8"].contains(headers["content-type"] ?? ""),
+              headers["accept"] == nil || ["application/json", "text/event-stream", "*/*"].contains(headers["accept"]!),
               headers["connection"] == nil || ["close", "keep-alive"].contains(headers["connection"]!.lowercased()),
               let rawLength = headers["content-length"], !rawLength.isEmpty,
               rawLength.count <= 5, rawLength.first != "0", rawLength.utf8.allSatisfy({ (48...57).contains($0) }),

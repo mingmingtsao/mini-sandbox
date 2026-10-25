@@ -58,6 +58,8 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
                 ("expect", wire(body, headers: "Expect: 100-continue\r\n")),
                 ("upgrade", wire(body, headers: "Upgrade: websocket\r\n")),
                 ("api key", wire(body, headers: "X-Api-Key: unexpected\r\n")),
+                ("unknown semantic header", wire(body, headers: "Anthropic-Workspace-Id: another-account\r\n")),
+                ("unknown header", wire(body, headers: "X-Unknown: private-sentinel\r\n")),
                 ("fold", wire(body, headers: " X-Unknown: x\r\n")),
                 ("key whitespace", wire(body, headers: "X-Unknown : x\r\n")),
                 ("value control", wire(body, headers: "X-Unknown: x\u{7f}\r\n")),
@@ -70,6 +72,7 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
                 ("header limit", Data(repeating: 65, count: BusinessHTTPIngress.maxHeaderBytes)),
                 ("wire limit", Data(repeating: 65, count: BusinessHTTPIngress.maxWireBytes + 1))
             ] { try rejected(name) { _ = try BusinessHTTPIngress.parse(bad) } }
+            try check(try BusinessHTTPIngress.parse(wire(body, headers: "Accept: text/event-stream\r\nX-Stainless-Retry-Count: 0\r\nUser-Agent: claude-cli\r\nX-Claude-Code-Session-Id: guest-has-no-authority\r\n"))?.claudeRequest().body == request.body, "known transport and diagnostic headers do not change semantics")
             for badBeta in ["unknown-2026", "", ClaudeRequestSelectors.pinned.beta + ",files-api-2025-04-14"] {
                 try rejected("beta contract") { _ = try BusinessHTTPIngress.parse(wire(body, beta: badBeta))?.claudeRequest() }
             }

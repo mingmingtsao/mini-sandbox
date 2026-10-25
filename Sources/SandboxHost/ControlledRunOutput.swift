@@ -7,6 +7,7 @@ package final class ControlledRunOutput: @unchecked Sendable {
         case modelChunk(ModelStreamChunk)
         case modelCompletion(ModelCompletion)
         case mcpCompletion(MCPCompletion)
+        case mcpResponse(MCPWireResponse)
     }
     package struct Summary: Sendable {
         package let queuedEvents: Int
@@ -27,6 +28,10 @@ package final class ControlledRunOutput: @unchecked Sendable {
     private var metadata = 0
     private var cancelled = false
     private let native: NativeResponseChannel?
+    var isMCPNative: Bool { native?.isMCP == true }
+    package func matchesVMConnection(_ connection: BusinessVMConnection) -> Bool {
+        lock.withLock { native?.matchesVMConnection(connection) == true }
+    }
     package struct NativeProgress: Sendable {
         package let committedBytes: Int
         package let writeCalls: Int
@@ -38,13 +43,19 @@ package final class ControlledRunOutput: @unchecked Sendable {
         package let wouldBlockCount: Int
         package let partialWriteCount: Int
         package let closed: Bool
+        package let largestFrameBytes: Int
+        package let peakQueuedEvents: Int
+        package let peakBufferedBytes: Int
+        package let cumulativeEnqueuedBytes: Int
     }
     package var nativeProgress: NativeProgress? {
         lock.withLock {
             native.map { NativeProgress(committedBytes: $0.committedBytes, writeCalls: $0.writeCalls, pendingBytes: $0.pendingBytes,
                 bufferedBytes: $0.bufferedBytes,
                 queuedEvents: $0.queuedEvents, acceptedEvents: $0.acceptedEvents, acceptedFinals: $0.acceptedFinals,
-                wouldBlockCount: $0.wouldBlockCount, partialWriteCount: $0.partialWriteCount, closed: $0.isClosed) }
+                wouldBlockCount: $0.wouldBlockCount, partialWriteCount: $0.partialWriteCount, closed: $0.isClosed,
+                largestFrameBytes: $0.largestFrameBytes, peakQueuedEvents: $0.peakQueuedEvents,
+                peakBufferedBytes: $0.peakBufferedBytes, cumulativeEnqueuedBytes: $0.cumulativeEnqueuedBytes) }
         }
     }
     // Actual consumer state, not just test counters. It is deliberately not a
@@ -74,14 +85,14 @@ package final class ControlledRunOutput: @unchecked Sendable {
     // Internal host binding; gateway factory derives the scope and wire mode from
     // the approved request. Descriptor ownership transfers even on setup failure.
     init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID? = nil,
-         takingAcceptedSocket fd: Int32, streaming: Bool) throws {
+         takingAcceptedSocket fd: Int32, streaming: Bool, mcp: Bool = false) throws {
         self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
-        native = try NativeResponseChannel(takingAcceptedSocket: fd, streaming: streaming)
+        native = try NativeResponseChannel(takingAcceptedSocket: fd, streaming: streaming, mcp: mcp)
     }
     init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID,
-         takingVMConnection owner: BusinessVMConnection, streaming: Bool) throws {
+         takingVMConnection owner: BusinessVMConnection, streaming: Bool, mcp: Bool = false) throws {
         self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
-        native = try NativeResponseChannel(takingVMConnection: owner, streaming: streaming)
+        native = try NativeResponseChannel(takingVMConnection: owner, streaming: streaming, mcp: mcp)
     }
     package func enqueue(_ event: Event) throws {
         if try lock.withLock({ () throws -> Bool in
@@ -89,6 +100,7 @@ package final class ControlledRunOutput: @unchecked Sendable {
             guard let native else { return false }
             try native.enqueue(event); return true
         }) { return }
+        if case .mcpResponse = event { throw NativeResponseError.invalidEvent }
         // Bounded, outside the authority lock. Reflection is used only to measure
         // retained value size, never emitted/logged or used as protocol encoding.
         let bytes = String(reflecting: event).utf8.count
@@ -142,6 +154,7 @@ package final class ControlledRunOutput: @unchecked Sendable {
         case .mcpCompletion(let value):
             next.text = value.text; next.finals += 1
             if let id = value.sourceToolUseID { next.tools.append(.toolResult(toolUseID: id, content: value.text, isError: false)) }
+        case .mcpResponse: throw NativeResponseError.invalidEvent
         }
         preparedAcceptance = PreparedAcceptance(event: event, previous: previous, next: next)
     }

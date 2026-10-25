@@ -27,16 +27,16 @@
     "WorkbenchChecks --composition-mcp (loopback)",
     "MiniSandbox --diagnostics-json (validated)"
   ],
-  "commit": "cd4a498b0c52183154f0949809720949b6ada5bb",
+  "commit": "234ce0d3c5e7afc9ddbd53c86878470b4c0b0cb7",
   "repository": "mingmingtsao/mini-sandbox",
-  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40211112860",
-  "lines": 7104,
-  "covered": 6470,
-  "percent": 91.08,
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40235734163",
+  "lines": 11068,
+  "covered": 7438,
+  "percent": 67.2,
   "files": [
     {
       "path": "Sources/MiniSandboxApp/MiniSandboxApp.swift",
-      "lines": 229,
+      "lines": 257,
       "covered": 151
     },
     {
@@ -51,8 +51,8 @@
     },
     {
       "path": "Sources/SandboxHost/AnthropicNativeRequest.swift",
-      "lines": 133,
-      "covered": 133
+      "lines": 149,
+      "covered": 142
     },
     {
       "path": "Sources/SandboxHost/AnthropicStreamDecoder.swift",
@@ -61,13 +61,63 @@
     },
     {
       "path": "Sources/SandboxHost/AuthorizationController.swift",
-      "lines": 423,
-      "covered": 397
+      "lines": 424,
+      "covered": 398
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessDisplayOutput.swift",
+      "lines": 75,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessHTTPIngress.swift",
+      "lines": 93,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessModelActivation.swift",
+      "lines": 0,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessRuntimeBundle.swift",
+      "lines": 80,
+      "covered": 41
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessVMConnection.swift",
+      "lines": 192,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessVMEffects.swift",
+      "lines": 120,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/BusinessVMSession.swift",
+      "lines": 340,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ClaudeMCPIngress.swift",
+      "lines": 142,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ClaudeModelAdmission.swift",
+      "lines": 45,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxHost/ClaudeRequestSelectors.swift",
+      "lines": 8,
+      "covered": 0
     },
     {
       "path": "Sources/SandboxHost/ControlledRunOutput.swift",
-      "lines": 136,
-      "covered": 136
+      "lines": 158,
+      "covered": 149
     },
     {
       "path": "Sources/SandboxHost/EnvironmentInspector.swift",
@@ -80,19 +130,29 @@
       "covered": 30
     },
     {
+      "path": "Sources/SandboxHost/HostCLIPermissionGateway.swift",
+      "lines": 183,
+      "covered": 0
+    },
+    {
       "path": "Sources/SandboxHost/HostMCPGateway.swift",
-      "lines": 291,
-      "covered": 290
+      "lines": 403,
+      "covered": 316
     },
     {
       "path": "Sources/SandboxHost/HostModelGateway.swift",
-      "lines": 406,
-      "covered": 400
+      "lines": 483,
+      "covered": 428
+    },
+    {
+      "path": "Sources/SandboxHost/LocalClaudeFixtureCredential.swift",
+      "lines": 0,
+      "covered": 0
     },
     {
       "path": "Sources/SandboxHost/MCPCredentials.swift",
-      "lines": 11,
-      "covered": 11
+      "lines": 21,
+      "covered": 21
     },
     {
       "path": "Sources/SandboxHost/MCPModelHandoff.swift",
@@ -111,8 +171,13 @@
     },
     {
       "path": "Sources/SandboxHost/MCPTransport.swift",
-      "lines": 105,
-      "covered": 104
+      "lines": 172,
+      "covered": 111
+    },
+    {
+      "path": "Sources/SandboxHost/ModelCredentialReflection.swift",
+      "lines": 283,
+      "covered": 280
     },
     {
       "path": "Sources/SandboxHost/ModelCredentials.swift",
@@ -126,28 +191,28 @@
     },
     {
       "path": "Sources/SandboxHost/ModelStructured.swift",
-      "lines": 121,
-      "covered": 120
+      "lines": 129,
+      "covered": 129
     },
     {
       "path": "Sources/SandboxHost/ModelTools.swift",
-      "lines": 69,
-      "covered": 64
+      "lines": 91,
+      "covered": 67
     },
     {
       "path": "Sources/SandboxHost/ModelTransport.swift",
-      "lines": 411,
-      "covered": 404
+      "lines": 475,
+      "covered": 436
     },
     {
       "path": "Sources/SandboxHost/NativeResponseChannel.swift",
-      "lines": 90,
-      "covered": 90
+      "lines": 120,
+      "covered": 102
     },
     {
       "path": "Sources/SandboxHost/NativeResponseSerializer.swift",
-      "lines": 266,
-      "covered": 260
+      "lines": 281,
+      "covered": 262
     },
     {
       "path": "Sources/SandboxHost/RunClock.swift",
@@ -156,8 +221,8 @@
     },
     {
       "path": "Sources/SandboxHost/RunLifecycle.swift",
-      "lines": 190,
-      "covered": 188
+      "lines": 350,
+      "covered": 251
     },
     {
       "path": "Sources/SandboxHost/RuntimeJSON.swift",
@@ -186,28 +251,48 @@
     },
     {
       "path": "Sources/SandboxHost/WorkspaceCopy.swift",
-      "lines": 813,
-      "covered": 793
+      "lines": 865,
+      "covered": 841
+    },
+    {
+      "path": "Sources/SandboxHost/WorkspaceEffects.swift",
+      "lines": 96,
+      "covered": 96
     },
     {
       "path": "Sources/SandboxHost/WorkspaceGrantQuota.swift",
-      "lines": 151,
-      "covered": 151
+      "lines": 191,
+      "covered": 184
+    },
+    {
+      "path": "Sources/SandboxHost/WorkspaceRunSession.swift",
+      "lines": 103,
+      "covered": 0
     },
     {
       "path": "Sources/SandboxHost/WorkspaceTransfer.swift",
-      "lines": 297,
-      "covered": 297
+      "lines": 377,
+      "covered": 376
+    },
+    {
+      "path": "Sources/SandboxWorkbench/BusinessTaskController.swift",
+      "lines": 618,
+      "covered": 56
+    },
+    {
+      "path": "Sources/SandboxWorkbench/BusinessTaskView.swift",
+      "lines": 573,
+      "covered": 0
     },
     {
       "path": "Sources/SandboxWorkbench/ConnectionSettings.swift",
-      "lines": 89,
-      "covered": 82
+      "lines": 90,
+      "covered": 83
     },
     {
       "path": "Sources/SandboxWorkbench/ConnectionSettingsView.swift",
-      "lines": 132,
-      "covered": 127
+      "lines": 137,
+      "covered": 130
     },
     {
       "path": "Sources/SandboxWorkbench/KeychainCanarySelfCheck.swift",
@@ -215,14 +300,29 @@
       "covered": 43
     },
     {
+      "path": "Sources/SandboxWorkbench/LocalBusinessNoCredentialStore.swift",
+      "lines": 0,
+      "covered": 0
+    },
+    {
+      "path": "Sources/SandboxWorkbench/MCPConnectionSettings.swift",
+      "lines": 55,
+      "covered": 51
+    },
+    {
+      "path": "Sources/SandboxWorkbench/MCPConnectionSettingsView.swift",
+      "lines": 74,
+      "covered": 0
+    },
+    {
       "path": "Sources/SandboxWorkbench/RunComposition.swift",
-      "lines": 305,
-      "covered": 298
+      "lines": 372,
+      "covered": 356
     },
     {
       "path": "Sources/SandboxWorkbench/WorkbenchModel.swift",
-      "lines": 367,
-      "covered": 346
+      "lines": 374,
+      "covered": 353
     },
     {
       "path": "Sources/SandboxWorkbench/WorkbenchView.swift",

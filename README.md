@@ -83,20 +83,6 @@ swift run --skip-build WorkspaceChecks
 
 运行真实任务还需要准备 Linux 运行时镜像和固定版本 CLI 磁盘（均不在仓库中），步骤见 [运行指南 §7](docs/getting-started.md#7-准备-vm-运行时进阶)。不使用真实凭据体验完整界面流程，见 [本地 fixture 模式](docs/getting-started.md#8-本地-fixture-模式开发者)。
 
-## 项目状态
-
-当前为 **v0.1.0 开发预览**，以本机构建与验证为主。
-
-| 项 | 状态 |
-|---|---|
-| 真实模型出口 | 自 2026-10-26 起正式构建**已启用**固定 DeepSeek 业务路由（[启用记录](docs/engineering/business-egress-review.md#启用记录)）；每个请求仍需逐次审批，凭据只在宿主读取 |
-| Agent | Claude Code 2.1.309；Codex、DSH 尚未实现 |
-| 模型 | DeepSeek `deepseek-flash`（Anthropic 兼容协议） |
-| MCP | 本机 `127.0.0.1` 固定仓库 profile；远端 HTTP、OAuth、stdio 连接器尚未实现 |
-| 分发 | 仅本地 ad-hoc 签名，未公证；运行时镜像与 CLI 需自行构建/获取 |
-| CI | 构建、契约、离线回归、打包签名与覆盖率；不启动 VM、不连接真实服务 |
-
-完整限制与规格差异见 [架构设计 §12–§13](docs/architecture.md#12-实现现状与已知限制)。
 
 ## 仓库结构
 

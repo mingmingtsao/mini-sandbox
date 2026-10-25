@@ -47,9 +47,9 @@ package struct MCPConfigurationRetirement: Sendable {
 
     package func connect(port: String, bearer: String) async {
         guard !isBusy, !isClosed, !isLocalFixture else { return }
-        guard let port = UInt16(port), port > 0, !bearer.isEmpty, bearer.utf8.count <= 16_384,
-              !bearer.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            status = "Enter a local port from 1–65535 and a nonempty bearer."; return
+        guard let port = UInt16(port), port > 0, !bearer.isEmpty, bearer.utf8.count <= 4096,
+              bearer.utf8.allSatisfy({ (33...126).contains($0) }) else {
+            status = "Enter a local port from 1–65535 and a bearer of 1–4096 ASCII characters without spaces."; return
         }
         isBusy = true; defer { isBusy = false }
         do {

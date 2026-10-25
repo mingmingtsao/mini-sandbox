@@ -10,7 +10,7 @@ import SandboxWorkbench
         let composition = try RunComposition(audit: WorkbenchAuditSink(newFileAt: url), credentialStore: SettingsStore())
         let settings = composition.mcpSettings
         try CompositionDiagnosticChecks.require(settings.configuration == nil && !settings.isClosed, "MCP defaults unavailable")
-        await settings.connect(port: "49153", bearer: "public-test-only-first")
+        await settings.connect(port: "49153", bearer: String(repeating: "x", count: 4096))
         guard let first = settings.configuration else { throw CompositionDiagnosticChecks.Failure(message: "MCP configure failed") }
         let now = Date()
         let grant = try RunGrant(runID: UUID(), epoch: 1, createdAt: now.addingTimeInterval(-1), expiresAt: now.addingTimeInterval(300),
@@ -24,6 +24,12 @@ import SandboxWorkbench
         await settings.connect(port: "0", bearer: "invalid-port")
         try CompositionDiagnosticChecks.require(settings.configuration == first && run.authorityHandle.lifecycle.currentStatus == .active,
             "invalid MCP settings must not retire valid configuration")
+        for bearer in ["", "has space", "unicode-é", String(repeating: "x", count: 4097)] {
+            await settings.connect(port: "49153", bearer: bearer)
+            try CompositionDiagnosticChecks.require(settings.configuration == first &&
+                run.authorityHandle.lifecycle.currentStatus == .active && oldGateway === composition.mcp,
+                "invalid MCP credential format must preserve the active configuration and run")
+        }
         await settings.connect(port: "49154", bearer: "public-test-only-second")
         guard let second = settings.configuration else { throw CompositionDiagnosticChecks.Failure(message: "MCP replacement failed") }
         try CompositionDiagnosticChecks.require(second.connectionID == first.connectionID && second.version == first.version + 1 &&

@@ -3,6 +3,7 @@ import Darwin
 @testable import SandboxHost
 import SandboxContracts
 
+#if DEBUG || SANDBOX_TEST_FIXTURES
 private func clientJSON(_ method: String, repo: String = "A", write: Bool = false, id: ModelJSON = .integer(7)) -> ModelJSON {
     let meta: ModelJSON = .object([
         ClaudeMCPProtocol.metaVersion: .string(ClaudeMCPProtocol.version),
@@ -157,6 +158,30 @@ func claudeClientChecks(_ port: UInt16, _ token: String) async throws {
     _ = try await context.send(clientIngress("tools/call"), stopBeforeSend: true)
     try await denied(.revoked) { _ = try await context.propose(clientIngress("tools/call")) }
     try report("modern-stop", hits: 1, reads: 1)
+
+    // Both requests cross the actual HTTP boundary while discovery is unknown.
+    // The fixture releases the second, changed catalog only after the first
+    // response has reached its actual native peer.
+    let raceID = UUID()
+    let raceConnection = try HostMCPConnection.claudeLocalRepository(connectionID: raceID, accountID: UUID(), port: port, provider: credentials)
+    let raceGateway = try HostMCPGateway(connections: [raceConnection], auditSink: audit)
+    let race = ClientContext(gateway: raceGateway, handle: try await raceGateway.install(grant: clientGrant(raceID)), connectionID: raceID, credentials: credentials)
+    try phase("modern-catalog-race")
+    let first = Task { try await race.send(clientIngress("tools/list", id: .integer(101))) }
+    let second = Task { try await race.send(clientIngress("tools/list", id: .integer(102))) }
+    _ = try await first.value
+    try check(try await raceGateway.discovery(connectionID: raceID) == .knownReady, "first catalog not learned")
+    output("RELEASE modern-catalog-race")
+    do { _ = try await second.value; throw Failure(message: "concurrent changed catalog replaced frozen catalog") }
+    catch HostMCPGatewayError.outcomeUnknown {}
+    try check(try await raceGateway.discovery(connectionID: raceID) == .unknown, "conflicting catalog not invalidated")
+    try await raceGateway.stop(handle: race.handle)
+    try report("modern-catalog-race", hits: 2, reads: 2)
     try check(!String(reflecting: audit.snapshot).contains(token), "MCP audit excludes fake credential")
     output("PASS actual loopback modern MCP to native socket; VZ/CLI/App NOT_RUN")
 }
+#else
+func claudeClientChecks(_ port: UInt16, _ token: String) async throws {
+    throw Failure(message: "modern MCP local fixture requires DEBUG or SANDBOX_TEST_FIXTURES")
+}
+#endif

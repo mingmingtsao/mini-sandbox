@@ -307,7 +307,8 @@ package actor HostMCPGateway {
                     }
                 } else if method != "tools/call" { throw HostMCPGatewayError.invalidResponse }
                 try op.validateOutboundJSON(response.wire, joinedText: text)
-                if let catalog, entry.discovery != .unknown, catalog.1 != entry.schemaDigest {
+                let current = try live(run, e.connectionID)
+                if let catalog, current.discovery != .unknown, catalog.1 != current.schemaDigest {
                     try invalidateCatalog(connectionID: e.connectionID)
                     throw HostMCPGatewayError.invalidResponse
                 }
@@ -329,7 +330,14 @@ package actor HostMCPGateway {
             try validate(run, proposal); try Task.checkCancellation()
             if profile == .claudeRepository {
                 if let catalog {
-                    var updated = entry; updated.discovery = catalog.0; updated.schemaDigest = catalog.1
+                    // Network and audit suspension can let another initial list
+                    // freeze the catalog. Never write the pre-await snapshot back.
+                    var updated = try live(run, e.connectionID)
+                    if updated.discovery != .unknown, catalog.1 != updated.schemaDigest {
+                        try invalidateCatalog(connectionID: e.connectionID)
+                        throw HostMCPGatewayError.invalidResponse
+                    }
+                    updated.discovery = catalog.0; updated.schemaDigest = catalog.1
                     registry[e.connectionID] = updated
                 }
             } else if method != "tools/call" {

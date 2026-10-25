@@ -89,6 +89,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 payload = {'jsonrpc': '2.0', 'id': request['id'], 'result': result}
                 if mode == 'modern-wrong-id': payload['id'] = 'foreign'
                 if mode == 'modern-error': payload = {'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32602, 'message': 'Controlled upstream error'}}
+            if mode == 'modern-catalog-race':
+                if request['id'] == 101:
+                    if not state['second_arrived'].wait(10): raise ValueError('second request did not start')
+                elif request['id'] == 102:
+                    state['second_arrived'].set()
+                    if not state['release_second'].wait(10): raise ValueError('first response did not commit')
+                    payload['result']['tools'][0]['description'] += ' changed'
+                else:
+                    raise ValueError('unexpected race ID')
             body = json.dumps(payload, separators=(',', ':')).encode()
             self.send_response(200); self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body))); self.send_header('Connection', 'close'); self.end_headers()
@@ -100,7 +109,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     binary = pathlib.Path(sys.argv[1]).resolve()
     state = dict(lock=threading.Lock(), token='mcp-canary-' + secrets.token_hex(24), hits=0, writes=0,
-                 repos={'A': 'repo-A-initial', 'B': 'repo-B-initial'}, mode='normal')
+                 repos={'A': 'repo-A-initial', 'B': 'repo-B-initial'}, mode='normal',
+                 second_arrived=threading.Event(), release_second=threading.Event())
     server = Server(('127.0.0.1', 0), Handler); server.state = state
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     process = subprocess.Popen([str(binary), '--claude-native'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -136,9 +146,11 @@ def main():
                 phases += 1; pending = None
             elif line.startswith('PASS actual loopback modern MCP'):
                 final = True
+            elif line.strip() == 'RELEASE modern-catalog-race':
+                state['release_second'].set()
         code = process.wait(timeout=3)
         with state['lock']:
-            valid = code == 0 and phases == 9 and pending is None and final and state['writes'] == 1 and state['repos']['B'] == 'repo-B-initial'
+            valid = code == 0 and phases == 10 and pending is None and final and state['writes'] == 1 and state['repos']['B'] == 'repo-B-initial'
             print(json.dumps({'exit': code, 'phases': phases, 'upstream_hits': state['hits'], 'writes': state['writes'],
                               'resource_B_unchanged': state['repos']['B'] == 'repo-B-initial', 'status': 'PASS' if valid else 'FAIL',
                               'scope': 'owned HTTP upstream and actual AF_UNIX peer; VZ CLI App NOT_RUN'}))

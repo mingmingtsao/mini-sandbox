@@ -30,12 +30,12 @@
     "WorkbenchChecks --composition-mcp (loopback)",
     "MiniSandbox --diagnostics-json (validated)"
   ],
-  "commit": "7faff3c706a273491880d62ef7d740610cf5c525",
+  "commit": "00ed93864979c773dee608c22e17f90a586c1bca",
   "repository": "mingmingtsao/mini-sandbox",
-  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40238365697",
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40240391549",
   "lines": 11068,
-  "covered": 8595,
-  "percent": 77.66,
+  "covered": 8713,
+  "percent": 78.72,
   "files": [
     {
       "path": "Sources/MiniSandboxApp/MiniSandboxApp.swift",
@@ -145,7 +145,7 @@
     {
       "path": "Sources/SandboxHost/HostModelGateway.swift",
       "lines": 483,
-      "covered": 443
+      "covered": 447
     },
     {
       "path": "Sources/SandboxHost/LocalClaudeFixtureCredential.swift",
@@ -190,7 +190,7 @@
     {
       "path": "Sources/SandboxHost/ModelJSON.swift",
       "lines": 134,
-      "covered": 131
+      "covered": 130
     },
     {
       "path": "Sources/SandboxHost/ModelStructured.swift",
@@ -205,7 +205,7 @@
     {
       "path": "Sources/SandboxHost/ModelTransport.swift",
       "lines": 475,
-      "covered": 443
+      "covered": 444
     },
     {
       "path": "Sources/SandboxHost/NativeResponseChannel.swift",
@@ -280,12 +280,12 @@
     {
       "path": "Sources/SandboxWorkbench/BusinessTaskController.swift",
       "lines": 618,
-      "covered": 97
+      "covered": 232
     },
     {
       "path": "Sources/SandboxWorkbench/BusinessTaskView.swift",
       "lines": 573,
-      "covered": 310
+      "covered": 291
     },
     {
       "path": "Sources/SandboxWorkbench/ConnectionSettings.swift",
@@ -325,7 +325,7 @@
     {
       "path": "Sources/SandboxWorkbench/WorkbenchModel.swift",
       "lines": 374,
-      "covered": 355
+      "covered": 353
     },
     {
       "path": "Sources/SandboxWorkbench/WorkbenchView.swift",

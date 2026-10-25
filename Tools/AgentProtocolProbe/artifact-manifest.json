@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "observed_at": "2026-10-24T14:25:47+08:00",
+  "agent": "Claude Code",
+  "pinned_version": "2.1.309",
+  "latest_observed": "2.1.310",
+  "platform": "linux-arm64-musl",
+  "source": "https://downloads.claude.ai/claude-code-releases/2.1.309/linux-arm64-musl/claude",
+  "upstream_declared": {"size": 285493120, "sha256": "028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332"},
+  "actual_download": {"size": 285493120, "sha256": "028ad6b4c0ed304a116eb1efa6f1d752630f6691aa70004a79406026a023b332", "magic_hex": "7f454c46", "elf_class": 64, "endianness": "little", "e_machine": 183, "PT_INTERP": "/lib/ld-musl-aarch64.so.1", "DT_NEEDED": ["libc.musl-aarch64.so.1"]},
+  "input_digests": [
+    {"url": "https://downloads.claude.ai/claude-code-releases/2.1.309/manifest.json", "sha256": "8504633c7837099cefd2a995a433502717c360c155287b1ba92e6ec4d230093b"},
+    {"url": "https://downloads.claude.ai/claude-code-releases/latest", "sha256": "c7bd3bb68246a448a938b39de32c8dccced86dc5aaface5d3d3cf19fb2185b46"},
+    {"url": "https://downloads.claude.ai/claude-code-releases/2.1.310/manifest.json", "sha256": "895e85ce24c3df3fdb77ac1006bdb2b66f1c42dd557000e65ced1e4aad847e74"},
+    {"url": "https://raw.githubusercontent.com/anthropics/claude-code/main/LICENSE.md", "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6"},
+    {"url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/packages/llm/llm-deepseek/README.md", "sha256": "2d6fa13f6203beb23bd06a3ca347f2596f0ef17c0a26b9187968df2088f29226"},
+    {"url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/packages/sdk/protocol/README.md", "sha256": "140cedd28eaf11c785f11b87ac084bac0e33a14509c566a1c1dee090e12bedea"}
+  ],
+  "official_document_snapshots": [
+    {"source_url": "https://code.claude.com/docs/en/cli-reference", "snapshot": "source-flags.json", "sha256": "3a9c97fd097c0382f463166137e72af247ec3884962f123b30c21a854a48d09e", "format": "saved search response JSON with official-document excerpts; not full page or CLI output"},
+    {"source_url": "https://code.claude.com/docs/en/env-vars", "snapshot": "source-environment.json", "sha256": "e18c0849f14a1148928043894226d675d7b4707b0f81efc5ccf045ba3fa47f2b", "format": "saved search response JSON with official-document excerpts; not full page or CLI output"},
+    {"source_url": "https://developers.openai.com/codex/config-reference", "snapshot": "source-codex.json", "sha256": "65bbd2b768e4f946da7979574f358209115e8f449e5141a5bd39065068600bd9", "format": "saved search response JSON with official-document excerpts; not full page or CLI output"}
+  ],
+  "signature_verification": "NOT_RUN",
+  "static_elf_dependency_enumeration": "PASS",
+  "runtime_dependency_closure": "NOT_RUN",
+  "cli_version_and_help": "NOT_RUN",
+  "actual_CLI_probe": "NOT_RUN",
+  "normal_request_byte_count": null,
+  "production_65536_compatibility": "NOT_RUN",
+  "SSE_tools_MCP_cancel_full_chain": "NOT_RUN",
+  "license": "Anthropic proprietary commercial terms; redistribution NOT_APPROVED; no binary in source repository"
+}

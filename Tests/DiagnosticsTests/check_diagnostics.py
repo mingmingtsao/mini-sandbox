@@ -21,3 +21,4 @@ assert set(report) <= {"architecture", "logicalCPUCount", "physicalMemoryBytes",
                        "operatingSystem", "virtualizationSupported", "keychainQueryAvailable",
                        "keychainStatus", "checkedAt"}
 print("PASS app environment diagnostics schema and host capability invariants")
+print("OBS host capabilities virtualization_supported=" + str(report["virtualizationSupported"]).lower())

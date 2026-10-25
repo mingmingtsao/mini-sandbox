@@ -12,7 +12,7 @@ func rejected(_ label: String, _ action: () throws -> Void) throws {
 }
 func wire(_ body: String, target: String = "/v1/messages?beta=true", headers: String = "", length: String? = nil, beta: String? = ClaudeRequestSelectors.pinned.beta) -> Data {
     var value = "POST \(target) HTTP/1.1\r\nHost: 127.0.0.1:4061\r\nAuthorization: Bearer mini-sandbox-local-only\r\nContent-Type: application/json\r\nAnthropic-Version: 2023-06-01\r\nContent-Length: \(length ?? String(body.utf8.count))\r\n"
-    if let beta { value += "Anthropic-Beta: \(beta)\r\n" }
+    if let beta { value += "Anthropic-Beta: \(beta)\r\nAnthropic-Dangerous-Direct-Browser-Access: true\r\n" }
     return Data((value + headers + "\r\n" + body).utf8)
 }
 let body = #"{"model":"deepseek-flash","max_tokens":512,"stream":true,"system":[{"type":"text","text":"top","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"fix the project"},{"role":"system","content":[{"type":"text","text":"local context"}]}],"tools":[{"name":"Read","input_schema":{"type":"object"}}]}"#
@@ -77,6 +77,10 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
                 try rejected("beta contract") { _ = try BusinessHTTPIngress.parse(wire(body, beta: badBeta))?.claudeRequest() }
             }
             for changed in [
+                String(decoding: bytes, as: UTF8.self).replacingOccurrences(of: "Direct-Browser-Access: true", with: "Direct-Browser-Access: false"),
+                String(decoding: bytes, as: UTF8.self).replacingOccurrences(of: "Anthropic-Dangerous-Direct-Browser-Access: true\r\n", with: "")
+            ] { try rejected("fixed direct browser selector") { _ = try BusinessHTTPIngress.parse(Data(changed.utf8))?.claudeRequest() } }
+            for changed in [
                 body.replacingOccurrences(of: "\"role\":\"system\"", with: "\"role\":\"developer\""),
                 body.replacingOccurrences(of: "\"type\":\"text\",\"text\":\"local context\"", with: "\"type\":\"image\",\"source\":{}"),
                 body.replacingOccurrences(of: "\"role\":\"user\"", with: "\"role\":\"assistant\""),
@@ -85,10 +89,17 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             ] { try rejected("invalid body") { _ = try BusinessHTTPIngress.parse(wire(changed))?.claudeRequest() } }
             let credential = Credential()
             let (authority, handle, connection) = try await installed(credential)
+            if let index = CommandLine.arguments.firstIndex(of: "--captured-http"), index + 1 < CommandLine.arguments.count {
+                let captured = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                guard let parsed = try BusinessHTTPIngress.parse(captured) else { throw CheckFailure.failed("captured request incomplete") }
+                let admitted = try ClaudeModelAdmission.prepare(ingress: parsed, authority: authority, handle: handle, connection: connection)
+                print("PASS captured real CLI HTTP bytes=\(captured.count) raw_body=\(parsed.body.count) canonical_body=\(admitted.request.canonicalBody.count) approval=\(admitted.binding.canonicalRequest.count) credential_reads=0 network_starts=0")
+            }
             let admission = try ClaudeModelAdmission.prepare(ingress: ingress, authority: authority, handle: handle, connection: connection)
             let canonical = try ModelJSON.parse(admission.binding.canonicalRequest)
             try check(canonical["claudeSelectors"]?["beta"]?.string == ClaudeRequestSelectors.pinned.beta, "beta bound")
             try check(canonical["claudeSelectors"]?["query"]?.string == "beta=true", "query bound")
+            try check(canonical["claudeSelectors"]?["directBrowserAccess"]?.string == "true", "SDK direct browser selector bound")
             try check(canonical["nativeBody"] == request.body, "complete body bound")
             try check(admission.measurements.approvalEnvelopeBytes == admission.binding.canonicalRequest.count && admission.measurements.httpBytes == bytes.count, "measured actual bytes")
             let gateway = try HostModelGateway(connections: [connection], auditSink: Audit(), authority: authority)
@@ -103,10 +114,27 @@ func installed(_ credential: Credential, messageBytes: Int = 65_536) async throw
             try rejected("direct transport gate") { _ = try transport.prepareClaude(request, selectors: .pinned) }
             try rejected("native fallback gate") { _ = try transport.prepareNative(request) }
             try check(!BusinessModelActivation.credentialEgressEnabled, "immutable product gate")
+            let runtimeID = UUID()
+            let display = BusinessDisplayOutput(lifecycle: handle.lifecycle,
+                scope: try handle.lifecycle.runScope(for: handle, epoch: 1), runtimeID: runtimeID)
+            try display.enqueue(channel: "stdout", bytes: Data("actual output\n\u{1b}[31m".utf8), runtimeID: runtimeID)
+            try check(try display.acceptNext(), "display accepted through lifecycle")
+            try check(display.snapshot.stdout == "actual output\n\\u{1b}[31m" && display.snapshot.acceptedEvents == 1, "display escapes terminal control")
+            do { try display.enqueue(channel: "stdout", bytes: Data([65]), runtimeID: UUID()); throw CheckFailure.failed("foreign runtime output") }
+            catch NativeResponseError.invalidEvent {}
+            try display.enqueue(channel: "stderr", bytes: Data("late".utf8), runtimeID: runtimeID)
+            let permission = #"{"type":"control_request","request_id":"request-1","request":{"subtype":"can_use_tool","tool_use_id":"tool-1","tool_name":"Edit","input":{"file_path":"/work/project/logic.py","old_string":"-","new_string":"+"}}}"#
+            let tool = try CLIPermissionRequest.parse(Data(permission.utf8))
+            try check(tool.operation == "write" && tool.input["old_string"]?.string == "-", "normal CLI permission retains exact input")
+            for path in ["/etc/passwd", "/work/project/../private", "../outside", "/work/project/", "/work/project//logic.py"] {
+                try rejected("permission path") { _ = try CLIPermissionRequest.parse(Data(permission.replacingOccurrences(of: "/work/project/logic.py", with: path).utf8)) }
+            }
             let shortCredential = Credential()
             let (shortAuthority, shortHandle, shortConnection) = try await installed(shortCredential, messageBytes: 100)
             try rejected("grant envelope bound") { _ = try ClaudeModelAdmission.prepare(ingress: ingress, authority: shortAuthority, handle: shortHandle, connection: shortConnection) }
             handle.lifecycle.terminate(.stopped)
+            try rejected("late display after stop") { _ = try display.acceptNext() }
+            try check(display.snapshot.stderr.isEmpty && display.snapshot.acceptedEvents == 1, "no late UI adoption")
             try rejected("stop admission") { _ = try ClaudeModelAdmission.prepare(ingress: ingress, authority: authority, handle: handle, connection: connection) }
             try check(credential.reads == 0 && shortCredential.reads == 0, "admission never reads credentials")
             print("PASS business HTTP framing, fixed Claude selectors, unchanged native dialect, mid-system preservation, complete approval binding, budget and Stop; credential_reads=0 network_starts=0")

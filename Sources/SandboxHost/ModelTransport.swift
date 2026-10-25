@@ -162,7 +162,10 @@ package final class ModelTransport: NSObject, @unchecked Sendable {
             case .anthropic:
                 urlRequest.setValue(credential, forHTTPHeaderField: "x-api-key")
                 urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-                if let claudeSelectors { urlRequest.setValue(claudeSelectors.beta, forHTTPHeaderField: "anthropic-beta") }
+                if let claudeSelectors {
+                    urlRequest.setValue(claudeSelectors.beta, forHTTPHeaderField: "anthropic-beta")
+                    urlRequest.setValue(claudeSelectors.directBrowserAccess, forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
+                }
             }
             urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             urlRequest.httpBody = body

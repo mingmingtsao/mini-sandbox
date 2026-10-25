@@ -91,3 +91,29 @@ selector rejection, body preservation, one complete approval binding, grant
 bounds, Stop and the immutable activation gate. It asserts zero credential reads
 and zero network starts. `StructuredModelChecks` retains the prior native tests.
 Real VM, external provider and GUI task evidence must be recorded separately.
+
+## Actual SDK header and concrete guest response owner
+
+The image-v3 real Claude capture contains the fixed SDK header
+`anthropic-dangerous-direct-browser-access: true`. This exact value is now part
+of the complete approved selector tuple and is retained in the outbound request;
+missing/false/unknown values reject. It grants no host authority. The captured
+request admitted 19,457 HTTP bytes, 18,678 raw body bytes, 18,709 canonical body
+bytes and 19,174 complete approval bytes with zero credential reads/network starts.
+
+`makeVMNativeOutput` accepts only the connection minted by the actual VZ listener,
+checks model service and the installed lifecycle/run/epoch, then takes its single
+owned duplicate. The legacy AF_UNIX constructor keeps its original checks. The
+VZ path holds the concrete connection lock before the lifecycle lock; the final
+nonblocking send rechecks the owner, and terminal disposal retires the VZ original
+outside both locks. Physical Stop closes owners synchronously, including the
+result-preserving stop path.
+
+`HostCLIPermissionGateway` binds each normal CLI stdio permission request, exact
+arguments, runtime and channel into a one-use F03 action. Only the six profile
+tools are recognized. Read/write paths must stay in the imported VM project;
+commands execute only in the VM after an explicit host approval. The permission
+reply is a concrete bounded VM writer with connection-scoped final checks. The
+gateway never runs tools or constructs tool results. Native response, repair and
+final-clock regression groups passed; actual VZ model-delivery evidence remains
+a separate acceptance step.

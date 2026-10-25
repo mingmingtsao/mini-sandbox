@@ -13,7 +13,7 @@ package struct BusinessHTTPIngress: Sendable {
     package static let localPlaceholder = "mini-sandbox-local-only"
     private static let consumedHeaders: Set<String> = [
         "host", "authorization", "content-type", "content-length", "connection", "accept", "accept-encoding",
-        "user-agent", "anthropic-version", "anthropic-beta", "x-app", "x-stainless-lang",
+        "user-agent", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access", "x-app", "x-stainless-lang",
         "x-stainless-package-version", "x-stainless-os", "x-stainless-arch", "x-stainless-runtime",
         "x-stainless-runtime-version", "x-stainless-retry-count", "x-stainless-timeout", "x-stainless-helper-method",
         "x-claude-code-session-id", "x-claude-code-agent-id", "x-claude-code-parent-agent-id"
@@ -23,6 +23,7 @@ package struct BusinessHTTPIngress: Sendable {
     package let target: String
     package let version: String
     package let beta: String?
+    package let directBrowserAccess: String?
     package let headerBytes: Int
     package var wireBytes: Int { headerBytes + body.count }
 
@@ -75,13 +76,13 @@ package struct BusinessHTTPIngress: Sendable {
             }
         }
         return Self(body: Data(data[boundary.upperBound...]), target: request[1], version: version,
-                    beta: beta, headerBytes: boundary.upperBound)
+                    beta: beta, directBrowserAccess: headers["anthropic-dangerous-direct-browser-access"], headerBytes: boundary.upperBound)
     }
 
     /// Current native provider contract. Unsupported query/beta selectors are
     /// never silently discarded. No raw header is forwarded to the provider.
     package func nativeRequest() throws -> AnthropicNativeRequest {
-        guard target == "/v1/messages", beta == nil else { throw Failure.unsupportedProtocol }
+        guard target == "/v1/messages", beta == nil, directBrowserAccess == nil else { throw Failure.unsupportedProtocol }
         do {
             let root = try ModelJSON.parse(body)
             guard case .bool(let streaming) = root["stream"] else { throw Failure.invalidBody }
@@ -93,7 +94,8 @@ package struct BusinessHTTPIngress: Sendable {
         get throws {
             let expected = ClaudeRequestSelectors.pinned
             guard target == expected.path + "?" + expected.query,
-                  version == expected.version, beta == expected.beta else { throw Failure.unsupportedProtocol }
+                  version == expected.version, beta == expected.beta,
+                  directBrowserAccess == expected.directBrowserAccess else { throw Failure.unsupportedProtocol }
             return expected
         }
     }

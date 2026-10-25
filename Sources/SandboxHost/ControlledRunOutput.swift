@@ -78,6 +78,11 @@ package final class ControlledRunOutput: @unchecked Sendable {
         self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
         native = try NativeResponseChannel(takingAcceptedSocket: fd, streaming: streaming)
     }
+    init(lifecycle: RunLifecycle, scope: RunEffectScope, actionID: UUID,
+         takingVMConnection owner: BusinessVMConnection, streaming: Bool) throws {
+        self.lifecycle = lifecycle; self.scope = scope; self.actionID = actionID
+        native = try NativeResponseChannel(takingVMConnection: owner, streaming: streaming)
+    }
     package func enqueue(_ event: Event) throws {
         if try lock.withLock({ () throws -> Bool in
             guard !cancelled else { throw CancellationError() }
@@ -99,13 +104,18 @@ package final class ControlledRunOutput: @unchecked Sendable {
     package func acceptNext() throws -> Bool { try lifecycle.acceptOutput(self) }
     // Only the concrete lifecycle calls this after the consumer gate.
     func acquireForAcceptance() -> Bool {
-        if native != nil { return lock.try() }
+        if let native {
+            guard lock.try() else { return false }
+            guard native.acquireOwnerForAcceptance() else { lock.unlock(); return false }
+            return true
+        }
         lock.lock(); return true
     }
     func releaseForAcceptance() {
         let cleanup = native?.takeCleanup()
         let prepared = preparedAcceptance
         preparedAcceptance = nil
+        native?.releaseOwnerForAcceptance()
         lock.unlock()
         cleanup?.dispose()
         withExtendedLifetime(prepared) {}

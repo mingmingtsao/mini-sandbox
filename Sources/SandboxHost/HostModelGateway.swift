@@ -272,6 +272,25 @@ package actor HostModelGateway {
             scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
             takingAcceptedSocket: fd, streaming: envelope.streaming)
     }
+    /// Only a connection minted by the actual installed VM can be adopted. The
+    /// final writer owns both receiver and VM connection before the lifecycle
+    /// clock, so physical session retirement also prevents a last-hop send.
+    package func makeVMNativeOutput(handle: HostModelRunHandle, approval: HostModelApproval,
+                                    connection: BusinessVMConnection) throws -> ControlledRunOutput {
+        var transferred = false
+        defer { if !transferred { connection.retire() } }
+        let run = try get(handle); try validate(run, proposal: approval.proposal)
+        guard connection.service == .model, connection.lifecycle === run.authorityHandle.lifecycle,
+              connection.runID == run.grant.runID, connection.epoch == run.grant.epoch else { throw HostModelGatewayError.invalidHandle }
+        let envelope = try JSONDecoder().decode(Envelope.self, from: approval.proposal.pending.binding.canonicalRequest)
+        guard envelope.schemaVersion == 4, let selectors = envelope.claudeSelectors,
+              envelope.nativeBody != nil, envelope.request == nil else { throw HostModelGatewayError.invalidApproval }
+        try selectors.validate()
+        transferred = true
+        return try ControlledRunOutput(lifecycle: run.authorityHandle.lifecycle,
+            scope: effectScope(approval.proposal), actionID: approval.proposal.pending.actionID,
+            takingVMConnection: connection, streaming: envelope.streaming)
+    }
     /// Controlled-output vertical API: caller drives acceptNext on the owned receiver. Completion
     /// means producer/audit finished, NOT that queued business output was accepted.
     package func execute(handle: HostModelRunHandle, approval: HostModelApproval, output: ControlledRunOutput) async throws {

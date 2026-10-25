@@ -11,15 +11,18 @@ let package = Package(
         .executable(name: "ContractChecks", targets: ["ContractChecks"]),
         .executable(name: "AuthorizationChecks", targets: ["AuthorizationChecks"]),
         .executable(name: "ModelTransportChecks", targets: ["ModelTransportChecks"]),
-        .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"])
+        .executable(name: "WorkbenchChecks", targets: ["WorkbenchChecks"]),
+        .executable(name: "HostIntegrationChecks", targets: ["HostIntegrationChecks"]),
     ],
     targets: [
         .target(name: "SandboxContracts"),
         .target(name: "SandboxHost", dependencies: ["SandboxContracts"], linkerSettings: [.linkedFramework("Virtualization")]),
-        .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts"]),
+        .target(name: "SandboxWorkbench", dependencies: ["SandboxHost", "SandboxContracts"]),
+        .executableTarget(name: "MiniSandboxApp", dependencies: ["SandboxHost", "SandboxContracts", "SandboxWorkbench"]),
         .executableTarget(name: "ContractChecks", dependencies: ["SandboxContracts"], path: "Tests/SandboxContractsTests"),
         .executableTarget(name: "AuthorizationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/AuthorizationChecks"),
         .executableTarget(name: "ModelTransportChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/ModelTransportChecks"),
-        .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks")
+        .executableTarget(name: "WorkbenchChecks", dependencies: ["SandboxWorkbench", "SandboxHost", "SandboxContracts"], path: "Tests/WorkbenchChecks"),
+        .executableTarget(name: "HostIntegrationChecks", dependencies: ["SandboxHost", "SandboxContracts"], path: "Tests/HostIntegrationChecks"),
     ]
 )

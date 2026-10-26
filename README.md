@@ -1,6 +1,6 @@
 # mini-sandbox
 
-[![CI](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml?query=branch%3Amain)
+[![CI](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 [![CodeQL](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mingmingtsao/mini-sandbox/actions/workflows/codeql.yml?query=branch%3Amain)
 [![Swift line coverage](https://raw.githubusercontent.com/mingmingtsao/mini-sandbox/ci-coverage/coverage.svg)](https://github.com/mingmingtsao/mini-sandbox/tree/ci-coverage)
 [![Release](https://img.shields.io/github/v/release/mingmingtsao/mini-sandbox?sort=semver)](https://github.com/mingmingtsao/mini-sandbox/releases)

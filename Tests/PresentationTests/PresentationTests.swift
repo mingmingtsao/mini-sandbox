@@ -70,10 +70,24 @@ func expectPresentation(_ value: @autoclosure () throws -> Bool, _ message: Stri
         }
     }
     func contains(_ needle: String, in view: NSView? = nil) throws -> Bool {
-        // Vision may split one rendered line into several observations or insert
-        // spaces around punctuation; compare whitespace-free text, as click() does.
-        func compact(_ text: String) -> String { text.filter { !$0.isWhitespace } }
-        return compact(try text(in: view).map(\.0).joined()).contains(compact(needle))
+        Self.ocrFold(try text(in: view).map(\.0).joined()).contains(Self.ocrFold(needle))
+    }
+    /// Vision splits lines into several observations, inserts spaces around
+    /// punctuation and confuses similar glyphs in small text (observed on CI:
+    /// "flxture" for "fixture", "tolders" for "folders"). Compare whitespace-free,
+    /// case-folded text with those glyph classes merged; distinct words still differ.
+    static func ocrFold(_ text: String) -> String {
+        String(
+            text.lowercased().compactMap { character -> Character? in
+                if character.isWhitespace { return nil }
+                switch character {
+                case "l", "1", "|", "!", "j": return "i"
+                case "0": return "o"
+                case "f": return "t"
+                case "q": return "g"
+                default: return character
+                }
+            })
     }
     func click(_ label: String, in view: NSView? = nil) throws {
         let view = view ?? host

@@ -55,9 +55,11 @@ import SandboxHost
         controller.allowMCPWrite = true
         try await PresentationChecks.settle()
         try expectPresentation(!controller.permissionsConfirmed, "MCP write selection retained stale consent")
-        try expectPresentation(
+        let pathsRendered =
             try surface.contains("fixture-project") && surface.contains("fixture-runtime")
-                && surface.contains("fixture-vendor.raw"), "selected immutable paths missing from pixels")
+            && surface.contains("fixture-vendor.raw")
+        let recognized = pathsRendered ? "" : try surface.text().map(\.0).joined(separator: " | ")
+        try expectPresentation(pathsRendered, "selected immutable paths missing from pixels; OCR saw: \(recognized)")
         controller.permissionsConfirmed = true
         try expectPresentation(
             controller.activationAvailable && controller.canStart,

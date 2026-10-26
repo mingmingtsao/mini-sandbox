@@ -1,0 +1,62 @@
+name: 缺陷报告
+description: 报告可复现的问题。安全漏洞请使用私密报告，不要在此提交。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。**安全漏洞请勿公开提交**，请使用[私密漏洞报告](https://github.com/mingmingtsao/mini-sandbox/security/advisories/new)。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？期望的行为是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      placeholder: v0.1.0 或提交 SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      description: macOS 版本、芯片型号、`swift --version` 输出
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关模块
+      options:
+        - App 与工作台界面
+        - 授权与审计
+        - 模型网关
+        - MCP 网关
+        - VM 与运行时
+        - 工作区与导出
+        - 构建、打包与 CI
+        - 文档
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与诊断
+      description: 可附 `MiniSandbox --diagnostics-json` 输出或相关审计事件。提交前请删除任何凭据与私人内容。
+      render: text

@@ -333,10 +333,10 @@ MiniSandboxApp (可执行, SwiftUI 入口)
 
 | 项 | 内容 |
 |---|---|
-| 职责 | 离线回归、回环集成测试、打包与签名验证、覆盖率统计与徽章发布 |
-| 关键文件 | `Tests/*Checks/`（Swift 可执行检查）、`Tests/*Tests/`（Python/Go 单测与驱动）、`scripts/build-app.py`、`scripts/build-vm-probe.py`、`scripts/swift-coverage.py`、`.github/workflows/ci.yml` |
-| 约定 | **不使用 `swift test`/XCTest**，每个检查是一个可执行 target，输出 `PASS/FAIL` 与汇总并以退出码表示结果；Python 按目录分别 `unittest discover`；需要真实 VM / 真实凭据的验证不在 CI 中运行 |
-| 详细文档 | [ci.md](engineering/ci.md) · [coverage.md](engineering/coverage.md) |
+| 职责 | 代码格式与静态检查、离线回归、回环集成测试、打包与签名验证、覆盖率统计与徽章发布、CodeQL 代码扫描与依赖更新 |
+| 关键文件 | `Tests/*Checks/`（Swift 可执行检查）、`Tests/*Tests/`（Python/Go 单测与驱动）、`scripts/build-app.py`、`scripts/build-vm-probe.py`、`scripts/swift-coverage.py`、`.github/workflows/ci.yml`、`.github/workflows/codeql.yml`、`.github/dependabot.yml`、`.swift-format`、`ruff.toml` |
+| 约定 | **不使用 `swift test`/XCTest**，每个检查是一个可执行 target，输出 `PASS/FAIL` 与汇总并以退出码表示结果；Python 按目录分别 `unittest discover`；Swift 与 Python 分别由 swift-format、ruff 强制格式；需要真实 VM / 真实凭据的验证不在 CI 中运行 |
+| 详细文档 | [ci.md](engineering/ci.md) · [coverage.md](engineering/coverage.md) · [贡献指南](../CONTRIBUTING.md) |
 
 检查 target 与所覆盖模块：
 

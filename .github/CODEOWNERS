@@ -1,0 +1,39 @@
+# Code owners are requested for review automatically. The last matching
+# pattern wins, so specific paths come after the default.
+
+# Default: the maintainer reviews every change.
+*                                                   @mingmingtsao
+
+# Contracts, authorization, lifecycle and audit.
+/Sources/SandboxContracts/                          @mingmingtsao @Jessie-shsh
+/Sources/SandboxHost/AuthorizationController.swift  @mingmingtsao @Jessie-shsh
+/Sources/SandboxHost/RunLifecycle.swift             @mingmingtsao @Jessie-shsh
+/Sources/SandboxHost/RunClock.swift                 @mingmingtsao @Jessie-shsh
+/Sources/SandboxHost/SecurityEvent.swift            @mingmingtsao @Jessie-shsh
+/Sources/SandboxWorkbench/RunComposition.swift      @mingmingtsao @Jessie-shsh
+/Sources/SandboxWorkbench/WorkbenchModel.swift      @mingmingtsao @Jessie-shsh
+/Sources/SandboxWorkbench/WorkbenchView.swift       @mingmingtsao @Jessie-shsh
+
+# Credential egress and gateways (security critical).
+/Sources/SandboxHost/BusinessModelActivation.swift  @mingmingtsao
+/Sources/SandboxHost/ModelTransport.swift           @mingmingtsao
+/Sources/SandboxHost/ModelCredential*.swift         @mingmingtsao
+/Sources/SandboxHost/HostModelGateway.swift         @mingmingtsao
+/Sources/SandboxHost/HostMCPGateway.swift           @mingmingtsao
+/Sources/SandboxHost/MCPTransport.swift             @mingmingtsao
+
+# VM ownership, guest runtime and workspace.
+/Sources/SandboxHost/HeadlessVMProbe.swift          @mingmingtsao @q96456
+/Sources/SandboxHost/VM*.swift                      @mingmingtsao @q96456
+/Sources/SandboxHost/AgentRuntimeProbe.swift        @mingmingtsao @q96456
+/Sources/SandboxHost/Workspace*.swift               @mingmingtsao @q96456
+/Tools/GuestFixture/                                @mingmingtsao @q96456
+/Tools/AgentRuntime/                                @mingmingtsao @q96456
+/Tools/WorkspaceTransfer/                           @mingmingtsao @q96456
+/Tools/VMProbe/                                     @mingmingtsao @q96456
+
+# Build, signing, CI and repository policy.
+/Package.swift                                      @mingmingtsao
+/scripts/                                           @mingmingtsao
+/.github/                                           @mingmingtsao
+/SECURITY.md                                        @mingmingtsao

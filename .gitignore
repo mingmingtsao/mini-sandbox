@@ -1,5 +1,8 @@
 .build/
 .swiftpm/
+.ruff_cache/
+*.profraw
+*.profdata
 dist/
 coverage-report/
 .DS_Store

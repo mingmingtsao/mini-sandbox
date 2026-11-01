@@ -1,23 +1,19 @@
 # 桌面级安全沙箱
 
-v2 规格是产品实施基线；原始设计和交互原型保留作历史资料。使用方式见[仓库 README](../../../README.md)。
+当前产品规格与验收条件见 [implementation-v2](implementation-v2/README.md)，使用方式见[仓库 README](../../../README.md)。
 
-## 历史设计文档
+## 当前产品实施基线
 
-1. [产品定位与设计锚点](source/01-产品定位与设计锚点.md)
-2. [模块设计](source/02-模块设计.md)
-3. [接口契约](source/03-接口契约.md)
-4. [界面设计](source/04-界面设计.md)
-5. [交互原型](source/prototype.html)
+- [产品规格](implementation-v2/FINAL_SPEC.md)
+- [验收条件](implementation-v2/ACCEPTANCE.md)
+- [实现里程碑](implementation-v2/ROADMAP.md)
+- [资料来源](implementation-v2/SOURCES.md)
 
-## 评审
+## 历史资料
 
-[历史设计评审](REVIEW.md) · [安全规则验收用例](ACCEPTANCE.md)
+早期设计、交互原型及评审记录保存在固定 Git 历史快照中，当前目录只维护 v2 规格。
 
-授权默认拒绝、秘密双轨与副本回写规则见设计评审记录。原型仅用于交互演示。
-
-## 当前产品实施基线（v2）
-
-[安全架构、对抗评审、产品验收与实现里程碑](implementation-v2/README.md)
-
-> 当前实施以 v2 的 FINAL_SPEC.md 为准。既有 #1 设计、REVIEW 和原型保留为历史资料；冲突处不得同时采用旧规则。验收结果须绑定对应代码、制品和实际验证记录。
+- [原始设计与 HTML 原型](https://github.com/mingmingtsao/mini-sandbox/tree/28cea8e8c47687757d29bb592b436ec92b7c4365/docs/prd/desktop-sandbox/source)
+- [历史设计评审](https://github.com/mingmingtsao/mini-sandbox/blob/28cea8e8c47687757d29bb592b436ec92b7c4365/docs/prd/desktop-sandbox/REVIEW.md)
+- [早期安全规则验收用例](https://github.com/mingmingtsao/mini-sandbox/blob/28cea8e8c47687757d29bb592b436ec92b7c4365/docs/prd/desktop-sandbox/ACCEPTANCE.md)
+- [PR #1 静态评审与两版比较](https://github.com/mingmingtsao/mini-sandbox/blob/28cea8e8c47687757d29bb592b436ec92b7c4365/docs/prd/desktop-sandbox/implementation-v2/PR1_REVIEW.md)

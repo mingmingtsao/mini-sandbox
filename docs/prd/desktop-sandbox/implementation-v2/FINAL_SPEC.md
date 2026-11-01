@@ -246,7 +246,7 @@ UI显示“网关已拒绝N次请求”，其中N只统计有宿主拒绝证据�
 
 ## 9. 产品实现里程碑
 
-本规格作为当前实施基线，保留 source/ 原始设计以供追溯。实现应先建立核心契约与失败测试 fixture，再补交互与适配器。
+本规格作为当前实施基线，原始设计通过[历史资料索引](../README.md#历史资料)追溯。实现应先建立核心契约与失败测试 fixture，再补交互与适配器。
 
 | 关卡 | 产物 | 必须通过的实际验证 |
 |---|---|---|
@@ -284,7 +284,7 @@ ACCEPTANCE.md 定义 37 项产品功能、安全与发布验收用例及通过�
 
 **完成标准：产品闭环有真实执行证据，安全承诺与边界一致，支持范围可以逐项验证。不是文档、类、页面或提交次数足够多。**
 
-官方技术依据见SOURCES.md，设计问题与两版比较见PR1_REVIEW.md。
+官方技术依据见 [SOURCES.md](SOURCES.md)，设计问题与两版比较见 [PR #1 静态评审（历史快照）](https://github.com/mingmingtsao/mini-sandbox/blob/28cea8e8c47687757d29bb592b436ec92b7c4365/docs/prd/desktop-sandbox/implementation-v2/PR1_REVIEW.md)。
 
 ## 修订记录
 

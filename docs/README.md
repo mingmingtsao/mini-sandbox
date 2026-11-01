@@ -130,7 +130,7 @@
 | 文档 | 说明 |
 |---|---|
 | [产品资料首页](prd/README.md) | 产品设计入口 |
-| [桌面级安全沙箱](prd/desktop-sandbox/README.md) | 历史设计文档、评审与 v2 基线入口 |
+| [桌面级安全沙箱](prd/desktop-sandbox/README.md) | v2 产品规格与历史资料索引 |
 | [FINAL_SPEC](prd/desktop-sandbox/implementation-v2/FINAL_SPEC.md) | 当前产品实施基线 |
 | [ACCEPTANCE](prd/desktop-sandbox/implementation-v2/ACCEPTANCE.md) | 37 项验收用例 |
 | [ROADMAP](prd/desktop-sandbox/implementation-v2/ROADMAP.md) | 产品工程里程碑 |

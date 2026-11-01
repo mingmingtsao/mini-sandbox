@@ -30,11 +30,11 @@
     "WorkbenchChecks --composition-mcp (loopback)",
     "MiniSandbox --diagnostics-json (validated)"
   ],
-  "commit": "28cea8e8c47687757d29bb592b436ec92b7c4365",
+  "commit": "dc64a456eaff77b868f2757d621d4ece91174e43",
   "repository": "mingmingtsao/mini-sandbox",
-  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/40252736861",
+  "run_url": "https://github.com/mingmingtsao/mini-sandbox/actions/runs/41272552772",
   "lines": 14251,
-  "covered": 11017,
+  "covered": 11018,
   "percent": 77.31,
   "files": [
     {
@@ -190,7 +190,7 @@
     {
       "path": "Sources/SandboxHost/ModelJSON.swift",
       "lines": 191,
-      "covered": 183
+      "covered": 184
     },
     {
       "path": "Sources/SandboxHost/ModelStructured.swift",

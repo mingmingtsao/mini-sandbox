@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>桌面级安全沙箱 · 交互原型 v1</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   设计令牌 — 仅用于原型表达结构与状态，非视觉规格
+   风险色需交互设计师在深浅色下重新校准对比度（04 §9）
+   ══════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#f5f5f7; --surface:#fff; --surface-2:#fafafa; --sidebar:#ececee;
+  --line:#dcdce0; --line-strong:#c4c4c9;
+  --text:#1d1d1f; --text-2:#5c5c61; --text-3:#8a8a8f;
+  --accent:#0066cc; --accent-bg:#e8f1fc;
+  --shield:#1a6b52; --shield-bg:#e7f3ee;      /* 盾牌=好消息，非错误 (U8/§3.2) */
+  --r-low:#1a6b52; --r-low-bg:#e7f3ee;
+  --r-mid:#8a5a00; --r-mid-bg:#fdf3e0;
+  --r-high:#a32020; --r-high-bg:#fdeaea;
+  --danger:#a32020;
+  --radius:10px; --radius-sm:6px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.08);
+  --shadow-modal:0 10px 60px rgba(0,0,0,.28);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue","PingFang SC",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#1c1c1e; --surface:#2c2c2e; --surface-2:#242426; --sidebar:#242426;
+    --line:#3a3a3c; --line-strong:#48484a;
+    --text:#f5f5f7; --text-2:#aeaeb2; --text-3:#8a8a8f;
+    --accent:#4da3ff; --accent-bg:#1a3250;
+    --shield:#5fd3aa; --shield-bg:#15372c;
+    --r-low:#5fd3aa; --r-low-bg:#15372c;
+    --r-mid:#f0b354; --r-mid-bg:#3a2d12;
+    --r-high:#ff7b7b; --r-high-bg:#3d1a1a;
+    --danger:#ff7b7b;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;background:none;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ── 应用窗口 ── */
+.app{display:flex;height:100vh;width:100vw}
+
+/* ── 侧边栏 ── */
+.sidebar{width:218px;flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:0}
+.traffic{display:flex;gap:8px;padding:14px 16px 10px}
+.traffic i{width:12px;height:12px;border-radius:50%;display:block}
+.traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+.nav{padding:8px 10px;flex:1;overflow-y:auto}
+.nav-section{font-size:11px;font-weight:600;color:var(--text-3);padding:12px 8px 4px;letter-spacing:.03em}
+.nav-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:var(--radius-sm);width:100%;text-align:left;color:var(--text);margin-bottom:1px;position:relative}
+.nav-item:hover{background:rgba(125,125,130,.14)}
+.nav-item.active{background:var(--accent);color:#fff}
+.nav-item .ico{width:17px;text-align:center;flex-shrink:0;font-size:13px}
+.nav-item .label{flex:1}
+.nav-item .badge{font-size:10px;font-weight:600;padding:1px 6px;border-radius:9px;background:var(--shield-bg);color:var(--shield)}
+.nav-item.active .badge{background:rgba(255,255,255,.26);color:#fff}
+.nav-item .sub{font-size:11px;color:var(--text-3);display:block}
+.nav-item.active .sub{color:rgba(255,255,255,.8)}
+.sidebar-foot{padding:10px;border-top:1px solid var(--line)}
+
+/* ── 主区 ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.toolbar{height:50px;flex-shrink:0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:var(--surface);backdrop-filter:blur(20px)}
+.toolbar h1{font-size:14px;font-weight:600;flex:1}
+.content{flex:1;overflow-y:auto;padding:22px 24px 60px}
+.view{display:none;max-width:860px}
+.view.active{display:block}
+
+/* ── 通用组件 ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px;overflow:hidden}
+.card-pad{padding:15px 17px}
+.sec-title{font-size:12px;font-weight:600;color:var(--text-3);margin:22px 0 10px;letter-spacing:.03em}
+.sec-title:first-child{margin-top:0}
+.btn{padding:6px 15px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:var(--surface);font-weight:500;transition:.12s}
+.btn:hover{background:var(--surface-2)}
+.btn-primary{background:var(--accent);color:#fff;border-color:transparent}
+.btn-primary:hover{filter:brightness(1.1);background:var(--accent)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;filter:none}
+.btn-danger{color:var(--danger);border-color:var(--danger)}
+.btn-sm{padding:3px 10px;font-size:12px}
+.btn-link{color:var(--accent);padding:0;text-decoration:none}
+.btn-link:hover{text-decoration:underline;background:none}
+.row{display:flex;align-items:center;gap:10px}
+.spacer{flex:1}
+.muted{color:var(--text-2)}
+.dim{color:var(--text-3);font-size:12px}
+
+/* 风险徽标 — 图标+文字双编码 (U12) */
+.risk{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:5px;white-space:nowrap}
+.risk-low{background:var(--r-low-bg);color:var(--r-low)}
+.risk-mid{background:var(--r-mid-bg);color:var(--r-mid)}
+.risk-high{background:var(--r-high-bg);color:var(--r-high)}
+
+/* ── 能力条目 ── */
+.cap{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid var(--line)}
+.cap:last-child{border-bottom:none}
+.cap-check{flex-shrink:0;padding-top:1px}
+.cap-check input{width:17px;height:17px;cursor:pointer;accent-color:var(--accent)}
+.cap-body{flex:1;min-width:0}
+.cap-title{font-weight:600;margin-bottom:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cap-conseq{color:var(--text-2);font-size:12.5px;margin-bottom:5px}
+.cap-assure{color:var(--shield);font-size:12px;font-weight:500;margin-bottom:5px}
+.cap-meta{font-size:11.5px;color:var(--text-3);display:flex;gap:14px;flex-wrap:wrap}
+.cap-meta button{font-size:11.5px;color:var(--accent)}
+.cap-group{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:11px;overflow:hidden}
+.cap-group.high{border-color:var(--r-high);border-width:1.5px}
+.cap-group-head{padding:10px 15px;background:var(--surface-2);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;font-size:12px;font-weight:600;width:100%;text-align:left}
+.cap-group-head .chev{margin-left:auto;color:var(--text-3);font-size:11px;font-weight:400}
+.cap-group-body{padding:0 15px}
+.cap-group.collapsed .cap-group-body{display:none}
+.evidence{display:none;margin-top:7px;padding:8px 11px;background:var(--accent-bg);border-radius:var(--radius-sm);font-size:11.5px;color:var(--text-2);border-left:2.5px solid var(--accent)}
+.evidence.show{display:block}
+.narrow{display:none;margin-top:7px;padding:9px 11px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-sm)}
+.narrow.show{display:block}
+.narrow label{display:flex;gap:7px;align-items:flex-start;font-size:12px;padding:3px 0;cursor:pointer}
+
+/* ── 否定式总结 (04 §2.2-5) ── */
+.boundary{background:var(--shield-bg);border:1px solid color-mix(in srgb,var(--shield) 28%,transparent);border-radius:var(--radius);padding:13px 15px;margin:14px 0}
+.boundary div{display:flex;gap:8px;font-size:12.5px;color:var(--shield);font-weight:500;padding:2px 0}
+
+/* ── 运行中卡片 ── */
+.vm{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px;overflow:hidden}
+.vm-head{padding:13px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line)}
+.vm-dot{width:8px;height:8px;border-radius:50%;background:var(--r-low);flex-shrink:0;box-shadow:0 0 0 3px var(--r-low-bg)}
+.vm-name{font-weight:600;flex:1}
+.vm-iso{padding:8px 16px;background:var(--shield-bg);color:var(--shield);font-size:12px;font-weight:500;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--line)}
+.vm-body{padding:13px 16px}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 0}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;font-size:11.5px}
+/* 盾牌块 — 零值也显示 (U8) */
+.shield-box{margin:13px 0;padding:11px 13px;background:var(--shield-bg);border:1px solid color-mix(in srgb,var(--shield) 30%,transparent);border-radius:var(--radius-sm)}
+.shield-box .hd{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--shield);font-size:12.5px}
+.shield-box .hd .spacer{flex:1}
+.shield-box .last{font-size:11.5px;color:var(--text-2);margin-top:5px;padding-left:23px}
+.activity{font-size:12px;color:var(--text-2);margin-top:11px;font-family:ui-monospace,SFMono-Regular,monospace}
+.metrics{display:flex;gap:17px;font-size:11.5px;color:var(--text-3);margin-top:7px}
+.vm-foot{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--surface-2)}
+
+/* ── 模态：信任决策窗口 (G3/U5) ── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:100;padding:28px}
+.overlay.show{display:flex}
+.modal{background:var(--surface);border-radius:13px;box-shadow:var(--shadow-modal);width:100%;max-width:648px;max-height:calc(100vh - 56px);display:flex;flex-direction:column;overflow:hidden;
+  /* 安全边框：不可被 guest 内容模拟的宿主窗口样式 (G3) */
+  border:2px solid var(--accent)}
+.modal.narrow-modal{max-width:482px}
+/* 宿主归属标识 — 所有信任决策界面必有 (U5) */
+.attribution{padding:9px 16px;background:var(--accent-bg);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:600;color:var(--accent)}
+.attribution .spacer{flex:1}
+.attribution .x{color:var(--text-3);font-size:15px;line-height:1}
+.modal-head{padding:19px 22px 13px}
+.modal-head h2{font-size:17px;font-weight:600;margin-bottom:6px}
+.modal-head p{color:var(--text-2);font-size:12.5px}
+.modal-body{padding:0 22px;overflow-y:auto;flex:1}
+.modal-foot{padding:15px 22px;border-top:1px solid var(--line);display:flex;gap:9px;align-items:center;background:var(--surface-2)}
+.countdown{font-size:11.5px;color:var(--text-3);display:flex;align-items:center;gap:5px}
+
+/* ── MCP 工具表 ── */
+.tools{width:100%;border-collapse:collapse;font-size:12.5px}
+.tools th{text-align:left;padding:8px 10px;font-size:11px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--line)}
+.tools td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tools tr:last-child td{border-bottom:none}
+.tool-name{font-weight:600;display:flex;align-items:center;gap:8px}
+.tool-desc{color:var(--text-2);font-size:12px;margin-top:2px}
+.sw{position:relative;width:40px;height:23px;flex-shrink:0}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:var(--line-strong);border-radius:23px;transition:.18s;cursor:pointer}
+.sw span::before{content:"";position:absolute;width:18px;height:18px;left:2.5px;top:2.5px;background:#fff;border-radius:50%;transition:.18s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw input:checked+span{background:var(--accent)}
+.sw input:checked+span::before{transform:translateX(17px)}
+.sw input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ── 账号卡 ── */
+.acct{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.acct:last-child{border-bottom:none}
+.acct-ico{width:34px;height:34px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.acct-main{flex:1;min-width:0}
+.acct-name{font-weight:600;display:flex;align-items:center;gap:8px}
+.acct-sub{font-size:12px;color:var(--text-2);margin-top:2px}
+.acct-note{font-size:11.5px;margin-top:5px;display:flex;gap:6px;align-items:flex-start}
+.acct-note.good{color:var(--shield)}
+.acct-note.warn{color:var(--r-mid)}
+.grid6{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+.prov{padding:15px 13px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);text-align:center;transition:.12s}
+.prov:hover{border-color:var(--accent);background:var(--accent-bg)}
+.prov .pn{font-weight:600;margin-bottom:3px}
+.prov .pm{font-size:11px;color:var(--shield);font-weight:500}
+.prov.manual .pm{color:var(--text-3)}
+
+/* ── 时间线 ── */
+.tl{position:relative;padding-left:21px}
+.tl::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:1.5px;background:var(--line)}
+.tl-item{position:relative;padding:9px 0}
+.tl-item::before{content:"";position:absolute;left:-19px;top:14px;width:9px;height:9px;border-radius:50%;background:var(--surface);border:2px solid var(--line-strong)}
+.tl-item.shield::before{border-color:var(--shield);background:var(--shield)}
+.tl-item.approve::before{border-color:var(--accent);background:var(--accent)}
+.tl-item.signal::before{border-color:var(--r-mid);background:var(--r-mid)}
+.tl-time{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;margin-right:9px}
+.tl-main{font-size:12.5px}
+.tl-sub{font-size:11.5px;color:var(--text-2);margin-top:3px;padding-left:2px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+
+/* ── 告警条 ── */
+.alert{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-radius:var(--radius-sm);margin-bottom:9px;font-size:12.5px}
+.alert.mid{background:var(--r-mid-bg);color:var(--r-mid)}
+.alert.low{background:var(--shield-bg);color:var(--shield)}
+.alert .spacer{flex:1}
+
+/* ── 引导 ── */
+.onb{text-align:center;padding:34px 22px}
+.onb-art{height:150px;display:flex;align-items:center;justify-content:center;font-size:46px;gap:17px;margin-bottom:22px;color:var(--text-2)}
+.onb h2{font-size:21px;font-weight:600;margin-bottom:11px;max-width:430px;margin-inline:auto;line-height:1.4}
+.onb p{color:var(--text-2);max-width:380px;margin:0 auto 26px}
+.dots{display:flex;gap:6px;justify-content:center;margin-bottom:22px}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--line-strong);display:block}
+.dots i.on{background:var(--accent);width:17px;border-radius:3px}
+
+/* ── 空状态 ── */
+.empty{text-align:center;padding:40px 20px;color:var(--text-2)}
+.empty .ei{font-size:34px;margin-bottom:11px;opacity:.55}
+
+/* ── 评审工具台 ── */
+.devbar{position:fixed;right:0;top:0;bottom:0;width:286px;background:var(--surface);border-left:1px solid var(--line);z-index:90;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s;box-shadow:-4px 0 20px rgba(0,0,0,.09)}
+.devbar.open{transform:translateX(0)}
+.devbar-head{padding:13px 15px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:600;font-size:12.5px}
+.devbar-body{flex:1;overflow-y:auto;padding:13px 15px}
+.dev-group{margin-bottom:17px}
+.dev-group h4{font-size:11px;color:var(--text-3);font-weight:600;margin-bottom:7px;letter-spacing:.03em}
+.dev-btn{display:block;width:100%;text-align:left;padding:7px 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--surface-2);margin-bottom:5px;font-size:12px}
+.dev-btn:hover{border-color:var(--accent);background:var(--accent-bg)}
+.dev-btn .k{font-size:10.5px;color:var(--text-3);display:block;margin-top:1px}
+.devtoggle{position:fixed;right:15px;bottom:15px;z-index:95;padding:8px 14px;border-radius:19px;background:var(--text);color:var(--bg);font-size:12px;font-weight:600;box-shadow:var(--shadow);border:none}
+.devbar.open+.devtoggle{right:300px}
+.chk{display:flex;gap:8px;padding:6px 0;font-size:11.5px;align-items:flex-start;border-bottom:1px solid var(--line)}
+.chk:last-child{border:none}
+.chk .st{flex-shrink:0;font-weight:700}
+.chk .st.pass{color:var(--shield)}
+.chk code{font-size:10.5px;background:var(--surface-2);padding:1px 4px;border-radius:3px;color:var(--text-3)}
+
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(90px);background:var(--text);color:var(--bg);padding:10px 18px;border-radius:21px;font-size:12.5px;font-weight:500;z-index:200;transition:transform .26s;box-shadow:var(--shadow);max-width:80vw}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+/* ── 新增安全决策演示 ── */
+.mode-switch{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.mode-switch .btn.active{background:var(--accent);color:#fff;border-color:transparent}
+.secret-detail{margin-top:11px;padding:12px 13px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-sm);font-size:12px}
+.secret-detail strong{display:block;margin-bottom:4px}
+.secret-detail.warn{background:var(--r-high-bg);border-color:var(--r-high);color:var(--r-high)}
+.adapter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px}
+.adapter-status{font-size:11.5px;font-weight:600}
+.writeback-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:11px}
+.diff-pane{min-width:0;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);padding:10px}
+.diff-pane h4{font-size:11px;color:var(--text-3);margin-bottom:6px}
+.diff-pane pre{white-space:pre-wrap;word-break:break-word;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;color:var(--text-2)}
+.writeback-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:13px}
+.writeback-note{font-size:11.5px;color:var(--text-2);margin-top:9px}
+.conflict{background:var(--r-high-bg);border:1px solid var(--r-high);border-radius:var(--radius-sm);padding:10px 12px;color:var(--r-high);font-size:12px;margin-top:11px}
+.status-line{font-size:12px;font-weight:600;margin-top:10px}
+.status-line.good{color:var(--shield)}
+.status-line.blocked{color:var(--r-high)}
+button:disabled{opacity:.45;cursor:not-allowed}
+[hidden]{display:none!important}
+
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ═══ 侧边栏 ═══ -->
+  <aside class="sidebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="dash"><span class="ico">◉</span><span class="label">工作台</span></button>
+      <button class="nav-item" data-view="workloads"><span class="ico">▣</span><span class="label">程序</span><span class="badge">2 运行</span></button>
+      <button class="nav-item" data-view="accounts"><span class="ico">🔑</span><span class="label">账号与密钥</span></button>
+      <button class="nav-item" data-view="record"><span class="ico">📋</span><span class="label">安全档案</span><span class="badge" id="navShield">3</span></button>
+      <div class="nav-section">P2 阶段</div>
+      <button class="nav-item" data-view="ship"><span class="ico">🚀</span><span class="label">投递到生产</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <button class="nav-item" data-view="prefs"><span class="ico">⚙︎</span><span class="label">偏好设置</span></button>
+    </div>
+  </aside>
+
+  <!-- ═══ 主区 ═══ -->
+  <div class="main">
+    <header class="toolbar">
+      <h1 id="pageTitle">工作台</h1>
+      <button class="btn btn-sm" data-testid="run-program" onclick="startReview('claude')">▶ 运行程序</button>
+    </header>
+    <div class="content">
+
+      <!-- ─── 工作台 ─── -->
+      <section class="view active" id="view-dash">
+        <div class="sec-title">正在运行</div>
+
+        <div class="vm">
+          <div class="vm-head">
+            <span class="vm-dot"></span>
+            <span class="vm-name">Claude Code · 我的代码/myrepo</span>
+            <span class="dim">运行 12 分钟</span>
+          </div>
+          <div class="vm-iso">🔒 运行在独立沙箱中 · 关闭后自动销毁</div>
+          <div class="vm-body">
+            <div class="dim">它现在能碰到：</div>
+            <div class="chips" id="activeCapabilities">
+              <span class="chip">📁 代码/myrepo（先改沙箱副本）</span>
+              <span class="chip">🌐 Claude 官方服务</span>
+              <span class="chip">🔑 Claude 代理示例（原始密钥留在宿主）</span>
+            </div>
+
+            <!-- 盾牌块：零值也显示 (U8) -->
+            <div class="shield-box" id="shieldBox">
+              <div class="hd">
+                <span>🛡</span>
+                <span id="shieldText">已为你挡下 3 次越界尝试</span>
+                <span class="spacer"></span>
+                <button class="btn-link" onclick="go('record')">查看 ›</button>
+              </div>
+              <div class="last" id="shieldLast">最近：它想读取 ~/.ssh/id_rsa（2 分钟前）</div>
+            </div>
+
+            <div class="activity">正在做：读取 src/api/client.ts</div>
+            <div class="metrics"><span>CPU 23%</span><span>内存 412MB</span><span>已传输 1.2MB</span></div>
+          </div>
+          <div class="vm-foot">
+            <button class="btn btn-sm">查看输出</button>
+            <button class="btn btn-sm" data-testid="open-writeback" onclick="openWriteback()">预览回写</button>
+            <button class="btn btn-sm" onclick="openWriteback()">处理副本改动</button>
+            <span class="spacer"></span>
+            <button class="btn btn-sm btn-danger">停止</button>
+          </div>
+        </div>
+
+        <div class="vm">
+          <div class="vm-head">
+            <span class="vm-dot"></span>
+            <span class="vm-name">GitHub MCP</span>
+            <span class="dim">运行 12 分钟</span>
+          </div>
+          <div class="vm-iso">🔒 独立沙箱 · 与 Claude Code 互不可见</div>
+          <div class="vm-body">
+            <div class="dim">它现在能碰到：</div>
+            <div class="chips">
+              <span class="chip">🌐 GitHub API</span>
+              <span class="chip">🔑 你的 GitHub 账号</span>
+            </div>
+            <div class="shield-box">
+              <div class="hd"><span>🛡</span><span>目前没有任何越界尝试 ✓</span></div>
+            </div>
+            <div class="row" style="margin-top:11px">
+              <span class="dim">已开启 2/5 项功能</span>
+              <button class="btn-link" onclick="openTools()">管理功能 ›</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-title">快速启动</div>
+        <div class="row" style="flex-wrap:wrap;gap:9px">
+          <button class="btn" onclick="startReview('codex')">Codex · 实验项目</button>
+          <button class="btn" onclick="startReview('dsh')">dsh · 运维脚本</button>
+          <button class="btn" onclick="go('workloads')">+ 新建</button>
+        </div>
+      </section>
+
+      <!-- ─── 程序 ─── -->
+      <section class="view" id="view-workloads">
+        <div class="sec-title">已登记的程序</div>
+        <div class="card">
+          <div class="acct">
+            <div class="acct-ico">🤖</div>
+            <div class="acct-main">
+              <div class="acct-name">Claude Code · 我的代码/myrepo <span class="risk risk-low">● 已审查</span></div>
+              <div class="acct-sub">agent · 用完即焚 · 能力指纹 7f3a…b219</div>
+              <div class="acct-note good"><span>✓</span><span>8 项权限中实际用到 5 项 · <button class="btn-link" onclick="go('record')">查看收敛建议</button></span></div>
+            </div>
+            <button class="btn btn-sm" onclick="startReview('claude')">运行</button>
+          </div>
+          <div class="acct">
+            <div class="acct-ico">🔌</div>
+            <div class="acct-main">
+              <div class="acct-name">GitHub MCP <span class="risk risk-mid">▲ 有更新待审查</span></div>
+              <div class="acct-sub">mcp-server · 用完即焚 · 工具集指纹已变化</div>
+              <div class="acct-note warn"><span>⚠️</span><span>这次要的权限和上次不一样</span></div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="openDrift()">查看差异</button>
+          </div>
+          <div class="acct">
+            <div class="acct-ico">🧪</div>
+            <div class="acct-main">
+              <div class="acct-name">Codex · 实验项目 <span class="risk risk-low">● 已审查</span></div>
+              <div class="acct-sub">agent · 用完即焚</div>
+            </div>
+            <button class="btn btn-sm" onclick="startReview('codex')">运行</button>
+          </div>
+        </div>
+
+        <div class="sec-title">新建</div>
+        <div class="grid6">
+          <button class="prov" onclick="startReview('claude')"><div class="pn">Claude Code</div><div class="pm">官方模板</div></button>
+          <button class="prov" onclick="startReview('codex')"><div class="pn">Codex</div><div class="pm">官方模板</div></button>
+          <button class="prov" onclick="startReview('dsh')"><div class="pn">dsh</div><div class="pm">官方模板</div></button>
+          <button class="prov" onclick="toast('MCP 会先在零权限沙箱里试探，拿到功能清单（03 §C.1.3）')"><div class="pn">MCP 服务</div><div class="pm">先试探再审查</div></button>
+          <button class="prov manual"><div class="pn">自定义命令</div><div class="pm">需手动确认权限</div></button>
+          <button class="prov manual" onclick="toast('分享包不携带审查结果，你需要自己审查一遍（03 §C.3）')"><div class="pn">导入分享包</div><div class="pm">需重新审查</div></button>
+        </div>
+      </section>
+
+      <!-- ─── 账号与密钥 ─── -->
+      <section class="view" id="view-accounts">
+        <div class="sec-title">已连接的服务</div>
+        <div class="card">
+          <div class="acct">
+            <div class="acct-ico">✳️</div>
+            <div class="acct-main">
+              <div class="acct-name">Claude 官方服务 <span class="risk risk-low">● 一键登录</span></div>
+              <div class="acct-sub">••••a1b2 · <button class="btn-link">2 个程序在用 ›</button></div>
+              <div class="acct-note good"><span>🛡</span><span>沙箱代为转交，程序拿不到密钥本身</span></div>
+            </div>
+            <button class="btn btn-sm">管理</button>
+          </div>
+          <div class="acct">
+            <div class="acct-ico">🐙</div>
+            <div class="acct-main">
+              <div class="acct-name">GitHub（个人） <span class="risk risk-low">● 从 1Password</span></div>
+              <div class="acct-sub">••••f8c3 · <button class="btn-link">1 个程序在用 ›</button></div>
+              <div class="acct-note good"><span>🛡</span><span>沙箱代为转交</span></div>
+            </div>
+            <button class="btn btn-sm">管理</button>
+          </div>
+          <div class="acct">
+            <div class="acct-ico">🗄</div>
+            <div class="acct-main">
+              <div class="acct-name">内网数据库 <span class="risk risk-mid">▲ 手动输入</span></div>
+              <div class="acct-sub">••••9d04 · 待验证适配器，暂不交付</div>
+              <div class="acct-note warn"><span>⚠️</span><span>引用明文进入指定进程；内存内容可能被复制或外传，无法保证不发生</span></div>
+            </div>
+            <button class="btn btn-sm">改用更安全的方式</button>
+          </div>
+          <div class="acct">
+            <div class="acct-ico" style="opacity:.5">🔸</div>
+            <div class="acct-main">
+              <div class="acct-name" style="color:var(--text-2)">OpenAI <span class="risk risk-high">✕ 已失效</span></div>
+              <div class="acct-sub">上次使用 3 天前</div>
+            </div>
+            <button class="btn btn-sm">重新连接</button>
+            <button class="btn btn-sm btn-danger" onclick="toast('有 1 个程序在用它，删了它们就连不上了')">删除</button>
+          </div>
+        </div>
+        <!-- U11：不提供查看明文入口，且主动解释 -->
+        <div class="card card-pad" style="background:var(--surface-2)">
+          <div class="row" style="align-items:flex-start;gap:9px">
+            <span>ℹ️</span>
+            <span class="muted" style="font-size:12.5px">出于安全考虑，这里不能查看已保存的密钥，只能替换或删除。<br>
+            <span class="dim">—— 连你自己也看不了，所以这个界面不会成为密钥泄露的入口。</span></span>
+          </div>
+        </div>
+
+        <div class="sec-title">连接新服务</div>
+        <div class="grid6">
+          <button class="prov" onclick="toast('将打开浏览器完成授权，密钥不经你的手')"><div class="pn">Claude</div><div class="pm">✓ 一键登录</div></button>
+          <button class="prov" onclick="toast('将打开浏览器完成授权，密钥不经你的手')"><div class="pn">OpenAI</div><div class="pm">✓ 一键登录</div></button>
+          <button class="prov" onclick="toast('将打开浏览器完成授权，密钥不经你的手')"><div class="pn">GitHub</div><div class="pm">✓ 一键登录</div></button>
+          <button class="prov"><div class="pn">从钥匙串导入</div><div class="pm">✓ 不经你的手</div></button>
+          <button class="prov"><div class="pn">从 1Password 导入</div><div class="pm">✓ 不经你的手</div></button>
+          <button class="prov manual"><div class="pn">其他服务</div><div class="pm">手动</div></button>
+        </div>
+        <div class="card card-pad" style="margin-top:12px;background:var(--surface-2)">
+          <span class="muted" style="font-size:12.5px">ℹ️ 推荐用代理转交——原始密钥留在沙箱外，程序拿不到密钥本身。引用明文只在你明确确认风险后进入指定进程。</span>
+        </div>
+
+        <div class="sec-title">密钥使用方式示例（本地模拟）</div>
+        <div class="card card-pad" data-testid="secret-demo">
+          <div class="muted">同一个账号可以选择不同保护方式。下面只演示界面状态，真实适配器兼容性尚未验证。</div>
+          <div class="mode-switch" role="group" aria-label="密钥使用方式">
+            <button class="btn btn-sm active" data-testid="secret-proxy" onclick="selectSecretMode('proxy')">代理转交</button>
+            <button class="btn btn-sm" data-testid="secret-reference" onclick="selectSecretMode('reference')">引用明文</button>
+          </div>
+          <div class="adapter-row">
+            <span class="dim">适配器：</span>
+            <button class="btn btn-sm" data-testid="adapter-verified" onclick="selectAdapter('simulated')">模拟适配通过（非真实兼容验证）</button>
+            <button class="btn btn-sm" data-testid="adapter-pending" onclick="selectAdapter('pending')">fd 适配器（待验证）</button>
+            <span class="adapter-status" data-testid="adapter-status">原型模拟 · 真实兼容性未验证</span>
+          </div>
+          <div class="secret-detail" data-testid="secret-detail"></div>
+          <label class="narrow show" style="display:flex;gap:7px;align-items:flex-start;margin-top:10px;padding:0;border:0;background:none">
+            <input type="checkbox" data-testid="secret-risk-confirm" onchange="syncSecretDemo()">
+            <span>我确认向指定程序交付明文，它可能复制或外传；撤销不能收回已交付的密钥。</span>
+          </label>
+          <div class="writeback-actions">
+            <button class="btn btn-primary" data-testid="secret-confirm" onclick="confirmSecretUse()">按代理转交运行示例</button>
+            <span class="dim">仅本地模拟，不读取或传递真实密钥。</span>
+          </div>
+          <div class="status-line" data-testid="secret-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- ─── 安全档案 ─── -->
+      <section class="view" id="view-record">
+        <div class="sec-title">值得注意</div>
+        <div class="alert mid">
+          <span>🟡</span>
+          <span>GitHub MCP 最近几次更新一直在要更多权限</span>
+          <span class="spacer"></span>
+          <button class="btn-link" onclick="openDrift()">查看 ›</button>
+        </div>
+        <div class="alert low">
+          <span>🟢</span>
+          <span>Claude Code 有 3 项权限一次都没用过</span>
+          <span class="spacer"></span>
+          <button class="btn btn-sm" onclick="toast('已收回 3 项未使用的权限，下次运行生效')">一键收回</button>
+        </div>
+
+        <div class="sec-title">今天</div>
+        <div class="card card-pad">
+          <div class="tl">
+            <div class="tl-item shield">
+              <div class="tl-main"><span class="tl-time">14:32</span>🛡 挡下 · Claude Code 想读取 <code>~/.ssh/id_rsa</code></div>
+              <div class="tl-sub"><span>这不在你同意的范围内，已自动拒绝</span><button class="btn btn-sm" onclick="toast('补授权会回到完整的运行前检查流程（02 §6.3）')">审查补授</button></div>
+            </div>
+            <div class="tl-item approve">
+              <div class="tl-main"><span class="tl-time">14:20</span>✅ 批准 · 你同意 Claude Code 读写「代码/myrepo」</div>
+              <div class="tl-sub"><span>当时的说明：「能读取并修改…可能被改坏或删掉」</span><button class="btn-link" onclick="toast('快照存的是措辞内容而非指针，文案改版后仍能还原当时所见（03 §B.2.5）')">查看当时界面 ›</button></div>
+            </div>
+            <div class="tl-item signal">
+              <div class="tl-main"><span class="tl-time">14:19</span>🔍 检查 · GitHub MCP 在没有权限时尝试联网</div>
+              <div class="tl-sub"><span>已记录为高风险信号</span><button class="btn-link" onclick="toast('零权限试探时的越界，比工具清单本身更有价值（02 §2.5）')">详情 ›</button></div>
+            </div>
+            <div class="tl-item">
+              <div class="tl-main"><span class="tl-time">14:18</span>▶ 启动 · GitHub MCP（用完即焚）</div>
+            </div>
+            <div class="tl-item shield">
+              <div class="tl-main"><span class="tl-time">09:05</span>🛡 挡下 · Codex 想访问 <code>pypi.org</code>（已自动拒绝 ×2）</div>
+              <div class="tl-sub"><span>中风险默认静默阻断，不打断你（02 §6.2）</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card card-pad" style="background:var(--surface-2)">
+          <span class="muted" style="font-size:12.5px">ℹ️ 这些记录只存在你的电脑上，不会上传。导出时默认隐去内网地址和文件路径。</span>
+        </div>
+      </section>
+
+      <!-- ─── 投递 ─── -->
+      <section class="view" id="view-ship">
+        <div class="sec-title">投递到生产</div>
+        <div class="card card-pad">
+          <div class="acct-name" style="margin-bottom:9px">Agent 基线策略 <span class="risk risk-low">● 可移植</span></div>
+          <div class="muted" style="font-size:12.5px;margin-bottom:13px">同一份策略源，编译成本地沙箱配置、OCI 产物、云主机投递包三种形态。</div>
+          <div class="alert low" style="margin-bottom:11px">
+            <span>💡</span>
+            <span>基于 12 次本地运行的实际使用情况，建议收紧 3 项权限后再投递</span>
+            <span class="spacer"></span>
+            <button class="btn-link" onclick="toast('「代码/myrepo」授予读写但从未写入 → 建议生产侧挂载为只读（02 §8.3）')">查看建议 ›</button>
+          </div>
+          <div class="row" style="gap:9px">
+            <button class="btn" onclick="toast('无法维持副本回写或代理保护时阻止对应投递；其它差异需明确评审（设计示例）')">编译为 OCI 产物</button>
+            <button class="btn btn-primary" onclick="toast('目标平台需验证适配与保护边界，当前仅设计示例')">投递到云主机</button>
+          </div>
+        </div>
+        <div class="empty"><div class="ei">🚧</div>P2 阶段功能，此处仅示意信息架构</div>
+      </section>
+
+      <!-- ─── 偏好 ─── -->
+      <section class="view" id="view-prefs">
+        <div class="sec-title">打断策略（02 §6.2）</div>
+        <div class="card">
+          <div class="acct">
+            <div class="acct-main">
+              <div class="acct-name">🟢 低风险 · 沙箱内启动程序等</div>
+              <div class="acct-sub">未授权时静默阻断并记录；低风险不产生授权，显式拒绝优先。</div>
+            </div>
+          </div>
+          <div class="acct">
+            <div class="acct-main">
+              <div class="acct-name">🟡 中风险 · 访问新网址、读新文件</div>
+              <div class="acct-sub">静默<strong>阻断</strong>并记录 —— 不弹窗问你，避免训练出无脑点允许的习惯</div>
+              <div class="acct-note warn"><span>ℹ️</span><span>被挡下的会累计显示，补授须重新审查并记录。</span></div>
+            </div>
+          </div>
+          <div class="acct">
+            <div class="acct-main">
+              <div class="acct-name">🔴 高风险 · 任意联网、写宿主文件、用密钥</div>
+              <div class="acct-sub">阻断并询问你，60 秒无回应自动拒绝</div>
+            </div>
+          </div>
+        </div>
+        <div class="sec-title">沙箱</div>
+        <div class="card">
+          <div class="acct"><div class="acct-main"><div class="acct-name">预热池大小</div><div class="acct-sub">2 个空白沙箱 · 让「用完即焚」的启动等待控制在 800ms 内</div></div></div>
+          <div class="acct"><div class="acct-main"><div class="acct-name">安全档案保留期</div><div class="acct-sub">90 天 · 档案写不下时暂停启动新沙箱</div></div></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 1：运行前检查（首次） ═══════════ -->
+<div class="overlay" id="ov-review">
+  <div class="modal">
+    <div class="attribution"><span>🛡</span><span>来自「桌面安全沙箱」</span><span class="spacer"></span><button class="x" onclick="closeReview()">✕</button></div>
+    <div class="modal-head">
+      <h2>运行前检查</h2>
+      <p id="reviewIntro">你要运行 Claude Code，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。</p>
+    </div>
+    <div class="modal-body">
+
+      <!-- 高风险：置顶、默认未勾、需逐项勾选 (U1/U2) -->
+      <div class="cap-group high">
+        <button class="cap-group-head"><span class="risk risk-high">🔴 高</span><span>需要你逐项确认（2 项）</span></button>
+        <div class="cap-group-body">
+          <div class="cap">
+            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c1" data-testid="capability-files" onchange="syncReview()"></div>
+            <div class="cap-body">
+              <label class="cap-title" for="c1">能读取并修改「代码 / myrepo」的沙箱副本</label>
+              <div class="cap-conseq">副本可能被改坏或删掉；真实文件不会直接变化，回写前另行展示差异并请你确认。</div>
+              <div class="cap-meta">
+                <button onclick="tog('ev1')">ℹ️ 为什么需要这个？</button>
+                <button onclick="tog('nr1')">⌄ 改为「只能看，不能改」</button>
+              </div>
+              <div class="evidence" id="ev1">来自 Claude Code 官方模板 · <code>template:claude-code</code><br>
+                <span class="dim">每条权限都必须说得出依据，说不出的不会出现在这里。</span></div>
+              <div class="narrow" id="nr1">
+                <label><input type="radio" name="fs" value="cow" checked> 修改沙箱副本，确认后回写 <span class="dim">· 默认</span></label>
+                <label><input type="radio" name="fs" value="ro"> 只能看，不能改 <span class="dim">· 不允许回写</span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="cap" data-testid="capability-high">
+            <div class="cap-check"><input type="checkbox" class="hi-chk" id="c2" data-testid="capability-secret" onchange="syncReview()"></div>
+            <div class="cap-body">
+              <label class="cap-title" for="c2">能以你的身份调用 Claude</label>
+              <div class="cap-conseq">它可以用你的账号发起对话，会产生费用。</div>
+              <div class="cap-assure">✓ 代理模式：原始密钥留在宿主；引用模式的独立风险审查见「账号与密钥」。</div>
+              <div class="cap-meta"><span>ℹ️ 使用账号：Claude 官方服务 ••••a1b2</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 中风险：未经批准保持未授予 -->
+      <div class="cap-group">
+        <button class="cap-group-head" onclick="toggleGroup(this)"><span class="risk risk-mid">🟡 中</span><span>一般权限（1 项）</span><span class="chev">⌄ 收起</span></button>
+        <div class="cap-group-body">
+          <div class="cap">
+            <div class="cap-check"><input type="checkbox" id="capNet" onchange="syncReview()"></div>
+            <div class="cap-body">
+              <div class="cap-title">能访问 Claude 官方服务</div>
+              <div class="cap-conseq">它能和 Claude 通信。除此之外联不上任何别的地方。</div>
+              <div class="cap-meta"><span>ℹ️ api.anthropic.com · 来自官方模板</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 低风险：默认折叠 -->
+      <div class="cap-group collapsed">
+        <button class="cap-group-head" onclick="toggleGroup(this)"><span class="risk risk-low">🟢 低</span><span>基础权限（2 项）</span><span class="chev">› 展开</span></button>
+        <div class="cap-group-body">
+          <div class="cap">
+            <div class="cap-check"><input type="checkbox" id="capSpawn" onchange="syncReview()"></div>
+            <div class="cap-body">
+              <div class="cap-title">能在沙箱内启动其他程序</div>
+              <div class="cap-conseq">这是大多数开发工具的正常需求，不会影响沙箱外。</div>
+            </div>
+          </div>
+          <div class="cap">
+            <div class="cap-check">🔒</div>
+            <div class="cap-body">
+              <div class="cap-title">「代码/myrepo」里的敏感文件它看不到</div>
+              <div class="cap-conseq">.env、密钥文件等会被自动隐去。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 否定式总结 (U3 配套) -->
+      <div class="boundary">
+        <div><span>✓</span><span>它不能访问你其他的文件、不能联网去别的地方、不能读你的剪贴板</span></div>
+        <div><span>✓</span><span>退出销毁运行环境，未处理副本保留待确认　<span style="opacity:.75">用完即焚 ⌄</span></span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeReview()">不运行</button>
+      <span class="spacer"></span>
+      <button class="btn" onclick="runMinimal()">先用最少权限试试</button>
+      <button class="btn btn-primary" id="btnRun" onclick="runApproved()">按所选权限运行 (0 项)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 2：能力指纹变更 ═══════════ -->
+<div class="overlay" id="ov-drift">
+  <div class="modal">
+    <div class="attribution"><span>🛡</span><span>来自「桌面安全沙箱」</span><span class="spacer"></span><button class="x" onclick="close_('ov-drift')">✕</button></div>
+    <div class="modal-head">
+      <h2>⚠️ 这个程序这次要的权限和上次不一样</h2>
+      <p>GitHub MCP 更新后，想要一些你之前没同意过的东西。</p>
+    </div>
+    <div class="modal-body">
+      <div class="cap-group high">
+        <button class="cap-group-head"><span class="risk risk-high">🔴 新增</span><span>需要你确认（2 项）</span></button>
+        <div class="cap-group-body">
+          <div class="cap">
+            <div class="cap-check"><input type="checkbox" class="dr-chk" id="d1" onchange="syncDrift()"></div>
+            <div class="cap-body">
+              <label class="cap-title" for="d1">能以你的身份删除仓库</label>
+              <div class="cap-conseq">一旦删除无法恢复。</div>
+              <div class="cap-meta"><span>ℹ️ 这是这次更新新增的功能（delete_repository）</span></div>
+            </div>
+          </div>
+          <div class="cap">
+            <div class="cap-check"><input type="checkbox" class="dr-chk" id="d2" onchange="syncDrift()"></div>
+            <div class="cap-body">
+              <label class="cap-title" for="d2">能访问互联网上的任何地方</label>
+              <div class="cap-conseq">如果这个程序被人动过手脚，你的数据可能被发到任何地方。</div>
+              <div class="cap-meta"><span>ℹ️ 上次它只需要访问 GitHub</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cap-group collapsed">
+        <button class="cap-group-head" onclick="toggleGroup(this)"><span class="risk risk-low">● 不变</span><span>保持不变（5 项）</span><span class="chev">› 展开</span></button>
+        <div class="cap-group-body">
+          <div class="cap"><div class="cap-check"><input type="checkbox" checked></div><div class="cap-body"><div class="cap-title">能访问 GitHub API</div></div></div>
+          <div class="cap"><div class="cap-check"><input type="checkbox" checked></div><div class="cap-body"><div class="cap-title">能以你的身份调用 GitHub</div><div class="cap-assure">✓ 你的密钥不会交给它</div></div></div>
+        </div>
+      </div>
+      <div class="alert low"><span>💡</span><span>你也可以只保留上次的权限继续用，新功能用不了但不影响原有的。</span></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="close_('ov-drift')">不运行</button>
+      <span class="spacer"></span>
+      <!-- 让「拒绝扩权」成为零成本选项 (04 §2.3) -->
+      <button class="btn" onclick="keepOld()">维持上次的权限运行</button>
+      <button class="btn btn-primary" id="btnDrift" disabled onclick="acceptNew()">同意新增 (0/2)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 3：MCP 工具级开关 ═══════════ -->
+<div class="overlay" id="ov-tools">
+  <div class="modal">
+    <div class="attribution"><span>🛡</span><span>运行前检查 · GitHub MCP</span><span class="spacer"></span><button class="x" onclick="close_('ov-tools')">✕</button></div>
+    <div class="modal-head">
+      <h2>这个程序给 AI 提供 5 项功能</h2>
+      <p>你可以逐项决定开不开。</p>
+    </div>
+    <div class="modal-body">
+      <table class="tools">
+        <thead><tr><th>功能</th><th style="width:56px">开关</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="tool-name"><span class="risk risk-low">🟢 低</span>查看 issue 内容</div><div class="tool-desc">能看到你仓库里的 issue，包括私有仓库</div></td>
+            <td><label class="sw"><input type="checkbox" class="tool-chk" checked onchange="syncTools()"><span></span></label></td>
+          </tr>
+          <tr>
+            <td><div class="tool-name"><span class="risk risk-low">🟢 低</span>列出我的仓库</div><div class="tool-desc">能看到你有哪些仓库</div></td>
+            <td><label class="sw"><input type="checkbox" class="tool-chk" checked onchange="syncTools()"><span></span></label></td>
+          </tr>
+          <tr>
+            <td><div class="tool-name"><span class="risk risk-mid">🟡 中</span>搜索代码</div><div class="tool-desc">能搜索你所有仓库的代码</div></td>
+            <td><label class="sw"><input type="checkbox" class="tool-chk" onchange="syncTools()"><span></span></label></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tool-name"><span class="risk risk-high">🔴 高</span>创建 Pull Request</div>
+              <div class="tool-desc">能在你的仓库里提交改动</div>
+              <label style="display:flex;gap:6px;margin-top:6px;font-size:11.5px;color:var(--text-2)"><input type="checkbox"> 每次创建前都问我一下</label>
+            </td>
+            <td><label class="sw"><input type="checkbox" class="tool-chk" onchange="syncTools()"><span></span></label></td>
+          </tr>
+          <tr>
+            <td><div class="tool-name"><span class="risk risk-high">🔴 高</span>创建 issue</div><div class="tool-desc">能以你的名义公开发帖</div></td>
+            <td><label class="sw"><input type="checkbox" class="tool-chk" onchange="syncTools()"><span></span></label></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="boundary" style="margin-top:15px">
+        <div><span>ℹ️</span><span>关掉的功能，AI 不会知道它们存在，也不会反复尝试。</span></div>
+        <div><span>🔒</span><span>这个程序和 Claude Code 互相看不见对方的文件和网络。</span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="close_('ov-tools')">不运行</button>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" id="btnTools" onclick="runTools()">按以上设置运行 (2 项)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 4：实时裁决（高风险） ═══════════ -->
+<div class="overlay" id="ov-arb">
+  <div class="modal narrow-modal">
+    <div class="attribution"><span>🛡</span><span>来自「桌面安全沙箱」</span></div>
+    <div class="modal-head">
+      <h2>Claude Code 想做一件你没同意过的事</h2>
+    </div>
+    <div class="modal-body">
+      <div class="cap-group high" style="margin-bottom:13px">
+        <div class="cap-group-body" style="padding:14px 15px">
+          <div class="cap-title" style="margin-bottom:6px"><span class="risk risk-high">🔴 高</span>它想访问 raw.githubusercontent.com</div>
+          <div class="cap-conseq">你之前只同意它访问 Claude 官方服务。</div>
+          <!-- 降低拒绝的心理成本 (04 §3.3-2) -->
+          <div class="cap-conseq" style="margin-top:7px">如果你不确定这是不是它该做的，可以先拒绝 —— 拒绝后它会收到提示，通常会换个方式继续。</div>
+        </div>
+      </div>
+      <p class="dim">原请求保持拒绝；新增权限需完整审查、签名及记录。</p>
+    </div>
+    <div class="modal-foot">
+      <!-- 默认焦点在「拒绝」(U6) -->
+      <button class="btn" id="btnDeny" onclick="arbDeny()">拒绝</button>
+      <span class="spacer"></span>
+      <span class="countdown">⏱ <span id="cdNum">60</span> 秒内没有回应将自动拒绝</span>
+      <button class="btn" onclick="arbAllow()">进入补授审查</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 5：首次引导 ═══════════ -->
+<div class="overlay" id="ov-onb">
+  <div class="modal narrow-modal">
+    <div class="modal-body" style="padding:0">
+      <div class="onb">
+        <div class="onb-art" id="onbArt">🤖 → 📁🌐🔑</div>
+        <h2 id="onbTitle">AI 编程助手很好用，但它拿着你电脑的全部钥匙。</h2>
+        <p id="onbDesc">claude code、codex 这些工具启动时，就继承了你的全部权限 —— 你的文件、你的网络、你的密钥。</p>
+        <div class="dots" id="onbDots"><i class="on"></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="close_('ov-onb')">跳过</button>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" id="onbNext" onclick="onbStep()">下一步</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 模态 6：错误界面 ═══════════ -->
+<div class="overlay" id="ov-err">
+  <div class="modal narrow-modal">
+    <div class="attribution"><span>🛡</span><span>来自「桌面安全沙箱」</span><span class="spacer"></span><button class="x" onclick="close_('ov-err')">✕</button></div>
+    <div class="modal-head"><h2 id="errTitle">沙箱没能启动起来</h2><p id="errDesc">虚拟化服务没有响应。</p></div>
+    <div class="modal-body">
+      <div class="card card-pad" style="background:var(--surface-2);font-family:ui-monospace,monospace;font-size:11.5px;color:var(--text-2)" id="errDiag">
+        VZVirtualMachine: failed to start (code -2)<br>预热池：0/2 可用
+      </div>
+      <!-- U9：不提供绕过选项，且显式声明 -->
+      <div class="boundary" style="margin-top:13px">
+        <div><span>🔒</span><span id="errAssure">我们不提供「不用沙箱直接运行」这个选项 —— 那等于取消了保护。</span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="close_('ov-err')">关闭</button>
+      <span class="spacer"></span>
+      <button class="btn" onclick="toast('诊断报告已复制')">看诊断</button>
+      <button class="btn btn-primary" onclick="close_('ov-err')">重试</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 回写预览：本地模拟数据 ═══════════ -->
+<div class="overlay" id="ov-writeback" role="dialog" aria-modal="true" aria-labelledby="wbTitle">
+  <div class="modal">
+    <div class="attribution"><span>🛡 来自「桌面安全沙箱」</span><span class="spacer"></span><button class="x" onclick="cancelWriteback()" aria-label="取消回写">✕</button></div>
+    <div class="modal-head"><h2 id="wbTitle">检查副本改动，再决定是否回写</h2><p>仅用内存中的示例文件演示，不修改电脑上的真实文件。</p></div>
+    <div class="modal-body">
+      <label><input type="checkbox" data-testid="wb-selected" onchange="invalidateWritebackSelection()"> 选择 src/config.js · 修改</label>
+      <div class="writeback-summary">
+        <div class="diff-pane"><h4>运行基线</h4><pre data-testid="wb-base"></pre></div>
+        <div class="diff-pane"><h4>当前宿主</h4><pre data-testid="wb-host"></pre></div>
+        <div class="diff-pane"><h4>沙箱副本</h4><pre data-testid="wb-guest"></pre></div>
+      </div>
+      <div class="conflict" data-testid="wb-conflict" hidden>宿主文件已变化，正常回写已阻断。查看三方差异后，选择取消、处理冲突或明确覆盖所选文件。</div>
+      <div class="writeback-actions">
+        <button class="btn btn-sm" data-testid="wb-change-host" onclick="simulateHostChange()">模拟宿主再次修改</button>
+        <button class="btn btn-sm" data-testid="wb-preview" onclick="previewWriteback()">重新获取差异</button>
+      </div>
+      <div class="writeback-note">确认仅对本次差异与宿主版本有效；执行前仍会再次校验。</div>
+      <div data-testid="wb-resolution" hidden>
+        <label for="wbResolved">处理后的副本内容</label>
+        <textarea id="wbResolved" data-testid="wb-resolved" rows="3" style="width:100%;margin-top:6px"></textarea>
+        <button class="btn btn-sm" data-testid="wb-resolve" onclick="resolveWriteback()">使用处理结果并重新预览</button>
+        <label style="display:block;margin-top:10px"><input type="checkbox" data-testid="wb-overwrite-ack" onchange="clearWritebackApproval()"> 我确认覆盖本次差异中所选文件的宿主修改，可能丢失这些改动。</label>
+      </div>
+      <div class="status-line" data-testid="wb-status" aria-live="polite"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-testid="wb-cancel" onclick="cancelWriteback()">取消，保留副本</button><span class="spacer"></span>
+      <button class="btn" data-testid="wb-overwrite" onclick="confirmWriteback(true)" disabled>明确覆盖所选文件</button>
+      <button class="btn btn-primary" data-testid="wb-confirm" onclick="confirmWriteback(false)" disabled>确认本次差异</button>
+      <button class="btn btn-primary" data-testid="wb-apply" onclick="applyWriteback()" disabled>执行回写（再次校验）</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 评审工具台 ═══════════ -->
+<aside class="devbar" id="devbar">
+  <div class="devbar-head"><span>🧪</span><span>评审工具台</span><span class="spacer"></span><button class="x" onclick="toggleDev()" style="color:var(--text-3)">✕</button></div>
+  <div class="devbar-body">
+    <div class="dev-group">
+      <h4>核心流程</h4>
+      <button class="dev-btn" onclick="open_('ov-onb');onbReset()">首次引导（4 步）<span class="k">04 §6 · 峰终定律把 D1 放最后</span></button>
+      <button class="dev-btn" onclick="startReview('claude')">运行前检查 · 首次<span class="k">04 §2.1 · U1/U2/U3</span></button>
+      <button class="dev-btn" onclick="openDrift()">能力指纹变更 · 扩权<span class="k">04 §2.3 · 主推「维持上次权限」</span></button>
+      <button class="dev-btn" onclick="openTools()">MCP 工具级开关<span class="k">04 §2.4 · D4 差异点</span></button>
+      <button class="dev-btn" onclick="openArb()">实时裁决 · 高风险<span class="k">04 §3.3 · U6/U7</span></button>
+    </div>
+    <div class="dev-group">
+      <h4>状态切换</h4>
+      <button class="dev-btn" onclick="setShield(0)">盾牌：零值也显示<span class="k">U8 · 空白=功能没在工作</span></button>
+      <button class="dev-btn" onclick="setShield(3)">盾牌：已挡下 3 次<span class="k">§3.2 · 用盾牌不用红色</span></button>
+      <button class="dev-btn" onclick="setShield(12)">盾牌：异常增多<span class="k">02 §7.4 · 模式告警</span></button>
+    </div>
+    <div class="dev-group">
+      <h4>错误界面（看「禁止提供」）</h4>
+      <button class="dev-btn" onclick="showErr('vm')">沙箱创建失败<span class="k">U9 · 禁止「绕过沙箱」</span></button>
+      <button class="dev-btn" onclick="showErr('secret')">密钥源不可达<span class="k">U10 · 禁止「手动输入」</span></button>
+      <button class="dev-btn" onclick="showErr('audit')">安全档案写入失败<span class="k">02 §7.5 · fail-closed</span></button>
+      <button class="dev-btn" onclick="showErr('cache')">依赖缓存校验失败<span class="k">01 R3 · 禁止「跳过校验」</span></button>
+    </div>
+    <div class="dev-group">
+      <h4>否决条件自检（U1–U13）</h4>
+      <div id="checklist"></div>
+    </div>
+  </div>
+</aside>
+<button class="devtoggle" onclick="toggleDev()">🧪 评审工具台</button>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══ 导航 ═══ */
+const titles={dash:'工作台',workloads:'程序',accounts:'账号与密钥',record:'安全档案',ship:'投递到生产',prefs:'偏好设置'};
+function go(v){
+  document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));
+  document.getElementById('view-'+v).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(e=>e.classList.toggle('active',e.dataset.view===v));
+  document.getElementById('pageTitle').textContent=titles[v]||v;
+  document.querySelector('.content').scrollTop=0;
+}
+document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>go(b.dataset.view));
+
+/* ═══ 模态 ═══ */
+function open_(id){document.getElementById(id).classList.add('show')}
+function close_(id){document.getElementById(id).classList.remove('show');stopCd()}
+function tog(id){document.getElementById(id).classList.toggle('show')}
+function toggleGroup(btn){
+  const g=btn.closest('.cap-group'); g.classList.toggle('collapsed');
+  const c=btn.querySelector('.chev'); if(c)c.textContent=g.classList.contains('collapsed')?'› 展开':'⌄ 收起';
+}
+
+/* ═══ 运行前检查 ═══ */
+const intros={
+  claude:'你要运行 Claude Code，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。',
+  codex:'你要运行 Codex，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。',
+  dsh:'你要运行 dsh，它会在一个独立的沙箱里跑。<br>下面是它能碰到的东西，由你决定给不给。'
+};
+const reviewIds=['c1','c2','capNet','capSpawn'];
+let activeGrants={files:true,secret:true,network:true,spawn:false,fs:'cow'};
+function startReview(k){
+  document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent='能访问 Claude 官方服务';
+  document.querySelector('#capNet').closest('.cap').querySelector('.cap-meta').textContent='api.anthropic.com · 模板示例';
+  document.getElementById('reviewIntro').innerHTML=(intros[k]||intros.claude)+'<br>以下为 Claude 静态权限示例；未选项默认拒绝，风险等级不产生授权。';
+  reviewIds.forEach(id=>document.getElementById(id).checked=false);
+  document.querySelector('[name="fs"][value="cow"]').checked=true;
+  syncReview(); open_('ov-review');
+}
+function closeReview(){close_('ov-review')}
+function syncReview(){
+  const n=reviewIds.filter(id=>document.getElementById(id).checked).length;
+  const b=document.getElementById('btnRun');
+  b.textContent=`按所选权限运行 (${n} 项)`;
+  b.disabled=false;
+}
+function runApproved(){
+  activeGrants={files:document.getElementById('c1').checked,secret:document.getElementById('c2').checked,
+    network:document.getElementById('capNet').checked,spawn:document.getElementById('capSpawn').checked,
+    fs:document.querySelector('[name="fs"]:checked').value};
+  const labels=[];
+  if(activeGrants.files)labels.push(activeGrants.fs==='cow'?'📁 沙箱副本可改，确认后回写':'📁 只读，不允许回写');
+  if(activeGrants.secret)labels.push('🔑 Claude 代理已授权；联网仍须单独批准');
+  if(activeGrants.network)labels.push('🌐 '+document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent);
+  if(activeGrants.spawn)labels.push('⚙ 沙箱内进程派生');
+  const target=document.getElementById('activeCapabilities');target.replaceChildren();
+  (labels.length?labels:['🔒 无已授予能力']).forEach(text=>{const e=document.createElement('span');e.className='chip';e.textContent=text;target.append(e)});
+  close_('ov-review');go('dash');
+  toast(`模拟启动：批准 ${labels.length} 项，其余保持拒绝；真实文件未修改。`);
+}
+function runMinimal(){reviewIds.forEach(id=>document.getElementById(id).checked=false);runApproved()}
+
+/* ═══ 密钥方式：仅界面模拟，不操作真实凭据 ═══ */
+const demoEl=id=>document.querySelector(`[data-testid="${id}"]`);
+let secretMode='proxy', secretAdapter='pending';
+function resetSecretApproval(){demoEl('secret-risk-confirm').checked=false;demoEl('secret-result').textContent='';syncSecretDemo()}
+function selectSecretMode(mode){secretMode=mode;resetSecretApproval()}
+function selectAdapter(adapter){secretAdapter=adapter;resetSecretApproval()}
+function syncSecretDemo(){
+  const reference=secretMode==='reference',supported=secretAdapter==='simulated';
+  demoEl('secret-proxy').classList.toggle('active',!reference);
+  demoEl('secret-reference').classList.toggle('active',reference);
+  demoEl('adapter-status').textContent=supported?'模拟适配通过 · 不是实际兼容验证':'不支持：适配器待验证，不交付凭据';
+  demoEl('secret-detail').classList.toggle('warn',reference);
+  demoEl('secret-detail').textContent=reference
+    ?'引用模式：经验证的读取适配器通过一次性匿名 pipe/fd 向指定进程交付明文，不经环境变量、启动参数或磁盘文件。程序可以复制或外传；撤销后停止后续交付、终止相关运行并提示轮换，不能收回已交付秘密。'
+    :'代理模式：由宿主按已批准目标代为认证，原始密钥不进入 guest。网络与账号使用分别授权；程序仍可能滥用已获准业务能力。';
+  demoEl('secret-risk-confirm').closest('label').hidden=!reference;
+  demoEl('secret-confirm').disabled=!supported||(reference&&!demoEl('secret-risk-confirm').checked);
+  demoEl('secret-confirm').textContent=reference?'明确批准本次引用交付（模拟）':'批准代理使用（模拟）';
+}
+function confirmSecretUse(){
+  syncSecretDemo();if(demoEl('secret-confirm').disabled)return;
+  demoEl('secret-result').textContent=secretMode==='reference'
+    ?'模拟批准：风险确认绑定本次指定进程与适配方式；没有读取或交付真实秘密。'
+    :'模拟批准：仅代理使用，原始密钥留在宿主；没有发起真实认证。';
+}
+syncSecretDemo();
+
+/* ═══ 副本回写：仅内存状态演示，真实条件写入由宿主实现 ═══ */
+let wb=null,wbSeq=0;
+function wbMessage(text){const el=demoEl('wb-status');el.textContent=text;el.classList.toggle('blocked',/阻断|失效|HOST_CHANGED/.test(text));el.classList.toggle('good',/^已回写/.test(text))}
+function openWriteback(){
+  if(!wb)wb={base:'const count = 1;',host:'const count = 1;',guest:'const count = 2;',version:1,baselineVersion:1,resolvedVersion:null,plan:null,approval:null,done:false};
+  demoEl('wb-selected').checked=false;
+  open_('ov-writeback');previewWriteback();
+  demoEl('wb-cancel').focus();
+}
+function renderWriteback(){
+  if(!wb)return;
+  demoEl('wb-base').textContent=wb.base;
+  demoEl('wb-host').textContent=`v${wb.version}\n${wb.host}`;
+  demoEl('wb-guest').textContent=wb.guest;
+  const p=wb.plan,selected=demoEl('wb-selected').checked;
+  const current=!!p&&p.version===wb.version&&p.guest===wb.guest;
+  const allowed=activeGrants.files&&activeGrants.fs==='cow';
+  demoEl('wb-conflict').hidden=!p?.conflict;
+  demoEl('wb-resolution').hidden=!p?.conflict;
+  demoEl('wb-confirm').disabled=!allowed||!selected||!current||p.conflict||wb.done;
+  demoEl('wb-overwrite').disabled=!allowed||!selected||!current||!p.conflict||!demoEl('wb-overwrite-ack').checked||wb.done;
+  demoEl('wb-apply').disabled=!wb.approval||wb.done;
+}
+function previewWriteback(){
+  if(!wb)return;
+  wb.approval=null;
+  if(wb.done){renderWriteback();wbMessage('当前副本改动已回写，无待提交内容。');return;}
+  demoEl('wb-overwrite-ack').checked=false;
+  wb.plan={id:++wbSeq,version:wb.version,guest:wb.guest,conflict:wb.version!==wb.baselineVersion&&wb.resolvedVersion!==wb.version};
+  demoEl('wb-resolved').value=wb.guest;
+  renderWriteback();
+  wbMessage(!activeGrants.files||activeGrants.fs!=='cow'?'未获副本写入授权或当前为只读，不能回写。':wb.plan.conflict?'发现冲突：正常回写阻断，先查看三方差异。':'选择要回写的文件，确认后才可执行。');
+}
+function invalidateWritebackSelection(){wb.approval=null;demoEl('wb-overwrite-ack').checked=false;renderWriteback();wbMessage('所选范围已更新，需要重新确认。')}
+function clearWritebackApproval(){wb.approval=null;renderWriteback()}
+function simulateHostChange(){
+  if(!wb||wb.done)return;
+  wb.version++;wb.host=`const count = ${wb.version+10}; // 外部编辑`;
+  renderWriteback();wbMessage('宿主已再次变化；旧差异不能直接写入。执行时复验，或重新获取差异。');
+}
+function resolveWriteback(){
+  if(!wb?.plan||wb.plan.version!==wb.version){wbMessage('宿主又发生变化，请先重新获取差异再处理。');return}
+  wb.guest=demoEl('wb-resolved').value;wb.resolvedVersion=wb.version;
+  previewWriteback();wbMessage('已用处理结果生成新预览，仍须重新确认；宿主尚未写入。');
+}
+function confirmWriteback(overwrite){
+  renderWriteback();
+  if(demoEl(overwrite?'wb-overwrite':'wb-confirm').disabled)return;
+  wb.approval={planId:wb.plan.id,version:wb.plan.version,guest:wb.plan.guest,selected:true,overwrite};
+  renderWriteback();wbMessage('已确认本次差异与版本，等待执行前再次校验。');
+}
+function applyWriteback(){
+  if(!wb?.approval||wb.done)return;
+  const approval=wb.approval;wb.approval=null;
+  if(!activeGrants.files||activeGrants.fs!=='cow'||!demoEl('wb-selected').checked){renderWriteback();wbMessage('授权或选择已变化：回写阻断，确认失效。');return}
+  if(!wb.plan||approval.planId!==wb.plan.id||approval.version!==wb.version||approval.guest!==wb.guest){
+    demoEl('wb-overwrite-ack').checked=false;renderWriteback();wbMessage('HOST_CHANGED / 计划已变化：确认失效，已阻断回写。请重新获取差异并确认。');return;
+  }
+  if(wb.plan.conflict&&(!approval.overwrite||!demoEl('wb-overwrite-ack').checked)){renderWriteback();wbMessage('冲突未明确批准覆盖：阻断回写。');return}
+  wb.host=approval.guest;wb.version++;wb.done=true;renderWriteback();
+  wbMessage('已回写所选文件（内存模拟）；一次性确认已消耗，真实宿主文件未修改。');
+}
+function cancelWriteback(){if(wb){wb.approval=null;wb.plan=null;}close_('ov-writeback');toast('已取消回写，保留副本；没有新增写入。')}
+
+/* ═══ 指纹变更 ═══ */
+function openDrift(){document.querySelectorAll('.dr-chk').forEach(c=>c.checked=false);syncDrift();open_('ov-drift')}
+function syncDrift(){
+  const all=[...document.querySelectorAll('.dr-chk')], n=all.filter(c=>c.checked).length;
+  const b=document.getElementById('btnDrift');
+  b.textContent=`同意所选新增 (${n}/${all.length})`; b.disabled=n===0;
+}
+function keepOld(){close_('ov-drift');go('dash');toast('已用上次的权限启动 —— 拒绝扩权不需要任何代价')}
+function acceptNew(){const n=[...document.querySelectorAll('.dr-chk')].filter(c=>c.checked).length;close_('ov-drift');go('dash');toast(`模拟批准所选 ${n} 项新增权限；未选项保持拒绝`)}
+
+/* ═══ MCP 工具 ═══ */
+function openTools(){syncTools();open_('ov-tools')}
+function syncTools(){
+  const n=[...document.querySelectorAll('.tool-chk')].filter(c=>c.checked).length;
+  document.getElementById('btnTools').textContent=`按以上设置运行 (${n} 项)`;
+}
+function runTools(){
+  const n=[...document.querySelectorAll('.tool-chk')].filter(c=>c.checked).length;
+  close_('ov-tools');go('dash');toast(`已开启 ${n} 项功能 · 其余 ${5-n} 项 AI 不会知道存在`);
+}
+
+/* ═══ 实时裁决（含 60s 倒计时） ═══ */
+let cd=null;
+function openArb(){
+  open_('ov-arb');
+  let t=60; document.getElementById('cdNum').textContent=t;
+  setTimeout(()=>document.getElementById('btnDeny').focus(),60);  // U6：默认焦点=安全选项
+  stopCd();
+  cd=setInterval(()=>{
+    t--; document.getElementById('cdNum').textContent=t;
+    if(t<=0){stopCd();close_('ov-arb');toast('⏱ 60 秒无回应，已自动拒绝并记入档案（U7）');bumpShield()}
+  },1000);
+}
+function stopCd(){if(cd){clearInterval(cd);cd=null}}
+function arbDeny(){close_('ov-arb');toast('已拒绝 · 它会收到协议层提示，通常会换个方式继续（03 §C.1.2）');bumpShield()}
+function arbAllow(){close_('ov-arb');startReview('claude');document.getElementById('reviewIntro').textContent='补授审查：申请访问 raw.githubusercontent.com。请重新确认完整能力集合；原请求不会自动重放。';document.querySelector('#capNet').closest('.cap').querySelector('.cap-title').textContent='能访问 raw.githubusercontent.com';document.querySelector('#capNet').closest('.cap').querySelector('.cap-meta').textContent='依据：本次被拒请求；尚未批准。';toast('原请求保持拒绝；批准并记录后仅供后续重试使用。')}
+
+/* ═══ 盾牌状态 ═══ */
+function setShield(n){
+  const t=document.getElementById('shieldText'), l=document.getElementById('shieldLast'), nav=document.getElementById('navShield');
+  if(n===0){
+    t.textContent='目前没有任何越界尝试 ✓'; l.style.display='none'; nav.style.display='none';
+    toast('零值也显示 —— 空白会让用户以为这个功能没在工作（U8）');
+  }else if(n>=12){
+    t.textContent=`已为你挡下 ${n} 次越界尝试`; l.style.display=''; nav.style.display='';
+    l.innerHTML='🟡 它今天尝试了 12 次没被允许的操作，之前平均 0 次';
+    nav.textContent=n;
+    toast('异常模式告警：不只被动记录，还要主动指出反常（02 §7.4）');
+  }else{
+    t.textContent=`已为你挡下 ${n} 次越界尝试`; l.style.display=''; nav.style.display='';
+    l.textContent='最近：它想读取 ~/.ssh/id_rsa（2 分钟前）'; nav.textContent=n;
+    toast('用盾牌不用红色 —— 阻断成功是产品在正常工作，不是出错（§3.2）');
+  }
+}
+let shieldN=3;
+function bumpShield(){shieldN++;setShield(shieldN)}
+
+/* ═══ 错误界面 ═══ */
+const errs={
+  vm:{t:'沙箱没能启动起来',d:'虚拟化服务没有响应。',
+      g:'VZVirtualMachine: failed to start (code -2)<br>预热池：0/2 可用',
+      a:'我们不提供「不用沙箱直接运行」这个选项 —— 那等于取消了保护。'},
+  secret:{t:'暂时拿不到保管在 1Password 里的账号',d:'1Password 没有响应，这次运行用不了这个账号。',
+      g:'provider: 1password · status: unreachable<br>retry: 2/3',
+      a:'我们不会在这里让你「手动输入密钥」—— 你最赶时间的时候，恰恰是最不该降级的时候。'},
+  audit:{t:'安全档案记不下来了',d:'磁盘空间不足，为安全起见已暂停启动新沙箱。',
+      g:'audit-log: write failed (ENOSPC)<br>failClosed: true',
+      a:'档案记不下时我们宁可不跑 —— 记不下的风险，等于没发生过的风险。'},
+  cache:{t:'依赖缓存可能被篡改，已拒绝使用',d:'npm 缓存层的校验和与记录不符。',
+      g:'cache[npm]: checksum mismatch<br>expected sha256:4f2a… got sha256:91bc…',
+      a:'不提供「跳过校验」—— 缓存层是我们为了少下点东西才引入的，不值得为它放宽边界。'}
+};
+function showErr(k){
+  const e=errs[k];
+  document.getElementById('errTitle').textContent=e.t;
+  document.getElementById('errDesc').textContent=e.d;
+  document.getElementById('errDiag').innerHTML=e.g;
+  document.getElementById('errAssure').textContent=e.a;
+  open_('ov-err');
+}
+
+/* ═══ 首次引导 ═══ */
+const onb=[
+  {a:'🤖 → 📁🌐🔑',t:'AI 编程助手很好用，但它拿着你电脑的全部钥匙。',d:'claude code、codex 这些工具启动时，就继承了你的全部权限 —— 你的文件、你的网络、你的密钥。'},
+  {a:'💻 ⟋⟍ 📦',t:'我们给它一台独立的小电脑。',d:'出了事，伤不到你的 Mac。'},
+  {a:'📦 ← 🔓',t:'它启动时什么都碰不到。',d:'你给什么，它才有什么。每一项都由你在运行前决定。'},
+  {a:'🔑 ⇥ 🛡 ⇥ 📦',t:'两种连接方式，保护边界不同。',d:'代理模式：原始密钥留在宿主。引用模式：指定程序取得明文，可能复制或外传；须验证适配方式并单独确认风险。'}
+];
+let oi=0;
+function onbReset(){oi=0;onbPaint()}
+function onbPaint(){
+  const s=onb[oi];
+  document.getElementById('onbArt').textContent=s.a;
+  document.getElementById('onbTitle').textContent=s.t;
+  document.getElementById('onbDesc').textContent=s.d;
+  document.getElementById('onbDots').innerHTML=onb.map((_,i)=>`<i class="${i===oi?'on':''}"></i>`).join('');
+  document.getElementById('onbNext').textContent=oi===onb.length-1?'开始：跑第一个程序':'下一步';
+}
+function onbStep(){
+  if(oi<onb.length-1){oi++;onbPaint()}
+  else{close_('ov-onb');startReview('claude');toast('首次体验会包含一次真实的阻断 —— 让你第一次就看到盾牌亮起')}
+}
+
+/* ═══ 否决条件自检 ═══ */
+const CHECKS=[
+  ['U1','能力需明确授权，允许部分批准','未选项保持拒绝；低风险不自动放行'],
+  ['U2','无「全部允许」一键按钮','界面中不存在该按钮'],
+  ['U3','每条能力同时有能力+后果描述','每条 .cap 均含 .cap-conseq'],
+  ['U4','措辞表之外的技术术语不上屏','界面无 allow-list / 挂载 / 注入等词'],
+  ['U5','信任决策界面有宿主归属标识','全部 modal 含 .attribution + 安全边框'],
+  ['U6','对话框默认焦点为安全选项','裁决弹窗焦点在「拒绝」'],
+  ['U7','超时按拒绝处理且明示倒计时','60s 倒计时可见，归零自动拒绝'],
+  ['U8','「已挡下 N 次」零值也显示','设为 0 时显示「没有任何越界尝试 ✓」'],
+  ['U9','错误界面不提供绕过沙箱选项','4 个错误界面均无绕过按钮'],
+  ['U10','密钥源故障不引导手输明文','密钥源错误界面显式声明不降级'],
+  ['U11','账号列表无查看明文入口','仅「替换/删除」，并主动解释原因'],
+  ['U12','风险等级不仅靠颜色区分','徽标含图标+文字（🔴 高 / 🟡 中 / 🟢 低）'],
+  ['U13','持久模式选择时展示安全含义','生命周期选项附「改动会一直留着」']
+];
+document.getElementById('checklist').innerHTML=CHECKS.map(c=>
+  `<div class="chk"><span class="st">待验</span><span><code>${c[0]}</code> ${c[1]}<br><span class="dim">${c[2]}</span></span></div>`
+).join('');
+
+/* ═══ 工具 ═══ */
+function toggleDev(){document.getElementById('devbar').classList.toggle('open')}
+let tt=null;
+function toast(m){
+  const el=document.getElementById('toast'); el.textContent=m; el.classList.add('show');
+  clearTimeout(tt); tt=setTimeout(()=>el.classList.remove('show'),3600);
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(document.getElementById('ov-writeback').classList.contains('show'))cancelWriteback();
+    if(document.getElementById('ov-arb').classList.contains('show'))arbDeny();
+    document.querySelectorAll('.overlay.show').forEach(o=>o.classList.remove('show'));stopCd();
+  }
+});
+/* 首次打开展示引导 */
+window.addEventListener('load',()=>{setTimeout(()=>{open_('ov-onb');onbReset()},400)});
+</script>
+</body>
+</html>
